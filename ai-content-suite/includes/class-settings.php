@@ -42,7 +42,12 @@ final class AICS_Settings {
 	// -------------------------------------------------------------------------
 
 	public static function get_api_key(): string {
-		return (string) get_option( self::OPT_API_KEY, '' );
+		$value = (string) get_option( self::OPT_API_KEY, '' );
+		// Reject old encrypted garbage — valid Anthropic keys always start with "sk-ant-".
+		if ( $value !== '' && strpos( $value, 'sk-ant-' ) !== 0 ) {
+			return '';
+		}
+		return $value;
 	}
 
 	public static function get_default_model(): string {
