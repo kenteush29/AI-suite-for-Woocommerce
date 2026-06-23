@@ -30,6 +30,22 @@
 		.always(function () { $btn.prop('disabled', false); });
 	});
 
+	$('#aics-reset-prompts').on('click', function () {
+		var $btn = $(this);
+		if (!confirm(aicsSettings.i18n.resetConfirm)) return;
+		$btn.prop('disabled', true);
+		$.post(aicsSettings.ajaxUrl, { action: 'aics_reset_prompts', nonce: aicsSettings.nonce })
+		.done(function (res) {
+			if (res.success) {
+				window.location.reload();
+			} else {
+				$btn.prop('disabled', false);
+				alert((res.data && res.data.message) || 'Error');
+			}
+		})
+		.fail(function () { $btn.prop('disabled', false); alert('Request failed.'); });
+	});
+
 	function escHtml(str) {
 		return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 	}

@@ -56,7 +56,6 @@ final class AICS_Product_Metabox {
 			'nonce'       => wp_create_nonce( 'aics_admin' ),
 			'postId'      => $post->ID,
 			'previewMode' => AICS_Settings::is_preview_mode(),
-			'wpmlActive'  => AICS_Wpml_Translate::is_wpml_active(),
 			'i18n'        => [
 				'generating' => __( 'Generating…', 'ai-content-suite' ),
 				'generate'   => __( 'Generate', 'ai-content-suite' ),
@@ -64,11 +63,7 @@ final class AICS_Product_Metabox {
 				'applied'    => __( 'Applied!', 'ai-content-suite' ),
 				'apply'      => __( 'Apply to field', 'ai-content-suite' ),
 				'error'      => __( 'Error:', 'ai-content-suite' ),
-				'noMapping'        => __( 'This slot is not mapped. Configure it in Field Mapping.', 'ai-content-suite' ),
-				'translating'      => __( 'Translating…', 'ai-content-suite' ),
-				'translateDone'    => __( 'All translations applied.', 'ai-content-suite' ),
-				'translateError'   => __( 'Translation error: ', 'ai-content-suite' ),
-				'noContent'        => __( 'No generated content to translate. Generate and apply fields first.', 'ai-content-suite' ),
+				'noMapping'  => __( 'This slot is not mapped. Configure it in Field Mapping.', 'ai-content-suite' ),
 			],
 		] );
 	}

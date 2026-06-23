@@ -36,6 +36,7 @@ final class AICS_Settings {
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_ajax_aics_test_connection', [ $this, 'ajax_test_connection' ] );
 		add_action( 'wp_ajax_aics_clear_log',       [ $this, 'ajax_clear_log' ] );
+		add_action( 'wp_ajax_aics_reset_prompts',   [ $this, 'ajax_reset_prompts' ] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -77,12 +78,21 @@ final class AICS_Settings {
 		$defaults      = self::default_prompts();
 		$store_context = self::get_store_context();
 
-		$system = $stored[ $task ]['system'] ?? $defaults[ $task ]['system'] ?? '';
+		// Use the stored value only when it is a non-empty customisation,
+		// otherwise always fall back to the (possibly updated) plugin default.
+		$system = ! empty( $stored[ $task ]['system'] )
+			? $stored[ $task ]['system']
+			: ( $defaults[ $task ]['system'] ?? '' );
+
+		$user_template = ! empty( $stored[ $task ]['user_template'] )
+			? $stored[ $task ]['user_template']
+			: ( $defaults[ $task ]['user_template'] ?? '' );
+
 		$system = str_replace( '{{store_context}}', $store_context, $system );
 
 		return [
 			'system'        => $system,
-			'user_template' => $stored[ $task ]['user_template'] ?? $defaults[ $task ]['user_template'] ?? '',
+			'user_template' => $user_template,
 		];
 	}
 
@@ -230,10 +240,19 @@ final class AICS_Settings {
 		}
 		$clean    = [];
 		$defaults = self::default_prompts();
-		foreach ( $defaults as $task => $_ ) {
+		foreach ( $defaults as $task => $default ) {
+			$sys = sanitize_textarea_field( wp_unslash( $value[ $task ]['system'] ?? '' ) );
+			$usr = sanitize_textarea_field( wp_unslash( $value[ $task ]['user_template'] ?? '' ) );
+
+			// Persist a value only when it is a real customisation that differs
+			// from the built-in default. Otherwise store empty so future default
+			// changes keep propagating (and "reset" is the natural state).
+			$default_sys = sanitize_textarea_field( $default['system'] );
+			$default_usr = sanitize_textarea_field( $default['user_template'] );
+
 			$clean[ $task ] = [
-				'system'        => sanitize_textarea_field( wp_unslash( $value[ $task ]['system'] ?? '' ) ),
-				'user_template' => sanitize_textarea_field( wp_unslash( $value[ $task ]['user_template'] ?? '' ) ),
+				'system'        => ( $sys !== '' && $sys !== $default_sys ) ? $sys : '',
+				'user_template' => ( $usr !== '' && $usr !== $default_usr ) ? $usr : '',
 			];
 		}
 		return $clean;
@@ -261,6 +280,7 @@ final class AICS_Settings {
 				'error'    => __( 'Connection failed:', 'ai-content-suite' ),
 				'clearing' => __( 'Clearing…', 'ai-content-suite' ),
 				'cleared'  => __( 'Log cleared.', 'ai-content-suite' ),
+				'resetConfirm' => __( 'Reset all prompt templates to the built-in defaults? Your custom edits will be lost.', 'ai-content-suite' ),
 			],
 		] );
 	}
@@ -307,6 +327,17 @@ final class AICS_Settings {
 		}
 
 		AICS_Logger::instance()->clear();
+		wp_send_json_success();
+	}
+
+	public function ajax_reset_prompts(): void {
+		check_ajax_referer( 'aics_admin', 'nonce' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'ai-content-suite' ) ], 403 );
+		}
+
+		delete_option( self::OPT_PROMPTS );
 		wp_send_json_success();
 	}
 

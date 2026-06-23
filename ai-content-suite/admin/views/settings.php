@@ -102,35 +102,50 @@
 <!-- ===== Prompt Templates ===== -->
 <h2 class="title"><?php esc_html_e( 'Prompt Templates', 'ai-content-suite' ); ?></h2>
 <p class="description">
-  <?php esc_html_e( 'Placeholders available: {{product_name}}, {{supplier_data}}. Leave blank to use the built-in default.', 'ai-content-suite' ); ?>
+  <?php esc_html_e( 'Placeholders available: {{product_name}}, {{supplier_data}}, {{store_context}}. Leave a field blank to use the built-in default.', 'ai-content-suite' ); ?>
+</p>
+<p>
+  <button type="button" id="aics-reset-prompts" class="button button-secondary">
+    <?php esc_html_e( '↺ Reset all prompts to defaults', 'ai-content-suite' ); ?>
+  </button>
+  <span class="description" style="margin-left:8px;"><?php esc_html_e( 'Restores the optimised built-in prompts (discards your edits).', 'ai-content-suite' ); ?></span>
 </p>
 
 <?php foreach ( $task_labels as $task => $task_label ) :
+  // Show a stored value only when it is a real customisation; otherwise the default.
   $p = [
-    'system'        => $stored_prompts[ $task ]['system']        ?? $default_prompts[ $task ]['system'],
-    'user_template' => $stored_prompts[ $task ]['user_template'] ?? $default_prompts[ $task ]['user_template'],
+    'system'        => ! empty( $stored_prompts[ $task ]['system'] )        ? $stored_prompts[ $task ]['system']        : ( $default_prompts[ $task ]['system'] ?? '' ),
+    'user_template' => ! empty( $stored_prompts[ $task ]['user_template'] ) ? $stored_prompts[ $task ]['user_template'] : ( $default_prompts[ $task ]['user_template'] ?? '' ),
   ];
+  $is_custom = ! empty( $stored_prompts[ $task ]['system'] ) || ! empty( $stored_prompts[ $task ]['user_template'] );
 ?>
 <details style="margin-bottom:12px; border:1px solid #ddd; border-radius:4px; padding:8px 12px;">
   <summary style="font-weight:600; cursor:pointer; padding:4px 0;">
     <?php echo esc_html( $task_label ); ?>
+    <?php if ( $is_custom ) : ?>
+      <span style="color:#2271b1; font-weight:normal; font-size:12px;">— <?php esc_html_e( 'customised', 'ai-content-suite' ); ?></span>
+    <?php else : ?>
+      <span style="color:#999; font-weight:normal; font-size:12px;">— <?php esc_html_e( 'default', 'ai-content-suite' ); ?></span>
+    <?php endif; ?>
   </summary>
   <table class="form-table" role="presentation" style="margin-top:8px;">
     <tr>
-      <th scope="row" style="width:180px;"><?php esc_html_e( 'System prompt', 'ai-content-suite' ); ?></th>
+      <th scope="row" style="width:160px; vertical-align:top; padding-top:14px;"><?php esc_html_e( 'System prompt', 'ai-content-suite' ); ?></th>
       <td>
         <textarea
           name="<?php echo esc_attr( AICS_Settings::OPT_PROMPTS . '[' . $task . '][system]' ); ?>"
-          rows="4" class="large-text"
+          rows="10" class="large-text code"
+          style="width:100%; min-height:200px; font-family:Menlo,Consolas,monospace; font-size:13px; line-height:1.5;"
         ><?php echo esc_textarea( $p['system'] ); ?></textarea>
       </td>
     </tr>
     <tr>
-      <th scope="row"><?php esc_html_e( 'User prompt template', 'ai-content-suite' ); ?></th>
+      <th scope="row" style="vertical-align:top; padding-top:14px;"><?php esc_html_e( 'User prompt template', 'ai-content-suite' ); ?></th>
       <td>
         <textarea
           name="<?php echo esc_attr( AICS_Settings::OPT_PROMPTS . '[' . $task . '][user_template]' ); ?>"
-          rows="5" class="large-text"
+          rows="6" class="large-text code"
+          style="width:100%; min-height:120px; font-family:Menlo,Consolas,monospace; font-size:13px; line-height:1.5;"
         ><?php echo esc_textarea( $p['user_template'] ); ?></textarea>
         <p class="description"><?php esc_html_e( 'Use {{product_name}} and {{supplier_data}} as placeholders.', 'ai-content-suite' ); ?></p>
       </td>
