@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       AI Content Suite for WooCommerce
- * Plugin URI:        https://github.com/kenteush29/AI-suite-for-Woocommerce
+ * Plugin URI:        https://github.com/kenteush29/ai-suite-for-woocommerce
  * Description:       Generates product content via Claude API with ACF + WPML support.
  * Version:           1.0.0
  * Requires at least: 6.0
@@ -14,12 +14,14 @@
 
 defined( 'ABSPATH' ) || exit;
 
+// Constants.
 define( 'AICS_VERSION',   '1.0.0' );
 define( 'AICS_FILE',      __FILE__ );
 define( 'AICS_DIR',       plugin_dir_path( __FILE__ ) );
 define( 'AICS_URL',       plugin_dir_url( __FILE__ ) );
 define( 'AICS_SLUG',      'ai-content-suite' );
 
+// Autoloader.
 spl_autoload_register( function ( string $class ): void {
 	if ( strpos( $class, 'AICS_' ) !== 0 ) {
 		return;
@@ -30,9 +32,13 @@ spl_autoload_register( function ( string $class ): void {
 	}
 } );
 
+// Activation / deactivation hooks.
 register_activation_hook( __FILE__, [ 'AICS_Plugin', 'activate' ] );
 register_deactivation_hook( __FILE__, [ 'AICS_Plugin', 'deactivate' ] );
 
+/**
+ * Core bootstrap class.
+ */
 final class AICS_Plugin {
 
 	private static ?self $instance = null;
@@ -53,13 +59,17 @@ final class AICS_Plugin {
 			add_action( 'admin_notices', [ $this, 'notice_woo_missing' ] );
 			return;
 		}
+
 		load_plugin_textdomain( 'ai-content-suite', false, dirname( plugin_basename( AICS_FILE ) ) . '/languages' );
+
 		AICS_Settings::instance();
 		AICS_Field_Mapper::instance();
 		AICS_Logger::instance();
+		AICS_Product_Metabox::instance();
 	}
 
 	public static function activate(): void {
+		// Nothing to set up on activation for now.
 		flush_rewrite_rules();
 	}
 
