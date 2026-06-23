@@ -1,0 +1,8 @@
+.aics-wrap h2.title { margin-top: 1.5em; }
+.aics-mapping-table th, .aics-mapping-table td { padding: 10px 12px; vertical-align: top; }
+.aics-mapping-table thead th { background: #f0f0f0; font-weight: 600; }
+.aics-field-select { min-width: 280px; }
+.aics-status-ok { color: #0a7040; font-weight: 600; }
+.aics-status-err { color: #c0392b; font-weight: 600; }
+.aics-log-table { font-size: 12px; }
+#aics-test-result .notice { display: inline-block; padding: 8px 14px; }
