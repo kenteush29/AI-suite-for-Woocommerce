@@ -23,10 +23,6 @@ final class AICS_Product_Metabox {
 		add_action( 'wp_ajax_aics_apply_field',    [ $this, 'ajax_apply_field' ] );
 	}
 
-	// -------------------------------------------------------------------------
-	// Metabox registration
-	// -------------------------------------------------------------------------
-
 	public function register_metabox(): void {
 		add_meta_box(
 			'aics-content-generator',
@@ -72,10 +68,6 @@ final class AICS_Product_Metabox {
 		] );
 	}
 
-	// -------------------------------------------------------------------------
-	// Render
-	// -------------------------------------------------------------------------
-
 	public function render( \WP_Post $post ): void {
 		$mapper  = AICS_Field_Mapper::instance();
 		$mapping = $mapper->get_mapping();
@@ -90,10 +82,6 @@ final class AICS_Product_Metabox {
 
 		require AICS_DIR . 'admin/views/metabox.php';
 	}
-
-	// -------------------------------------------------------------------------
-	// AJAX: generate content for a single field
-	// -------------------------------------------------------------------------
 
 	public function ajax_generate_field(): void {
 		check_ajax_referer( 'aics_admin', 'nonce' );
@@ -122,15 +110,15 @@ final class AICS_Product_Metabox {
 		$supplier_data  = $mapper->read( 'source_supplier_data', $post_id );
 		$product_title  = $mapper->read( 'source_product_title', $post_id );
 
-		// Fall back to WP post title if source slots are not mapped.
 		if ( empty( $product_title ) ) {
 			$product_title = get_the_title( $post_id );
 		}
 
 		$task          = str_replace( 'dest_', '', $slot );
 		$model         = AICS_Settings::get_model_for_task( $task );
-		$user_prompt   = $this->build_user_prompt( $task, $product_title, $supplier_data );
-		$system_prompt = $this->get_system_prompt( $task );
+		$prompt        = AICS_Settings::get_prompt( $task );
+		$user_prompt   = $this->render_user_template( $prompt['user_template'], $product_title, $supplier_data );
+		$system_prompt = $prompt['system'];
 
 		try {
 			$client = new AICS_Api_Client( $api_key, $model );
@@ -150,10 +138,6 @@ final class AICS_Product_Metabox {
 			wp_send_json_error( [ 'message' => $e->getMessage() ] );
 		}
 	}
-
-	// -------------------------------------------------------------------------
-	// AJAX: write a value to a mapped field
-	// -------------------------------------------------------------------------
 
 	public function ajax_apply_field(): void {
 		check_ajax_referer( 'aics_admin', 'nonce' );
@@ -179,49 +163,11 @@ final class AICS_Product_Metabox {
 		}
 	}
 
-	// -------------------------------------------------------------------------
-	// Prompt builders
-	// -------------------------------------------------------------------------
-
-	private function build_user_prompt( string $task, string $title, string $supplier_data ): string {
-		$lines = [];
-
-		if ( $title ) {
-			$lines[] = 'Product name: ' . $title;
-		}
-		if ( $supplier_data ) {
-			$lines[] = "Supplier / source data:\n" . $supplier_data;
-		}
-
-		$what = match ( $task ) {
-			'seo_title'         => 'an SEO title (maximum 60 characters)',
-			'short_description' => 'a short product description (1 to 2 sentences)',
-			'long_description'  => 'a detailed product description (3 to 5 paragraphs)',
-			default             => 'relevant product content',
-		};
-
-		$lines[] = "\nWrite {$what} for this product.";
-
-		return implode( "\n", $lines );
-	}
-
-	private function get_system_prompt( string $task ): string {
-		return match ( $task ) {
-			'seo_title' =>
-				'You are an SEO specialist. Write a concise, keyword-rich SEO title for a WooCommerce product. ' .
-				'Maximum 60 characters. Return only the title — no quotes, no extra text.',
-
-			'short_description' =>
-				'You are a product copywriter. Write a compelling 1–2 sentence short description for a WooCommerce product. ' .
-				'Highlight the key benefit. Return only the description text.',
-
-			'long_description' =>
-				'You are a product copywriter. Write a detailed, persuasive product description for WooCommerce. ' .
-				'Use short paragraphs. Avoid markdown headers. Return only the description text.',
-
-			default =>
-				'You are a product content specialist. Generate clear, professional product content ' .
-				'based on the provided information. Return only the content text.',
-		};
+	private function render_user_template( string $template, string $title, string $supplier_data ): string {
+		return str_replace(
+			[ '{{product_name}}', '{{supplier_data}}' ],
+			[ $title, $supplier_data ],
+			$template
+		);
 	}
 }

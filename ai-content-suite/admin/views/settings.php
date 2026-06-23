@@ -1,6 +1,6 @@
 <?php defined( 'ABSPATH' ) || exit; ?>
 <div class="wrap aics-wrap">
-<h1><?php esc_html_e( 'AI Content Suite - Settings', 'ai-content-suite' ); ?></h1>
+<h1><?php esc_html_e( 'AI Content Suite — Settings', 'ai-content-suite' ); ?></h1>
 
 <?php if ( isset( $_GET['settings-updated'] ) ) : ?>
 <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ai-content-suite' ); ?></p></div>
@@ -9,20 +9,25 @@
 <form method="post" action="options.php">
 <?php settings_fields( 'aics_options' ); ?>
 
+<!-- ===== API Key ===== -->
 <h2 class="title"><?php esc_html_e( 'Anthropic API', 'ai-content-suite' ); ?></h2>
 <table class="form-table" role="presentation">
 <tr>
-  <th scope="row"><label for="aics_api_key"><?php esc_html_e( 'API Key', 'ai-content-suite' ); ?></label></th>
+  <th scope="row"><label for="aics_api_key_input"><?php esc_html_e( 'API Key', 'ai-content-suite' ); ?></label></th>
   <td>
-    <input type="password" id="aics_api_key"
+    <input type="password" id="aics_api_key_input"
       name="<?php echo esc_attr( AICS_Settings::OPT_API_KEY ); ?>"
       value="" class="regular-text" autocomplete="new-password"
-      placeholder="<?php echo $api_key_set ? esc_attr__( '(key saved - enter new value to replace)', 'ai-content-suite' ) : 'sk-ant-...'; ?>" />
+      placeholder="<?php echo $api_key_set ? esc_attr__( '(key saved — enter new value to replace)', 'ai-content-suite' ) : 'sk-ant-...'; ?>" />
+    <?php if ( $api_key_set ) : ?>
+      <span style="color:#0a7040; margin-left:8px;">&#10003; <?php esc_html_e( 'Key is saved', 'ai-content-suite' ); ?></span>
+    <?php endif; ?>
     <p class="description"><?php esc_html_e( 'Leave blank to keep the existing key. Paste a new value to replace it.', 'ai-content-suite' ); ?></p>
   </td>
 </tr>
 </table>
 
+<!-- ===== Models ===== -->
 <h2 class="title"><?php esc_html_e( 'Models', 'ai-content-suite' ); ?></h2>
 <table class="form-table" role="presentation">
 <tr>
@@ -40,7 +45,7 @@
   <th scope="row"><?php echo esc_html( sprintf( __( 'Model for: %s', 'ai-content-suite' ), $task_label ) ); ?></th>
   <td>
     <select name="<?php echo esc_attr( AICS_Settings::OPT_MODEL_OVERRIDES . '[' . $task . ']' ); ?>">
-      <option value=""><?php esc_html_e( '- use default -', 'ai-content-suite' ); ?></option>
+      <option value=""><?php esc_html_e( '— use default —', 'ai-content-suite' ); ?></option>
       <?php foreach ( $available_models as $id => $label ) : ?>
         <option value="<?php echo esc_attr( $id ); ?>" <?php selected( $override, $id ); ?>><?php echo esc_html( $label ); ?></option>
       <?php endforeach; ?>
@@ -50,6 +55,7 @@
 <?php endforeach; ?>
 </table>
 
+<!-- ===== Behaviour ===== -->
 <h2 class="title"><?php esc_html_e( 'Behaviour', 'ai-content-suite' ); ?></h2>
 <table class="form-table" role="presentation">
 <tr>
@@ -63,6 +69,7 @@
 </tr>
 </table>
 
+<!-- ===== Cost Guardrails ===== -->
 <h2 class="title"><?php esc_html_e( 'Cost Guardrails', 'ai-content-suite' ); ?></h2>
 <p class="description"><?php esc_html_e( 'Set 0 to disable a limit.', 'ai-content-suite' ); ?></p>
 <table class="form-table" role="presentation">
@@ -76,10 +83,51 @@
 </tr>
 </table>
 
+<!-- ===== Prompt Templates ===== -->
+<h2 class="title"><?php esc_html_e( 'Prompt Templates', 'ai-content-suite' ); ?></h2>
+<p class="description">
+  <?php esc_html_e( 'Placeholders available: {{product_name}}, {{supplier_data}}. Leave blank to use the built-in default.', 'ai-content-suite' ); ?>
+</p>
+
+<?php foreach ( $task_labels as $task => $task_label ) :
+  $p = [
+    'system'        => $stored_prompts[ $task ]['system']        ?? $default_prompts[ $task ]['system'],
+    'user_template' => $stored_prompts[ $task ]['user_template'] ?? $default_prompts[ $task ]['user_template'],
+  ];
+?>
+<details style="margin-bottom:12px; border:1px solid #ddd; border-radius:4px; padding:8px 12px;">
+  <summary style="font-weight:600; cursor:pointer; padding:4px 0;">
+    <?php echo esc_html( $task_label ); ?>
+  </summary>
+  <table class="form-table" role="presentation" style="margin-top:8px;">
+    <tr>
+      <th scope="row" style="width:180px;"><?php esc_html_e( 'System prompt', 'ai-content-suite' ); ?></th>
+      <td>
+        <textarea
+          name="<?php echo esc_attr( AICS_Settings::OPT_PROMPTS . '[' . $task . '][system]' ); ?>"
+          rows="4" class="large-text"
+        ><?php echo esc_textarea( $p['system'] ); ?></textarea>
+      </td>
+    </tr>
+    <tr>
+      <th scope="row"><?php esc_html_e( 'User prompt template', 'ai-content-suite' ); ?></th>
+      <td>
+        <textarea
+          name="<?php echo esc_attr( AICS_Settings::OPT_PROMPTS . '[' . $task . '][user_template]' ); ?>"
+          rows="5" class="large-text"
+        ><?php echo esc_textarea( $p['user_template'] ); ?></textarea>
+        <p class="description"><?php esc_html_e( 'Use {{product_name}} and {{supplier_data}} as placeholders.', 'ai-content-suite' ); ?></p>
+      </td>
+    </tr>
+  </table>
+</details>
+<?php endforeach; ?>
+
 <?php submit_button(); ?>
 </form>
 
 <hr />
+<!-- ===== Connection Test ===== -->
 <h2><?php esc_html_e( 'API Connection Test', 'ai-content-suite' ); ?></h2>
 <p><?php esc_html_e( 'Sends a trivial prompt to Claude using the saved key and default model.', 'ai-content-suite' ); ?></p>
 <button type="button" id="aics-test-api" class="button button-secondary"><?php esc_html_e( 'Test API connection', 'ai-content-suite' ); ?></button>
@@ -87,6 +135,7 @@
 <div id="aics-test-result" style="margin-top:12px;"></div>
 
 <hr />
+<!-- ===== Log ===== -->
 <h2><?php esc_html_e( 'API Call Log', 'ai-content-suite' ); ?></h2>
 <?php if ( empty( $log ) ) : ?>
   <p><?php esc_html_e( 'No calls logged yet.', 'ai-content-suite' ); ?></p>
