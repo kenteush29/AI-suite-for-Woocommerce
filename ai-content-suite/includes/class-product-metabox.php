@@ -80,6 +80,12 @@ final class AICS_Product_Metabox {
 			'dest_custom_2'           => __( 'Custom Field 2', 'ai-content-suite' ),
 		];
 
+		// Build DOM target info per slot so JS can live-update the page fields.
+		$dom_targets = [];
+		foreach ( $dest_slots as $slot => $_ ) {
+			$dom_targets[ $slot ] = $this->resolve_dom_target( $mapping[ $slot ] ?? null );
+		}
+
 		require AICS_DIR . 'admin/views/metabox.php';
 	}
 
@@ -169,5 +175,44 @@ final class AICS_Product_Metabox {
 			[ $title, $supplier_data ],
 			$template
 		);
+	}
+
+	/**
+	 * Returns DOM target info for a mapped field so JS can live-update the page.
+	 * [ 'id' => string, 'type' => 'input|tinymce|acf_text|rankmath|none' ]
+	 */
+	private function resolve_dom_target( ?array $dest ): array {
+		if ( ! $dest ) {
+			return [ 'id' => '', 'type' => 'none' ];
+		}
+
+		switch ( $dest['type'] ) {
+			case 'woo_native':
+				return match ( $dest['field'] ) {
+					'post_title'   => [ 'id' => 'title',   'type' => 'input' ],
+					'post_excerpt' => [ 'id' => 'excerpt', 'type' => 'tinymce' ],
+					'post_content' => [ 'id' => 'content', 'type' => 'tinymce' ],
+					default        => [ 'id' => '', 'type' => 'none' ],
+				};
+
+			case 'acf':
+				// ACF renders inputs with id="acf-{field_key}" for text/textarea,
+				// and a TinyMCE editor with id="{field_key}" for wysiwyg.
+				$key = $dest['field_key'] ?? '';
+				return [ 'id' => $key, 'type' => 'acf' ];
+
+			case 'seo_meta':
+				$selectors = [
+					'rank_math_title'        => [ 'id' => 'rank-math-title',       'type' => 'input' ],
+					'rank_math_description'  => [ 'id' => 'rank-math-description', 'type' => 'input' ],
+					'rank_math_focus_keyword'=> [ 'id' => 'rank-math-focus-keyword','type' => 'input' ],
+					'_yoast_wpseo_title'     => [ 'id' => 'yoast_wpseo_title',     'type' => 'input' ],
+					'_yoast_wpseo_metadesc'  => [ 'id' => 'yoast_wpseo_metadesc',  'type' => 'input' ],
+				];
+				return $selectors[ $dest['meta_key'] ] ?? [ 'id' => '', 'type' => 'none' ];
+
+			default:
+				return [ 'id' => '', 'type' => 'none' ];
+		}
 	}
 }

@@ -24,8 +24,12 @@
 		<tbody>
 		<?php foreach ( $dest_slots as $slot => $label ) :
 			$is_mapped = isset( $mapping[ $slot ] );
+			$target    = $dom_targets[ $slot ] ?? [ 'id' => '', 'type' => 'none' ];
 		?>
-			<tr class="aics-gen-row" data-slot="<?php echo esc_attr( $slot ); ?>">
+			<tr class="aics-gen-row"
+				data-slot="<?php echo esc_attr( $slot ); ?>"
+				data-target-id="<?php echo esc_attr( $target['id'] ); ?>"
+				data-target-type="<?php echo esc_attr( $target['type'] ); ?>">
 				<td>
 					<strong><?php echo esc_html( $label ); ?></strong>
 					<?php if ( ! $is_mapped ) : ?>

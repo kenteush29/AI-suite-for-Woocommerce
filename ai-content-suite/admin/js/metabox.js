@@ -48,11 +48,13 @@
 
 	// ---- Apply button ----
 	$(document).on('click', '.aics-btn-apply', function () {
-		var $row    = $(this).closest('.aics-gen-row');
-		var $btn    = $(this);
-		var $status = $row.find('.aics-gen-status');
-		var slot    = $row.data('slot');
-		var value   = $row.find('.aics-preview-area').val();
+		var $row       = $(this).closest('.aics-gen-row');
+		var $btn       = $(this);
+		var $status    = $row.find('.aics-gen-status');
+		var slot       = $row.data('slot');
+		var targetId   = $row.data('target-id');
+		var targetType = $row.data('target-type');
+		var value      = $row.find('.aics-preview-area').val();
 
 		$btn.prop('disabled', true).text(i18n.applying);
 
@@ -67,6 +69,9 @@
 			if (res.success) {
 				$status.text(i18n.applied).css('color', '#0a7040');
 				$btn.hide();
+				if (targetId) {
+					liveUpdateField(targetId, targetType, value);
+				}
 			} else {
 				$status.text(i18n.error + ' ' + res.data.message).css('color', '#c0392b');
 				$btn.prop('disabled', false).text(i18n.apply);
@@ -77,5 +82,37 @@
 			$btn.prop('disabled', false).text(i18n.apply);
 		});
 	});
+
+	// ---- Live-update the page field after apply ----
+	function liveUpdateField(id, type, value) {
+		switch (type) {
+			case 'input':
+				$('#' + id).val(value).trigger('change');
+				break;
+
+			case 'tinymce':
+				// Try TinyMCE visual editor first, fall back to plain textarea.
+				if (typeof tinyMCE !== 'undefined' && tinyMCE.get(id)) {
+					tinyMCE.get(id).setContent(value);
+				}
+				$('#' + id).val(value);
+				break;
+
+			case 'acf':
+				// ACF text/textarea: input id is "acf-{field_key}".
+				var $acfInput = $('#acf-' + id);
+				if ($acfInput.length) {
+					$acfInput.val(value).trigger('change');
+				} else if (typeof tinyMCE !== 'undefined' && tinyMCE.get(id)) {
+					// wysiwyg ACF field uses the field_key as editor id.
+					tinyMCE.get(id).setContent(value);
+				}
+				break;
+
+			case 'rankmath':
+				$('#' + id).val(value).trigger('input').trigger('change');
+				break;
+		}
+	}
 
 }(jQuery));
