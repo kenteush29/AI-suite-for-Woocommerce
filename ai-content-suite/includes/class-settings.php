@@ -56,7 +56,7 @@ final class AICS_Settings {
 
 	public static function get_model_for_task( string $task ): string {
 		$overrides = get_option( self::OPT_MODEL_OVERRIDES, [] );
-		return $overrides[ $task ] ?? self::get_default_model();
+		return ( ! empty( $overrides[ $task ] ) ) ? $overrides[ $task ] : self::get_default_model();
 	}
 
 	public static function is_preview_mode(): bool {
