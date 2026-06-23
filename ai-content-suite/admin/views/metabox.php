@@ -77,4 +77,20 @@
 		?>
 	</p>
 
+	<?php if ( AICS_Wpml_Translate::is_wpml_active() ) : ?>
+	<div id="aics-wpml-section" style="margin-top:16px; padding:12px; border:1px solid #ddd; border-radius:4px; background:#fafafa;">
+		<strong><?php esc_html_e( 'WPML Translation', 'ai-content-suite' ); ?></strong>
+		<p style="margin:6px 0 10px; color:#666; font-size:12px;">
+			<?php esc_html_e( 'Translate all applied content to the other language versions of this product.', 'ai-content-suite' ); ?>
+		</p>
+		<div id="aics-wpml-languages" style="margin-bottom:8px;">
+			<span style="color:#999;"><?php esc_html_e( 'Loading languages…', 'ai-content-suite' ); ?></span>
+		</div>
+		<button type="button" id="aics-btn-translate-all" class="button" style="display:none;">
+			<?php esc_html_e( 'Translate all fields', 'ai-content-suite' ); ?>
+		</button>
+		<div id="aics-wpml-status" style="margin-top:8px; font-size:12px;"></div>
+	</div>
+	<?php endif; ?>
+
 </div>

@@ -66,6 +66,8 @@ final class AICS_Plugin {
 		AICS_Field_Mapper::instance();
 		AICS_Logger::instance();
 		AICS_Product_Metabox::instance();
+		AICS_Wpml_Translate::instance();
+		AICS_Bulk_Generate::instance();
 	}
 
 	public static function activate(): void {

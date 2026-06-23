@@ -9,6 +9,22 @@
 <form method="post" action="options.php">
 <?php settings_fields( 'aics_options' ); ?>
 
+<!-- ===== Store Context ===== -->
+<h2 class="title"><?php esc_html_e( 'Store Context', 'ai-content-suite' ); ?></h2>
+<p class="description"><?php esc_html_e( 'Describe your store, brand, niche, or audience. This text is injected wherever {{store_context}} appears in system prompts.', 'ai-content-suite' ); ?></p>
+<table class="form-table" role="presentation">
+<tr>
+  <th scope="row"><label for="aics_store_context"><?php esc_html_e( 'Store context', 'ai-content-suite' ); ?></label></th>
+  <td>
+    <textarea id="aics_store_context" name="<?php echo esc_attr( AICS_Settings::OPT_STORE_CONTEXT ); ?>"
+      rows="4" class="large-text"
+      placeholder="<?php esc_attr_e( 'e.g. This is a military and tactical gear store targeting law enforcement, outdoor enthusiasts, and survivalists.', 'ai-content-suite' ); ?>"
+    ><?php echo esc_textarea( $store_context ); ?></textarea>
+    <p class="description"><?php esc_html_e( 'Leave blank to omit. Example: "We sell premium tactical outdoor gear for law enforcement and adventurers."', 'ai-content-suite' ); ?></p>
+  </td>
+</tr>
+</table>
+
 <!-- ===== API Key ===== -->
 <h2 class="title"><?php esc_html_e( 'Anthropic API', 'ai-content-suite' ); ?></h2>
 <table class="form-table" role="presentation">

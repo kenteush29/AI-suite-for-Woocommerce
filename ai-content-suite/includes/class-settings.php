@@ -19,6 +19,7 @@ final class AICS_Settings {
 	public const OPT_MAX_CALLS_DAY   = 'aics_max_calls_day';
 	public const OPT_CALLS_COUNT     = 'aics_calls_count';
 	public const OPT_PROMPTS         = 'aics_prompts';
+	public const OPT_STORE_CONTEXT   = 'aics_store_context';
 
 	private static ?self $instance = null;
 
@@ -59,6 +60,10 @@ final class AICS_Settings {
 		return ( ! empty( $overrides[ $task ] ) ) ? $overrides[ $task ] : self::get_default_model();
 	}
 
+	public static function get_store_context(): string {
+		return (string) get_option( self::OPT_STORE_CONTEXT, '' );
+	}
+
 	public static function is_preview_mode(): bool {
 		return (bool) get_option( self::OPT_PREVIEW_MODE, true );
 	}
@@ -68,11 +73,15 @@ final class AICS_Settings {
 	 * Returns [ 'system' => string, 'user_template' => string ]
 	 */
 	public static function get_prompt( string $task ): array {
-		$stored   = get_option( self::OPT_PROMPTS, [] );
-		$defaults = self::default_prompts();
+		$stored        = get_option( self::OPT_PROMPTS, [] );
+		$defaults      = self::default_prompts();
+		$store_context = self::get_store_context();
+
+		$system = $stored[ $task ]['system'] ?? $defaults[ $task ]['system'] ?? '';
+		$system = str_replace( '{{store_context}}', $store_context, $system );
 
 		return [
-			'system'        => $stored[ $task ]['system']        ?? $defaults[ $task ]['system']        ?? '',
+			'system'        => $system,
 			'user_template' => $stored[ $task ]['user_template'] ?? $defaults[ $task ]['user_template'] ?? '',
 		];
 	}
@@ -127,24 +136,24 @@ final class AICS_Settings {
 	public static function default_prompts(): array {
 		return [
 			'seo_title' => [
-				'system'        => 'You are an SEO specialist. Write a concise, keyword-rich SEO title for a WooCommerce product. Maximum 60 characters. Return only the title — no quotes, no extra text.',
-				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite an SEO title (maximum 60 characters) for this product.",
+				'system'        => 'Write a Google SERP meta description of maximum 155 characters for a product. {{store_context}} Originality level 7/10. Use a captivating, original sentence structure to increase CTR. English. Return only the meta description, nothing else.',
+				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite a meta description (maximum 155 characters).",
 			],
 			'short_description' => [
-				'system'        => 'You are a product copywriter. Write a compelling 1–2 sentence short description for a WooCommerce product. Highlight the key benefit. Return only the description text.',
-				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite a short product description (1 to 2 sentences) for this product.",
+				'system'        => 'Write a short product description of approximately 20 words for a product page visitor. {{store_context}} Originality level 8/10. Focus on what makes this product stand out from others in its category. Use customer language with usage examples or specific selling points. No generic marketing phrases. English. Return only the description, nothing else.',
+				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite a short product description (approximately 20 words).",
 			],
 			'long_description' => [
-				'system'        => 'You are a product copywriter. Write a detailed, persuasive product description for WooCommerce. Use short paragraphs. Avoid markdown headers. Return only the description text.',
-				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite a detailed product description (3 to 5 paragraphs) for this product.",
+				'system'        => 'Write a product description for a product page visitor. {{store_context}} Instructions: Include one H2 subtitle highlighting the main product characteristic (format: <h2>subtitle</h2>). The H2 must be creative — never use "ultimate versatility". Total length: approximately 50 words. Adapt to the product: use case, season, activity, terrain, color range. Do not mention sizes. Do not cite unknown suppliers. Write like a human: integrate cognitive biases and emotions, no repetitive AI patterns. English, informative and expert tone. Return only the description, nothing else.',
+				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite a detailed product description with one H2 subtitle.",
 			],
 			'custom_1' => [
-				'system'        => 'You are a product content specialist. Generate clear, professional product content based on the provided information. Return only the content text.',
-				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite relevant product content for this product.",
+				'system'        => 'Write an additional product description of 30-40 words for a product page visitor. {{store_context}} Instructions: Include one H2 subtitle that develops a secondary key aspect of the product (format: <h2>subtitle</h2>). The text below the H2 must expand on that H2 topic. Do not repeat the product title. Do not repeat content from the main product description. English, informative tone. Return only the content, nothing else.',
+				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite a secondary product description (30-40 words) with one H2 subtitle.",
 			],
 			'custom_2' => [
-				'system'        => 'You are a product content specialist. Generate clear, professional product content based on the provided information. Return only the content text.',
-				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite relevant product content for this product.",
+				'system'        => 'Write a bullet list of product characteristics for a product page. {{store_context}} Instructions: Format as HTML <ul><li>point</li></ul>. Use <strong> sparingly for the most important elements. No italic, no numbered list. Focus on what makes this product unique and different from others. Include quantified data (materials, specs) when available. Do not mention sizes, unknown brand names, dropshipping info, or China origin. Improve or invent characteristics if supplier data is poor quality. No repetitive AI patterns. Return only the bullet list, nothing else.',
+				'user_template' => "Product name: {{product_name}}\nSupplier data:\n{{supplier_data}}\n\nWrite a bullet list of product characteristics as HTML <ul><li> list.",
 			],
 		];
 	}
@@ -190,6 +199,9 @@ final class AICS_Settings {
 		] );
 		register_setting( self::OPTION_GROUP, self::OPT_PROMPTS, [
 			'sanitize_callback' => [ $this, 'sanitize_prompts' ],
+		] );
+		register_setting( self::OPTION_GROUP, self::OPT_STORE_CONTEXT, [
+			'sanitize_callback' => 'sanitize_textarea_field',
 		] );
 	}
 
@@ -320,12 +332,14 @@ final class AICS_Settings {
 		];
 
 		$task_labels = [
-			'seo_title'         => __( 'SEO title', 'ai-content-suite' ),
-			'short_description' => __( 'Short description', 'ai-content-suite' ),
-			'long_description'  => __( 'Long description', 'ai-content-suite' ),
-			'custom_1'          => __( 'Custom field 1', 'ai-content-suite' ),
-			'custom_2'          => __( 'Custom field 2', 'ai-content-suite' ),
+			'seo_title'         => __( 'SEO meta description (155 chars)', 'ai-content-suite' ),
+			'short_description' => __( 'Short description (~20 words)', 'ai-content-suite' ),
+			'long_description'  => __( 'Long description (H2 + ~50 words)', 'ai-content-suite' ),
+			'custom_1'          => __( 'Branding description (H2 + 30-40 words)', 'ai-content-suite' ),
+			'custom_2'          => __( 'Characteristics bullet list (HTML)', 'ai-content-suite' ),
 		];
+
+		$store_context = self::get_store_context();
 
 		require AICS_DIR . 'admin/views/settings.php';
 	}
