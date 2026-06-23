@@ -33,10 +33,10 @@ final class AICS_Settings {
 	private function __construct() {
 		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
 		add_action( 'admin_init',            [ $this, 'register_settings' ] );
+		add_action( 'admin_init',            [ $this, 'handle_reset_prompts' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_ajax_aics_test_connection', [ $this, 'ajax_test_connection' ] );
 		add_action( 'wp_ajax_aics_clear_log',       [ $this, 'ajax_clear_log' ] );
-		add_action( 'wp_ajax_aics_reset_prompts',   [ $this, 'ajax_reset_prompts' ] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -330,15 +330,20 @@ final class AICS_Settings {
 		wp_send_json_success();
 	}
 
-	public function ajax_reset_prompts(): void {
-		check_ajax_referer( 'aics_admin', 'nonce' );
-
-		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'ai-content-suite' ) ], 403 );
+	/**
+	 * Handles the GET-param reset link (no JS dependency).
+	 */
+	public function handle_reset_prompts(): void {
+		if ( ! isset( $_GET['aics_action'] ) || $_GET['aics_action'] !== 'reset_prompts' ) {
+			return;
 		}
-
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			return;
+		}
+		check_admin_referer( 'aics_reset_prompts' );
 		delete_option( self::OPT_PROMPTS );
-		wp_send_json_success();
+		wp_redirect( admin_url( 'admin.php?page=aics-settings&aics_reset=1' ) );
+		exit;
 	}
 
 	// -------------------------------------------------------------------------

@@ -6,6 +6,10 @@
 <div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'ai-content-suite' ); ?></p></div>
 <?php endif; ?>
 
+<?php if ( isset( $_GET['aics_reset'] ) ) : ?>
+<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Prompts reset to built-in defaults.', 'ai-content-suite' ); ?></p></div>
+<?php endif; ?>
+
 <form method="post" action="options.php">
 <?php settings_fields( 'aics_options' ); ?>
 
@@ -105,10 +109,12 @@
   <?php esc_html_e( 'Placeholders available: {{product_name}}, {{supplier_data}}, {{store_context}}. Leave a field blank to use the built-in default.', 'ai-content-suite' ); ?>
 </p>
 <p>
-  <button type="button" id="aics-reset-prompts" class="button button-secondary">
+  <a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin.php?page=aics-settings&aics_action=reset_prompts' ), 'aics_reset_prompts' ) ); ?>"
+     class="button button-secondary"
+     onclick="return confirm('<?php esc_attr_e( 'Reset all prompt templates to the built-in defaults? Your customisations will be lost.', 'ai-content-suite' ); ?>');">
     <?php esc_html_e( '↺ Reset all prompts to defaults', 'ai-content-suite' ); ?>
-  </button>
-  <span class="description" style="margin-left:8px;"><?php esc_html_e( 'Restores the optimised built-in prompts (discards your edits).', 'ai-content-suite' ); ?></span>
+  </a>
+  <span class="description" style="margin-left:8px;"><?php esc_html_e( 'Restores the optimised built-in prompts and discards any custom edits.', 'ai-content-suite' ); ?></span>
 </p>
 
 <?php foreach ( $task_labels as $task => $task_label ) :

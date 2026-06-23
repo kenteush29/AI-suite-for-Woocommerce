@@ -19,10 +19,9 @@ final class AICS_Product_Actions {
 	}
 
 	private function __construct() {
-		add_action( 'admin_enqueue_scripts',     [ $this, 'enqueue_assets' ] );
-		add_action( 'restrict_manage_posts',      [ $this, 'render_toolbar_buttons' ] );
-		add_filter( 'post_row_actions',           [ $this, 'add_row_actions' ], 10, 2 );
-		add_action( 'admin_footer',               [ $this, 'render_modals' ] );
+		add_action( 'admin_enqueue_scripts',  [ $this, 'enqueue_assets' ] );
+		add_action( 'restrict_manage_posts', [ $this, 'render_toolbar_buttons' ] );
+		add_filter( 'post_row_actions',      [ $this, 'add_row_actions' ], 10, 2 );
 
 		add_action( 'wp_ajax_aics_pa_generate',  [ $this, 'ajax_generate' ] );
 		add_action( 'wp_ajax_aics_pa_translate', [ $this, 'ajax_translate' ] );
@@ -42,8 +41,14 @@ final class AICS_Product_Actions {
 	}
 
 	private function is_product_list_screen(): bool {
+		// Check screen object first (most reliable).
 		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
-		return $screen && $screen->id === 'edit-product';
+		if ( $screen ) {
+			return $screen->id === 'edit-product';
+		}
+		// Fallback: check URL globals (works even if screen isn't set yet).
+		return isset( $_GET['post_type'] ) && $_GET['post_type'] === 'product'
+			&& ( isset( $GLOBALS['pagenow'] ) && $GLOBALS['pagenow'] === 'edit.php' );
 	}
 
 	// -------------------------------------------------------------------------
@@ -51,12 +56,22 @@ final class AICS_Product_Actions {
 	// -------------------------------------------------------------------------
 
 	public function enqueue_assets( string $hook ): void {
-		if ( $hook !== 'edit.php' || ! $this->is_product_list_screen() ) {
+		// Accept edit.php or the WooCommerce variant; also check pagenow as fallback.
+		$is_edit = $hook === 'edit.php' || ( isset( $GLOBALS['pagenow'] ) && $GLOBALS['pagenow'] === 'edit.php' );
+		if ( ! $is_edit || ! $this->is_product_list_screen() ) {
 			return;
 		}
 
 		wp_enqueue_style( 'aics-admin', AICS_URL . 'admin/css/admin.css', [], AICS_VERSION );
 		wp_enqueue_script( 'aics-product-actions', AICS_URL . 'admin/js/product-actions.js', [ 'jquery' ], AICS_VERSION, true );
+
+		// Pre-render modal HTML so JS can inject it even if admin_footer missed it.
+		ob_start();
+		$slots     = $this->slots();
+		$languages = AICS_Wpml_Translate::get_active_languages();
+		$wpml      = AICS_Wpml_Translate::is_wpml_active();
+		require AICS_DIR . 'admin/views/product-actions-modals.php';
+		$modal_html = ob_get_clean();
 
 		wp_localize_script( 'aics-product-actions', 'aicsPA', [
 			'ajaxUrl'    => admin_url( 'admin-ajax.php' ),
@@ -64,6 +79,7 @@ final class AICS_Product_Actions {
 			'slots'      => $this->slots(),
 			'wpmlActive' => AICS_Wpml_Translate::is_wpml_active(),
 			'languages'  => AICS_Wpml_Translate::get_active_languages(),
+			'modalHtml'  => $modal_html,
 			'i18n'       => [
 				'generate'        => __( 'Generate content', 'ai-content-suite' ),
 				'translate'       => __( 'Translate content', 'ai-content-suite' ),
@@ -127,16 +143,6 @@ final class AICS_Product_Actions {
 			);
 		}
 		return $actions;
-	}
-
-	public function render_modals(): void {
-		if ( ! $this->is_product_list_screen() ) {
-			return;
-		}
-		$slots     = $this->slots();
-		$languages = AICS_Wpml_Translate::get_active_languages();
-		$wpml      = AICS_Wpml_Translate::is_wpml_active();
-		require AICS_DIR . 'admin/views/product-actions-modals.php';
 	}
 
 	// -------------------------------------------------------------------------

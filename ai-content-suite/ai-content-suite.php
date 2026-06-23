@@ -3,7 +3,7 @@
  * Plugin Name:       AI Content Suite for WooCommerce
  * Plugin URI:        https://github.com/kenteush29/ai-suite-for-woocommerce
  * Description:       Generates product content via Claude API with ACF + WPML support.
- * Version:           1.0.0
+ * Version:           1.1.0
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            AI Content Suite
@@ -15,7 +15,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Constants.
-define( 'AICS_VERSION',   '1.0.0' );
+define( 'AICS_VERSION',   '1.1.0' );
 define( 'AICS_FILE',      __FILE__ );
 define( 'AICS_DIR',       plugin_dir_path( __FILE__ ) );
 define( 'AICS_URL',       plugin_dir_url( __FILE__ ) );
