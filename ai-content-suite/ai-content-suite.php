@@ -10,6 +10,7 @@
  * License:           GPL-2.0-or-later
  * Text Domain:       ai-content-suite
  * Domain Path:       /languages
+ * Update URI:        https://github.com/kenteush29/AI-suite-for-Woocommerce
  */
 
 defined( 'ABSPATH' ) || exit;
@@ -55,6 +56,11 @@ final class AICS_Plugin {
 	}
 
 	public function init(): void {
+		// Update checker runs regardless of WooCommerce so updates always work.
+		if ( is_admin() ) {
+			AICS_Github_Updater::instance();
+		}
+
 		if ( ! class_exists( 'WooCommerce' ) ) {
 			add_action( 'admin_notices', [ $this, 'notice_woo_missing' ] );
 			return;
