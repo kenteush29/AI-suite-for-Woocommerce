@@ -37,7 +37,7 @@ so you can prioritise restocking by real demand.
 ## Installation
 
 1. Download `dazont-ecom.zip` from the
-   [latest release](https://github.com/kenteush29/AI-suite-for-Woocommerce/releases).
+   [latest release](https://github.com/kenteush29/Dazont-Ecom-for-WooCommerce/releases).
    *(Use the ZIP asset attached to the release, not the "Source code" archive.)*
 2. In WordPress: **Plugins → Add New → Upload Plugin** → select the ZIP →
    **Install** → **Activate**.

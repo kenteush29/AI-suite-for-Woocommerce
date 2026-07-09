@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name:       Dazont Ecom
- * Plugin URI:        https://github.com/kenteush29/AI-suite-for-Woocommerce
+ * Plugin URI:        https://github.com/kenteush29/Dazont-Ecom-for-WooCommerce
  * Description:       Dazont Ecom toolkit for WooCommerce. First module: Restock — lists out-of-stock product-lines ranked by total sales, with per-variation drill-down and WPML-aware sales aggregation. More modules coming.
  * Version:           1.0.0
  * Requires at least: 6.0
@@ -9,7 +9,7 @@
  * Author:            Dazont
  * License:           GPL-2.0-or-later
  * Text Domain:       dazont-ecom
- * Update URI:        https://github.com/kenteush29/AI-suite-for-Woocommerce
+ * Update URI:        https://github.com/kenteush29/Dazont-Ecom-for-WooCommerce
  */
 
 defined( 'ABSPATH' ) || exit;
