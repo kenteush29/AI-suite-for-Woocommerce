@@ -1,0 +1,225 @@
+<?php
+defined( 'ABSPATH' ) || exit;
+
+if ( ! class_exists( 'WP_List_Table' ) ) {
+	require_once ABSPATH . 'wp-admin/includes/class-wp-list-table.php';
+}
+
+/**
+ * Lists out-of-stock product-lines (simple products + variable parents),
+ * one row per line. Variable parents expose an AJAX-loaded sub-table of their
+ * out-of-stock variations.
+ */
+final class RSTK_Restock_List_Table extends WP_List_Table {
+
+	private const PER_PAGE_DEFAULT = 30;
+	private const PER_PAGE_MAX     = 200;
+
+	public const PER_PAGE_CHOICES = [ 20, 30, 50, 100, 200 ];
+
+	public static function current_per_page(): int {
+		$pp = isset( $_GET['per_page'] ) ? (int) $_GET['per_page'] : self::PER_PAGE_DEFAULT;
+		if ( $pp < 1 ) {
+			$pp = self::PER_PAGE_DEFAULT;
+		}
+		return min( self::PER_PAGE_MAX, $pp );
+	}
+
+	public function __construct() {
+		parent::__construct( [
+			'singular' => 'restock_line',
+			'plural'   => 'restock_lines',
+			'ajax'     => false,
+		] );
+	}
+
+	public function get_columns(): array {
+		return [
+			'title'    => __( 'Product', 'restock-for-woocommerce' ),
+			'category' => __( 'Category', 'restock-for-woocommerce' ),
+			'price'    => __( 'Price', 'restock-for-woocommerce' ),
+			'oos'      => __( 'OOS variations', 'restock-for-woocommerce' ),
+			'sales'    => __( 'Total Sales', 'restock-for-woocommerce' )
+				. ' <span class="dashicons dashicons-editor-help" title="'
+				. esc_attr__( 'Total units ordered across ALL orders (including refunded, cancelled and failed), never reduced by refunds, aggregated across all WPML languages. For a variable product this is the sum of ALL its variations, not only the out-of-stock ones.', 'restock-for-woocommerce' )
+				. '" style="font-size:16px;width:16px;height:16px;color:#999;cursor:help;"></span>',
+		];
+	}
+
+	protected function get_sortable_columns(): array {
+		return [
+			'title' => [ 'title', false ],
+			'sales' => [ 'sales', true ],
+		];
+	}
+
+	public function no_items(): void {
+		esc_html_e( 'No out-of-stock products. 🎉', 'restock-for-woocommerce' );
+	}
+
+	public function prepare_items(): void {
+		$this->_column_headers = [ $this->get_columns(), [], $this->get_sortable_columns() ];
+
+		$lines = RSTK_Restock::get_line_index();
+		$ids   = array_keys( $lines );
+
+		if ( $ids ) {
+			_prime_post_caches( $ids, false, true );
+		}
+
+		// ---- Category filter ----
+		$cat = isset( $_GET['product_cat'] ) ? sanitize_key( wp_unslash( $_GET['product_cat'] ) ) : '';
+		if ( $cat && $ids ) {
+			$in_cat = get_posts( [
+				'post_type'      => 'product',
+				'post_status'    => 'publish',
+				'posts_per_page' => -1,
+				'fields'         => 'ids',
+				'tax_query'      => [ [ 'taxonomy' => 'product_cat', 'field' => 'slug', 'terms' => $cat ] ],
+			] );
+			$ids = array_values( array_intersect( $ids, $in_cat ) );
+		}
+
+		// ---- Search (product title) ----
+		$search = isset( $_REQUEST['s'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['s'] ) ) : '';
+		if ( $search !== '' && $ids ) {
+			$ids = array_values( array_filter( $ids, static function ( $id ) use ( $search ) {
+				return stripos( get_the_title( $id ), $search ) !== false;
+			} ) );
+		}
+
+		// ---- Lightweight sortable rows ----
+		$rows = [];
+		foreach ( $ids as $id ) {
+			$line   = $lines[ $id ];
+			$rows[] = [
+				'id'    => $id,
+				'type'  => $line['type'],
+				'oos'   => count( $line['oos'] ),
+				'total' => $line['total'],
+				'sales' => RSTK_Restock::get_line_sales( $id ),
+				'title' => get_the_title( $id ),
+			];
+		}
+
+		// ---- Sort ----
+		$orderby = isset( $_GET['orderby'] ) ? sanitize_key( wp_unslash( $_GET['orderby'] ) ) : 'sales';
+		$order   = ( isset( $_GET['order'] ) && strtolower( (string) wp_unslash( $_GET['order'] ) ) === 'asc' ) ? 'asc' : 'desc';
+		if ( ! isset( $_GET['orderby'] ) ) {
+			$order = 'desc';
+		}
+		usort( $rows, static function ( $a, $b ) use ( $orderby, $order ) {
+			$cmp = ( $orderby === 'title' )
+				? strcasecmp( $a['title'], $b['title'] )
+				: ( $a['sales'] <=> $b['sales'] );
+			return $order === 'asc' ? $cmp : -$cmp;
+		} );
+
+		// ---- Paginate ----
+		$total    = count( $rows );
+		$per_page = self::current_per_page();
+		$current  = $this->get_pagenum();
+		$rows     = array_slice( $rows, ( $current - 1 ) * $per_page, $per_page );
+
+		$this->items = $rows;
+
+		$this->set_pagination_args( [
+			'total_items' => $total,
+			'per_page'    => $per_page,
+			'total_pages' => (int) ceil( $total / $per_page ),
+		] );
+	}
+
+	// ---- Row rendering ----
+
+	public function single_row( $item ): void {
+		printf(
+			'<tr id="restock-line-%1$d" class="rstk-row rstk-%2$s" data-id="%1$d" data-type="%2$s">',
+			(int) $item['id'],
+			esc_attr( $item['type'] )
+		);
+		$this->single_row_columns( $item );
+		echo '</tr>';
+	}
+
+	public function column_title( $item ): string {
+		$edit  = get_edit_post_link( $item['id'] );
+		$title = $item['title'] !== '' ? $item['title'] : sprintf( '#%d', $item['id'] );
+		return '<strong><a href="' . esc_url( $edit ) . '" target="_blank">' . esc_html( $title ) . '</a></strong>';
+	}
+
+	public function column_category( $item ): string {
+		$list = wc_get_product_category_list( $item['id'], ', ' );
+		return $list ? wp_kses_post( $list ) : '—';
+	}
+
+	public function column_price( $item ): string {
+		$product = wc_get_product( $item['id'] );
+		if ( ! $product ) {
+			return '—';
+		}
+		$html = $product->get_price_html();
+		return $html ? wp_kses_post( $html ) : '—';
+	}
+
+	public function column_oos( $item ): string {
+		if ( $item['type'] === 'simple' ) {
+			return '<span style="color:#999;">N/A</span>';
+		}
+		return sprintf(
+			'<button type="button" class="rstk-toggle button-link" data-parent="%1$d" aria-expanded="false">▸</button> '
+			. '<span class="rstk-oos-badge">%2$d/%3$d</span>',
+			(int) $item['id'],
+			(int) $item['oos'],
+			(int) $item['total']
+		);
+	}
+
+	public function column_sales( $item ): string {
+		return '<strong>' . esc_html( number_format_i18n( $item['sales'] ) ) . '</strong>';
+	}
+
+	public function column_default( $item, $column_name ): string {
+		return isset( $item[ $column_name ] ) ? esc_html( (string) $item[ $column_name ] ) : '';
+	}
+
+	protected function extra_tablenav( $which ): void {
+		if ( $which !== 'top' ) {
+			return;
+		}
+		$current = isset( $_GET['product_cat'] ) ? sanitize_key( wp_unslash( $_GET['product_cat'] ) ) : '';
+		$terms   = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => true ] );
+
+		echo '<div class="alignleft actions">';
+
+		if ( ! is_wp_error( $terms ) && ! empty( $terms ) ) {
+			echo '<select name="product_cat">';
+			echo '<option value="">' . esc_html__( 'All categories', 'restock-for-woocommerce' ) . '</option>';
+			foreach ( $terms as $term ) {
+				printf(
+					'<option value="%s" %s>%s (%d)</option>',
+					esc_attr( $term->slug ),
+					selected( $current, $term->slug, false ),
+					esc_html( $term->name ),
+					(int) $term->count
+				);
+			}
+			echo '</select>';
+		}
+
+		$current_pp = self::current_per_page();
+		echo '<select name="per_page" style="margin-left:6px;">';
+		foreach ( self::PER_PAGE_CHOICES as $choice ) {
+			printf(
+				'<option value="%1$d" %2$s>%1$d %3$s</option>',
+				(int) $choice,
+				selected( $current_pp, $choice, false ),
+				esc_html__( '/ page', 'restock-for-woocommerce' )
+			);
+		}
+		echo '</select>';
+
+		submit_button( __( 'Filter', 'restock-for-woocommerce' ), '', 'filter_action', false );
+		echo '</div>';
+	}
+}

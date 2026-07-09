@@ -1,0 +1,15 @@
+.rstk-wrap .dashicons-editor-help { text-decoration: none; }
+.rstk-toggle {
+	cursor: pointer; font-size: 14px; color: #2271b1;
+	text-decoration: none; margin-right: 4px; padding: 0 4px;
+}
+.rstk-toggle:hover { color: #135e96; }
+.rstk-oos-badge {
+	display: inline-block; padding: 1px 8px; border-radius: 10px;
+	background: #fcf0e6; color: #bd5b12; font-weight: 600; font-size: 12px;
+}
+.rstk-child > td { background: #f6f7f7; padding: 8px 16px 12px !important; }
+.rstk-subnote { margin: 0 0 6px; font-size: 12px; color: #757575; font-style: italic; }
+.rstk-subtable { margin: 4px 0; }
+.rstk-subtable th { font-size: 12px; }
+.rstk-subtable td { font-size: 13px; }
