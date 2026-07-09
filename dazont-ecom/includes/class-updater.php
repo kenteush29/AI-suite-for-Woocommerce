@@ -7,12 +7,12 @@ defined( 'ABSPATH' ) || exit;
  *
  * Each release must carry a ZIP asset whose name contains the plugin slug and
  * whose top-level folder is the plugin slug, so WordPress installs it to the
- * correct directory. Handled by .github/workflows/release-restock.yml.
+ * correct directory. Handled by .github/workflows/release-dazont.yml.
  */
 final class DZE_Updater {
 
 	private const OWNER     = 'kenteush29';
-	private const REPO      = 'AI-suite-for-Woocommerce';
+	private const REPO      = 'Dazont-Ecom-for-WooCommerce';
 	private const CACHE_KEY = 'dze_gh_latest_release';
 	private const CACHE_TTL = 6 * HOUR_IN_SECONDS;
 
@@ -110,7 +110,7 @@ final class DZE_Updater {
 			'timeout' => 15,
 			'headers' => [
 				'Accept'     => 'application/vnd.github+json',
-				'User-Agent' => 'Restock-For-WooCommerce-Updater',
+				'User-Agent' => 'Dazont-Ecom-Updater',
 			],
 		] );
 
