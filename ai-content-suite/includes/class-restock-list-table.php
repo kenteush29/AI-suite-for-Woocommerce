@@ -12,7 +12,19 @@ if ( ! class_exists( 'WP_List_Table' ) ) {
  */
 final class AICS_Restock_List_Table extends WP_List_Table {
 
-	private const PER_PAGE = 30;
+	private const PER_PAGE_DEFAULT = 30;
+	private const PER_PAGE_MAX     = 200;
+
+	/** Allowed values for the "products per page" selector. */
+	public const PER_PAGE_CHOICES = [ 20, 30, 50, 100, 200 ];
+
+	public static function current_per_page(): int {
+		$pp = isset( $_GET['per_page'] ) ? (int) $_GET['per_page'] : self::PER_PAGE_DEFAULT;
+		if ( $pp < 1 ) {
+			$pp = self::PER_PAGE_DEFAULT;
+		}
+		return min( self::PER_PAGE_MAX, $pp );
+	}
 
 	public function __construct() {
 		parent::__construct( [
@@ -28,7 +40,10 @@ final class AICS_Restock_List_Table extends WP_List_Table {
 			'category'   => __( 'Category', 'ai-content-suite' ),
 			'price'      => __( 'Price', 'ai-content-suite' ),
 			'oos'        => __( 'OOS variations', 'ai-content-suite' ),
-			'sales'      => __( 'Sales', 'ai-content-suite' ),
+			'sales'      => __( 'Sales', 'ai-content-suite' )
+				. ' <span class="dashicons dashicons-editor-help" title="'
+				. esc_attr__( 'Total units sold across all paid orders (completed, processing, on-hold), aggregated across all WPML languages.', 'ai-content-suite' )
+				. '" style="font-size:16px;width:16px;height:16px;color:#999;cursor:help;"></span>',
 		];
 	}
 
@@ -88,7 +103,7 @@ final class AICS_Restock_List_Table extends WP_List_Table {
 				'type'  => $line['type'],
 				'oos'   => count( $line['oos'] ),
 				'total' => $line['total'],
-				'sales' => AICS_Restock::get_line_sales( $id, $line['type'] ),
+				'sales' => AICS_Restock::get_line_sales( $id ),
 				'title' => get_the_title( $id ),
 			];
 		}
@@ -111,7 +126,7 @@ final class AICS_Restock_List_Table extends WP_List_Table {
 
 		// ---- Paginate ----
 		$total    = count( $rows );
-		$per_page = self::PER_PAGE;
+		$per_page = self::current_per_page();
 		$current  = $this->get_pagenum();
 		$rows     = array_slice( $rows, ( $current - 1 ) * $per_page, $per_page );
 
@@ -142,13 +157,7 @@ final class AICS_Restock_List_Table extends WP_List_Table {
 		$edit  = get_edit_post_link( $item['id'] );
 		$title = $item['title'] ?: sprintf( '#%d', $item['id'] );
 
-		$toggle = '';
-		if ( $item['type'] === 'variable' ) {
-			$toggle = '<button type="button" class="aics-restock-toggle button-link" data-parent="' . (int) $item['id'] . '" aria-expanded="false">▸</button> ';
-		}
-
-		return $toggle
-			. '<strong><a href="' . esc_url( $edit ) . '" target="_blank">' . esc_html( $title ) . '</a></strong>';
+		return '<strong><a href="' . esc_url( $edit ) . '" target="_blank">' . esc_html( $title ) . '</a></strong>';
 	}
 
 	public function column_category( $item ): string {
@@ -169,8 +178,11 @@ final class AICS_Restock_List_Table extends WP_List_Table {
 		if ( $item['type'] === 'simple' ) {
 			return '<span style="color:#999;">N/A</span>';
 		}
+		// The expand/collapse toggle sits next to the OOS count.
 		return sprintf(
-			'<span class="aics-oos-badge">%d/%d</span>',
+			'<button type="button" class="aics-restock-toggle button-link" data-parent="%1$d" aria-expanded="false">▸</button> '
+			. '<span class="aics-oos-badge">%2$d/%3$d</span>',
+			(int) $item['id'],
 			(int) $item['oos'],
 			(int) $item['total']
 		);
@@ -210,6 +222,20 @@ final class AICS_Restock_List_Table extends WP_List_Table {
 			);
 		}
 		echo '</select>';
+
+		// Products-per-page selector (max 200).
+		$current_pp = self::current_per_page();
+		echo '<select name="per_page" style="margin-left:6px;">';
+		foreach ( self::PER_PAGE_CHOICES as $choice ) {
+			printf(
+				'<option value="%1$d" %2$s>%1$d %3$s</option>',
+				(int) $choice,
+				selected( $current_pp, $choice, false ),
+				esc_html__( '/ page', 'ai-content-suite' )
+			);
+		}
+		echo '</select>';
+
 		submit_button( __( 'Filter', 'ai-content-suite' ), '', 'filter_action', false );
 		echo '</div>';
 	}

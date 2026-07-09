@@ -52,7 +52,7 @@
 	function buildSubTable(rowsHtml) {
 		return '<table class="widefat striped aics-restock-subtable">' +
 			'<thead><tr>' +
-			'<th>Variation</th><th>SKU</th><th>Price</th><th>Sales</th><th></th>' +
+			'<th>Variation</th><th>SKU</th><th>Price</th><th>Sales</th>' +
 			'</tr></thead><tbody>' + rowsHtml + '</tbody></table>';
 	}
 

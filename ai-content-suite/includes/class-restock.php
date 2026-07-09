@@ -137,8 +137,20 @@ final class AICS_Restock {
 			   AND p.post_status = 'publish'"
 		);
 
+		// WPML: keep only default-language product-lines. Sales are aggregated
+		// across all languages separately (see recalc_sales()).
+		$default_lang = AICS_Wpml_Translate::default_language();
+
 		$lines = [];
 		foreach ( $rows as $row ) {
+			// Skip translations: only the default-language post represents the line.
+			if ( $default_lang ) {
+				$lang = AICS_Wpml_Translate::post_language( (int) $row->ID, $row->post_type );
+				if ( $lang && $lang !== $default_lang ) {
+					continue;
+				}
+			}
+
 			if ( $row->post_type === 'product' ) {
 				$id = (int) $row->ID;
 				if ( ! isset( $lines[ $id ] ) ) {
@@ -186,14 +198,12 @@ final class AICS_Restock {
 	}
 
 	/**
-	 * Returns the cached sales figure for a product-line.
-	 * Simple products use WooCommerce's native counter; variable parents use the
-	 * cron-cached meta (0 until the first recalculation runs).
+	 * Returns the cached aggregated sales figure for a product-line.
+	 * Same metric for simple and variable products: total units sold across all
+	 * paid orders, aggregated across every WPML language version. Populated by
+	 * recalc_sales(); 0 until the first recalculation runs.
 	 */
-	public static function get_line_sales( int $id, string $type ): int {
-		if ( $type === 'simple' ) {
-			return (int) get_post_meta( $id, 'total_sales', true );
-		}
+	public static function get_line_sales( int $id ): int {
 		return (int) get_post_meta( $id, self::SALES_META, true );
 	}
 
@@ -224,7 +234,6 @@ final class AICS_Restock {
 			$parent_id
 		) );
 
-		$edit_link = get_edit_post_link( $parent_id, 'raw' );
 		$rows_html = '';
 
 		foreach ( $variation_ids as $vid ) {
@@ -232,7 +241,7 @@ final class AICS_Restock {
 			if ( ! $variation ) {
 				continue;
 			}
-			$name  = wc_get_formatted_variation( $variation, true );
+			$name = wc_get_formatted_variation( $variation, true );
 			if ( $name === '' ) {
 				$name = $variation->get_name();
 			}
@@ -245,8 +254,6 @@ final class AICS_Restock {
 				. '<td>' . esc_html( $sku ?: '—' ) . '</td>'
 				. '<td>' . wp_kses_post( $price ?: '—' ) . '</td>'
 				. '<td>' . esc_html( (string) $sales ) . '</td>'
-				. '<td><a href="' . esc_url( $edit_link . '#variable_product_options' ) . '" target="_blank">'
-					. esc_html__( 'Edit', 'ai-content-suite' ) . '</a></td>'
 				. '</tr>';
 		}
 
@@ -280,16 +287,22 @@ final class AICS_Restock {
 	// -------------------------------------------------------------------------
 
 	/**
-	 * Re-computes lifetime sales per variation from paid orders using the
-	 * WooCommerce CRUD API (HPOS-safe), then caches totals on each variation
-	 * and on the variable parent. Returns the number of variations written.
+	 * Re-computes lifetime sales from paid orders using the WooCommerce CRUD API
+	 * (HPOS-safe). Every ordered line item is folded onto the canonical,
+	 * default-language product / variation, so figures are aggregated across all
+	 * WPML languages. Totals are cached on:
+	 *   - each product-line (simple product or variable parent)  → main list
+	 *   - each variation                                         → sub-table
+	 * Returns the number of product-lines written.
 	 */
 	public function recalc_sales(): int {
 		if ( ! function_exists( 'wc_get_orders' ) ) {
 			return 0;
 		}
 
-		$sales_by_variation = [];
+		$line_totals = []; // canonical product/parent id => qty
+		$var_totals  = []; // canonical variation id      => qty
+
 		$page  = 1;
 		$limit = 100;
 
@@ -308,32 +321,40 @@ final class AICS_Restock {
 					if ( ! $item instanceof WC_Order_Item_Product ) {
 						continue;
 					}
-					$vid = $item->get_variation_id();
-					if ( ! $vid ) {
-						continue; // simple product line — native total_sales already tracks it.
+					$qty = (int) $item->get_quantity();
+					if ( $qty <= 0 ) {
+						continue;
 					}
-					$sales_by_variation[ $vid ] = ( $sales_by_variation[ $vid ] ?? 0 ) + (int) $item->get_quantity();
+
+					$pid = (int) $item->get_product_id();
+					$vid = (int) $item->get_variation_id();
+
+					if ( $vid ) {
+						// Variable line: attribute the sale to the parent + variation.
+						$canon_parent = AICS_Wpml_Translate::canonical_id( $pid, 'product' );
+						$canon_var    = AICS_Wpml_Translate::canonical_id( $vid, 'product_variation' );
+						$line_totals[ $canon_parent ] = ( $line_totals[ $canon_parent ] ?? 0 ) + $qty;
+						$var_totals[ $canon_var ]     = ( $var_totals[ $canon_var ] ?? 0 ) + $qty;
+					} elseif ( $pid ) {
+						// Simple line.
+						$canon = AICS_Wpml_Translate::canonical_id( $pid, 'product' );
+						$line_totals[ $canon ] = ( $line_totals[ $canon ] ?? 0 ) + $qty;
+					}
 				}
 			}
 
 			$page++;
 		} while ( count( $orders ) === $limit );
 
-		// Persist per-variation totals and accumulate per-parent totals.
-		$parent_totals = [];
-		foreach ( $sales_by_variation as $vid => $qty ) {
-			update_post_meta( (int) $vid, self::SALES_META, (int) $qty );
-			$parent = wp_get_post_parent_id( (int) $vid );
-			if ( $parent ) {
-				$parent_totals[ $parent ] = ( $parent_totals[ $parent ] ?? 0 ) + (int) $qty;
-			}
+		foreach ( $line_totals as $id => $qty ) {
+			update_post_meta( (int) $id, self::SALES_META, (int) $qty );
 		}
-		foreach ( $parent_totals as $pid => $tot ) {
-			update_post_meta( (int) $pid, self::SALES_META, (int) $tot );
+		foreach ( $var_totals as $id => $qty ) {
+			update_post_meta( (int) $id, self::SALES_META, (int) $qty );
 		}
 
 		update_option( self::LAST_RECALC, time(), false );
 
-		return count( $sales_by_variation );
+		return count( $line_totals );
 	}
 }

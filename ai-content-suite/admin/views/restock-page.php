@@ -25,7 +25,7 @@ defined( 'ABSPATH' ) || exit;
 				);
 				?>
 			<?php else : ?>
-				<?php esc_html_e( 'Sales cache never built — run a recalculation to populate variable-product sales.', 'ai-content-suite' ); ?>
+				<?php esc_html_e( 'Sales cache never built — run a recalculation to populate the sales figures.', 'ai-content-suite' ); ?>
 			<?php endif; ?>
 		</span>
 	</div>
