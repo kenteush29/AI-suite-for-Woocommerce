@@ -50,7 +50,8 @@
 	});
 
 	function buildSubTable(rowsHtml) {
-		return '<table class="widefat striped aics-restock-subtable">' +
+		return '<p class="aics-subtable-note">' + (i18n.subNote || '') + '</p>' +
+			'<table class="widefat striped aics-restock-subtable">' +
 			'<thead><tr>' +
 			'<th>Variation</th><th>SKU</th><th>Price</th><th>Sales</th>' +
 			'</tr></thead><tbody>' + rowsHtml + '</tbody></table>';

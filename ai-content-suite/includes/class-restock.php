@@ -107,6 +107,7 @@ final class AICS_Restock {
 				'recalcDone' => __( 'Sales cache updated.', 'ai-content-suite' ),
 				'error'      => __( 'Error', 'ai-content-suite' ),
 				'noVar'      => __( 'No out-of-stock variations found.', 'ai-content-suite' ),
+				'subNote'    => __( 'Only out-of-stock variations are listed. The product\'s Sales total above covers all its variations (in stock included).', 'ai-content-suite' ),
 			],
 		] );
 	}

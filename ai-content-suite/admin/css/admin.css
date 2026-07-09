@@ -70,6 +70,7 @@ body.aics-modal-open { overflow: hidden; }
 	background: #fcf0e6; color: #bd5b12; font-weight: 600; font-size: 12px;
 }
 .aics-restock-child > td { background: #f6f7f7; padding: 8px 16px 12px !important; }
+.aics-subtable-note { margin: 0 0 6px; font-size: 12px; color: #757575; font-style: italic; }
 .aics-restock-subtable { margin: 4px 0; }
 .aics-restock-subtable th { font-size: 12px; }
 .aics-restock-subtable td { font-size: 13px; }
