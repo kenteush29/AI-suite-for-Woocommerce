@@ -1,0 +1,39 @@
+name: Build & publish Dazont Ecom
+
+# Triggered by tags like dazont-v1.0.0
+on:
+  push:
+    tags:
+      - 'dazont-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify plugin version matches tag
+        run: |
+          TAG_VER="$(echo "${GITHUB_REF_NAME}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?')"
+          PLUGIN_VER="$(grep -m1 -oP 'Version:\s*\K[0-9.]+' dazont-ecom/dazont-ecom.php)"
+          echo "Tag version:   $TAG_VER"
+          echo "Plugin header: $PLUGIN_VER"
+          if [ "$TAG_VER" != "$PLUGIN_VER" ]; then
+            echo "::error::Tag ($TAG_VER) does not match plugin header version ($PLUGIN_VER). Bump the header first."
+            exit 1
+          fi
+
+      - name: Build plugin ZIP
+        run: |
+          zip -r dazont-ecom.zip dazont-ecom \
+            -x '*.git*' '*.DS_Store'
+
+      - name: Publish GitHub release with the ZIP asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dazont-ecom.zip
+          generate_release_notes: true
