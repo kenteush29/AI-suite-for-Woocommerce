@@ -58,3 +58,18 @@ body.aics-modal-open { overflow: hidden; }
 	display: flex; gap: 8px; justify-content: flex-end;
 	padding: 14px 20px; border-top: 1px solid #e0e0e0;
 }
+
+/* ---- Restock module ---- */
+.aics-restock-toggle {
+	cursor: pointer; font-size: 14px; color: #2271b1;
+	text-decoration: none; margin-right: 4px; padding: 0 4px;
+}
+.aics-restock-toggle:hover { color: #135e96; }
+.aics-oos-badge {
+	display: inline-block; padding: 1px 8px; border-radius: 10px;
+	background: #fcf0e6; color: #bd5b12; font-weight: 600; font-size: 12px;
+}
+.aics-restock-child > td { background: #f6f7f7; padding: 8px 16px 12px !important; }
+.aics-restock-subtable { margin: 4px 0; }
+.aics-restock-subtable th { font-size: 12px; }
+.aics-restock-subtable td { font-size: 13px; }
