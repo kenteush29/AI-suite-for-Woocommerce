@@ -1,12 +1,12 @@
-/* global rstkRestock, jQuery */
+/* global dzeRestock, jQuery */
 (function ($) {
 	'use strict';
 
-	var cfg  = rstkRestock;
+	var cfg  = dzeRestock;
 	var i18n = cfg.i18n;
 
 	// ---- Expand / collapse variations (lazy load) ----
-	$(document).on('click', '.rstk-toggle', function (e) {
+	$(document).on('click', '.dze-toggle', function (e) {
 		e.preventDefault();
 		var $btn   = $(this);
 		var parent = $btn.data('parent');
@@ -23,13 +23,13 @@
 
 		$btn.attr('aria-expanded', 'true').text('▾');
 		$row.after(
-			'<tr id="restock-child-' + parent + '" class="rstk-child">' +
+			'<tr id="restock-child-' + parent + '" class="dze-child">' +
 			'<td colspan="' + cols + '"><em>' + escHtml(i18n.loading) + '</em></td></tr>'
 		);
 		var $childRow = $('#restock-child-' + parent);
 
 		$.post(cfg.ajaxUrl, {
-			action    : 'rstk_variations',
+			action    : 'dze_variations',
 			nonce     : cfg.nonce,
 			parent_id : parent
 		})
@@ -48,21 +48,21 @@
 	});
 
 	function buildSubTable(rowsHtml) {
-		return '<p class="rstk-subnote">' + escHtml(i18n.subNote || '') + '</p>' +
-			'<table class="widefat striped rstk-subtable">' +
+		return '<p class="dze-subnote">' + escHtml(i18n.subNote || '') + '</p>' +
+			'<table class="widefat striped dze-subtable">' +
 			'<thead><tr><th>Variation</th><th>SKU</th><th>Price</th><th>Sales</th></tr></thead>' +
 			'<tbody>' + rowsHtml + '</tbody></table>';
 	}
 
 	// ---- Recalculate ----
-	$('#rstk-recalc').on('click', function () {
+	$('#dze-recalc').on('click', function () {
 		var $btn    = $(this);
-		var $status = $('#rstk-recalc-status');
+		var $status = $('#dze-recalc-status');
 
 		$btn.prop('disabled', true);
 		$status.css('color', '#666').text(i18n.recalc);
 
-		$.post(cfg.ajaxUrl, { action: 'rstk_recalc', nonce: cfg.nonce })
+		$.post(cfg.ajaxUrl, { action: 'dze_recalc', nonce: cfg.nonce })
 		.done(function (res) {
 			if (res.success) {
 				$status.css('color', '#0a7040').text(res.data.message + ' — ' + res.data.timestamp);

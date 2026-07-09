@@ -5,7 +5,7 @@ defined( 'ABSPATH' ) || exit;
  * Thin WPML helper (static). Used to keep the listing on the default language
  * while aggregating sales across every translation of a product/variation.
  */
-final class RSTK_Wpml {
+final class DZE_Wpml {
 
 	public static function is_active(): bool {
 		return defined( 'ICL_SITEPRESS_VERSION' ) || function_exists( 'icl_object_id' );

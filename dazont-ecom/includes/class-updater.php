@@ -9,15 +9,15 @@ defined( 'ABSPATH' ) || exit;
  * whose top-level folder is the plugin slug, so WordPress installs it to the
  * correct directory. Handled by .github/workflows/release-restock.yml.
  */
-final class RSTK_Updater {
+final class DZE_Updater {
 
 	private const OWNER     = 'kenteush29';
 	private const REPO      = 'AI-suite-for-Woocommerce';
-	private const CACHE_KEY = 'rstk_gh_latest_release';
+	private const CACHE_KEY = 'dze_gh_latest_release';
 	private const CACHE_TTL = 6 * HOUR_IN_SECONDS;
 
-	private string $basename; // restock-for-woocommerce/restock-for-woocommerce.php
-	private string $slug;     // restock-for-woocommerce
+	private string $basename; // dazont-ecom/dazont-ecom.php
+	private string $slug;     // dazont-ecom
 	private string $version;
 
 	private static ?self $instance = null;
@@ -30,9 +30,9 @@ final class RSTK_Updater {
 	}
 
 	private function __construct() {
-		$this->basename = plugin_basename( RSTK_FILE );
+		$this->basename = plugin_basename( DZE_FILE );
 		$this->slug     = dirname( $this->basename );
-		$this->version  = RSTK_VERSION;
+		$this->version  = DZE_VERSION;
 
 		add_filter( 'pre_set_site_transient_update_plugins', [ $this, 'inject_update' ] );
 		add_filter( 'plugins_api', [ $this, 'plugin_details' ], 10, 3 );
@@ -82,7 +82,7 @@ final class RSTK_Updater {
 		}
 
 		return (object) [
-			'name'          => 'Restock for WooCommerce',
+			'name'          => 'Dazont Ecom',
 			'slug'          => $this->slug,
 			'version'       => $release['version'],
 			'author'        => '<a href="https://github.com/' . self::OWNER . '">' . esc_html( self::OWNER ) . '</a>',

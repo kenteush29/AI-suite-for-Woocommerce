@@ -9,13 +9,13 @@ defined( 'ABSPATH' ) || exit;
  * the restock backlog. Sales are cached via WP-Cron for speed on large
  * catalogues and aggregated across all WPML languages.
  */
-final class RSTK_Restock {
+final class DZE_Restock {
 
-	public const CRON_HOOK   = 'rstk_recalc_sales';
-	public const SALES_META  = '_rstk_total_sales_cached';
-	public const LAST_RECALC = 'rstk_last_recalc';
-	public const MENU_SLUG   = 'restock';
-	public const NONCE       = 'rstk_admin';
+	public const CRON_HOOK   = 'dze_recalc_sales';
+	public const SALES_META  = '_dze_total_sales_cached';
+	public const LAST_RECALC = 'dze_last_recalc';
+	public const MENU_SLUG   = 'dazont-ecom';
+	public const NONCE       = 'dze_admin';
 
 	private static ?self $instance = null;
 
@@ -33,8 +33,8 @@ final class RSTK_Restock {
 
 		add_action( self::CRON_HOOK, [ $this, 'recalc_sales' ] );
 
-		add_action( 'wp_ajax_rstk_variations', [ $this, 'ajax_variations' ] );
-		add_action( 'wp_ajax_rstk_recalc',     [ $this, 'ajax_recalc' ] );
+		add_action( 'wp_ajax_dze_variations', [ $this, 'ajax_variations' ] );
+		add_action( 'wp_ajax_dze_recalc',     [ $this, 'ajax_recalc' ] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -52,14 +52,24 @@ final class RSTK_Restock {
 	// -------------------------------------------------------------------------
 
 	public function register_menu(): void {
+		// Top-level "Dazont Ecom" menu; Restock is its first module. Future
+		// modules register additional submenu pages under the same slug.
 		add_menu_page(
-			__( 'Restock', 'restock-for-woocommerce' ),
-			__( 'Restock', 'restock-for-woocommerce' ),
+			__( 'Dazont Ecom', 'dazont-ecom' ),
+			__( 'Dazont Ecom', 'dazont-ecom' ),
 			'manage_woocommerce',
 			self::MENU_SLUG,
 			[ $this, 'render_page' ],
-			'dashicons-update',
+			'dashicons-cart',
 			56
+		);
+		add_submenu_page(
+			self::MENU_SLUG,
+			__( 'Restock', 'dazont-ecom' ),
+			__( 'Restock', 'dazont-ecom' ),
+			'manage_woocommerce',
+			self::MENU_SLUG,
+			[ $this, 'render_page' ]
 		);
 	}
 
@@ -67,17 +77,17 @@ final class RSTK_Restock {
 		if ( strpos( $hook, self::MENU_SLUG ) === false ) {
 			return;
 		}
-		wp_enqueue_style( 'rstk-admin', RSTK_URL . 'admin/css/admin.css', [], RSTK_VERSION );
-		wp_enqueue_script( 'rstk-admin', RSTK_URL . 'admin/js/restock.js', [ 'jquery' ], RSTK_VERSION, true );
-		wp_localize_script( 'rstk-admin', 'rstkRestock', [
+		wp_enqueue_style( 'dze-admin', DZE_URL . 'admin/css/admin.css', [], DZE_VERSION );
+		wp_enqueue_script( 'dze-admin', DZE_URL . 'admin/js/restock.js', [ 'jquery' ], DZE_VERSION, true );
+		wp_localize_script( 'dze-admin', 'dzeRestock', [
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'   => wp_create_nonce( self::NONCE ),
 			'i18n'    => [
-				'loading'    => __( 'Loading variations…', 'restock-for-woocommerce' ),
-				'recalc'     => __( 'Recalculating sales… this may take a moment.', 'restock-for-woocommerce' ),
-				'error'      => __( 'Error', 'restock-for-woocommerce' ),
-				'noVar'      => __( 'No out-of-stock variations found.', 'restock-for-woocommerce' ),
-				'subNote'    => __( 'Only out-of-stock variations are listed. The product\'s Total Sales above covers all its variations (in stock included).', 'restock-for-woocommerce' ),
+				'loading'    => __( 'Loading variations…', 'dazont-ecom' ),
+				'recalc'     => __( 'Recalculating sales… this may take a moment.', 'dazont-ecom' ),
+				'error'      => __( 'Error', 'dazont-ecom' ),
+				'noVar'      => __( 'No out-of-stock variations found.', 'dazont-ecom' ),
+				'subNote'    => __( 'Only out-of-stock variations are listed. The product\'s Total Sales above covers all its variations (in stock included).', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -88,17 +98,17 @@ final class RSTK_Restock {
 
 	public function render_page(): void {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			wp_die( esc_html__( 'Permission denied.', 'restock-for-woocommerce' ) );
+			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
 
-		require_once RSTK_DIR . 'includes/class-restock-list-table.php';
+		require_once DZE_DIR . 'includes/class-restock-list-table.php';
 
-		$table = new RSTK_Restock_List_Table();
+		$table = new DZE_Restock_List_Table();
 		$table->prepare_items();
 
 		$last_recalc = (int) get_option( self::LAST_RECALC, 0 );
 
-		require RSTK_DIR . 'admin/views/restock-page.php';
+		require DZE_DIR . 'admin/views/restock-page.php';
 	}
 
 	// -------------------------------------------------------------------------
@@ -123,12 +133,12 @@ final class RSTK_Restock {
 			   AND p.post_status = 'publish'"
 		);
 
-		$default_lang = RSTK_Wpml::default_language();
+		$default_lang = DZE_Wpml::default_language();
 
 		$lines = [];
 		foreach ( $rows as $row ) {
 			if ( $default_lang ) {
-				$lang = RSTK_Wpml::post_language( (int) $row->ID, $row->post_type );
+				$lang = DZE_Wpml::post_language( (int) $row->ID, $row->post_type );
 				if ( $lang && $lang !== $default_lang ) {
 					continue;
 				}
@@ -191,12 +201,12 @@ final class RSTK_Restock {
 	public function ajax_variations(): void {
 		check_ajax_referer( self::NONCE, 'nonce' );
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'restock-for-woocommerce' ) ], 403 );
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
 		}
 
 		$parent_id = isset( $_POST['parent_id'] ) ? absint( $_POST['parent_id'] ) : 0;
 		if ( ! $parent_id ) {
-			wp_send_json_error( [ 'message' => __( 'Invalid product.', 'restock-for-woocommerce' ) ] );
+			wp_send_json_error( [ 'message' => __( 'Invalid product.', 'dazont-ecom' ) ] );
 		}
 
 		global $wpdb;
@@ -243,7 +253,7 @@ final class RSTK_Restock {
 	public function ajax_recalc(): void {
 		check_ajax_referer( self::NONCE, 'nonce' );
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'restock-for-woocommerce' ) ], 403 );
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
 		}
 
 		$processed = $this->recalc_sales();
@@ -251,7 +261,7 @@ final class RSTK_Restock {
 		wp_send_json_success( [
 			'message'   => sprintf(
 				/* translators: %d: number of product-lines processed */
-				__( 'Done. %d product-lines processed.', 'restock-for-woocommerce' ),
+				__( 'Done. %d product-lines processed.', 'dazont-ecom' ),
 				$processed
 			),
 			'timestamp' => wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), time() ),
@@ -317,12 +327,12 @@ final class RSTK_Restock {
 					$vid = (int) $item->get_variation_id();
 
 					if ( $vid ) {
-						$canon_parent = RSTK_Wpml::canonical_id( $pid, 'product' );
-						$canon_var    = RSTK_Wpml::canonical_id( $vid, 'product_variation' );
+						$canon_parent = DZE_Wpml::canonical_id( $pid, 'product' );
+						$canon_var    = DZE_Wpml::canonical_id( $vid, 'product_variation' );
 						$line_totals[ $canon_parent ] = ( $line_totals[ $canon_parent ] ?? 0 ) + $qty;
 						$var_totals[ $canon_var ]     = ( $var_totals[ $canon_var ] ?? 0 ) + $qty;
 					} elseif ( $pid ) {
-						$canon = RSTK_Wpml::canonical_id( $pid, 'product' );
+						$canon = DZE_Wpml::canonical_id( $pid, 'product' );
 						$line_totals[ $canon ] = ( $line_totals[ $canon ] ?? 0 ) + $qty;
 					}
 				}

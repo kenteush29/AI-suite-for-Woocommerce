@@ -10,7 +10,7 @@ if ( ! class_exists( 'WP_List_Table' ) ) {
  * one row per line. Variable parents expose an AJAX-loaded sub-table of their
  * out-of-stock variations.
  */
-final class RSTK_Restock_List_Table extends WP_List_Table {
+final class DZE_Restock_List_Table extends WP_List_Table {
 
 	private const PER_PAGE_DEFAULT = 30;
 	private const PER_PAGE_MAX     = 200;
@@ -35,13 +35,13 @@ final class RSTK_Restock_List_Table extends WP_List_Table {
 
 	public function get_columns(): array {
 		return [
-			'title'    => __( 'Product', 'restock-for-woocommerce' ),
-			'category' => __( 'Category', 'restock-for-woocommerce' ),
-			'price'    => __( 'Price', 'restock-for-woocommerce' ),
-			'oos'      => __( 'OOS variations', 'restock-for-woocommerce' ),
-			'sales'    => __( 'Total Sales', 'restock-for-woocommerce' )
+			'title'    => __( 'Product', 'dazont-ecom' ),
+			'category' => __( 'Category', 'dazont-ecom' ),
+			'price'    => __( 'Price', 'dazont-ecom' ),
+			'oos'      => __( 'OOS variations', 'dazont-ecom' ),
+			'sales'    => __( 'Total Sales', 'dazont-ecom' )
 				. ' <span class="dashicons dashicons-editor-help" title="'
-				. esc_attr__( 'Total units ordered across ALL orders (including refunded, cancelled and failed), never reduced by refunds, aggregated across all WPML languages. For a variable product this is the sum of ALL its variations, not only the out-of-stock ones.', 'restock-for-woocommerce' )
+				. esc_attr__( 'Total units ordered across ALL orders (including refunded, cancelled and failed), never reduced by refunds, aggregated across all WPML languages. For a variable product this is the sum of ALL its variations, not only the out-of-stock ones.', 'dazont-ecom' )
 				. '" style="font-size:16px;width:16px;height:16px;color:#999;cursor:help;"></span>',
 		];
 	}
@@ -54,13 +54,13 @@ final class RSTK_Restock_List_Table extends WP_List_Table {
 	}
 
 	public function no_items(): void {
-		esc_html_e( 'No out-of-stock products. 🎉', 'restock-for-woocommerce' );
+		esc_html_e( 'No out-of-stock products. 🎉', 'dazont-ecom' );
 	}
 
 	public function prepare_items(): void {
 		$this->_column_headers = [ $this->get_columns(), [], $this->get_sortable_columns() ];
 
-		$lines = RSTK_Restock::get_line_index();
+		$lines = DZE_Restock::get_line_index();
 		$ids   = array_keys( $lines );
 
 		if ( $ids ) {
@@ -97,7 +97,7 @@ final class RSTK_Restock_List_Table extends WP_List_Table {
 				'type'  => $line['type'],
 				'oos'   => count( $line['oos'] ),
 				'total' => $line['total'],
-				'sales' => RSTK_Restock::get_line_sales( $id ),
+				'sales' => DZE_Restock::get_line_sales( $id ),
 				'title' => get_the_title( $id ),
 			];
 		}
@@ -134,7 +134,7 @@ final class RSTK_Restock_List_Table extends WP_List_Table {
 
 	public function single_row( $item ): void {
 		printf(
-			'<tr id="restock-line-%1$d" class="rstk-row rstk-%2$s" data-id="%1$d" data-type="%2$s">',
+			'<tr id="restock-line-%1$d" class="dze-row dze-%2$s" data-id="%1$d" data-type="%2$s">',
 			(int) $item['id'],
 			esc_attr( $item['type'] )
 		);
@@ -167,8 +167,8 @@ final class RSTK_Restock_List_Table extends WP_List_Table {
 			return '<span style="color:#999;">N/A</span>';
 		}
 		return sprintf(
-			'<button type="button" class="rstk-toggle button-link" data-parent="%1$d" aria-expanded="false">▸</button> '
-			. '<span class="rstk-oos-badge">%2$d/%3$d</span>',
+			'<button type="button" class="dze-toggle button-link" data-parent="%1$d" aria-expanded="false">▸</button> '
+			. '<span class="dze-oos-badge">%2$d/%3$d</span>',
 			(int) $item['id'],
 			(int) $item['oos'],
 			(int) $item['total']
@@ -194,7 +194,7 @@ final class RSTK_Restock_List_Table extends WP_List_Table {
 
 		if ( ! is_wp_error( $terms ) && ! empty( $terms ) ) {
 			echo '<select name="product_cat">';
-			echo '<option value="">' . esc_html__( 'All categories', 'restock-for-woocommerce' ) . '</option>';
+			echo '<option value="">' . esc_html__( 'All categories', 'dazont-ecom' ) . '</option>';
 			foreach ( $terms as $term ) {
 				printf(
 					'<option value="%s" %s>%s (%d)</option>',
@@ -214,12 +214,12 @@ final class RSTK_Restock_List_Table extends WP_List_Table {
 				'<option value="%1$d" %2$s>%1$d %3$s</option>',
 				(int) $choice,
 				selected( $current_pp, $choice, false ),
-				esc_html__( '/ page', 'restock-for-woocommerce' )
+				esc_html__( '/ page', 'dazont-ecom' )
 			);
 		}
 		echo '</select>';
 
-		submit_button( __( 'Filter', 'restock-for-woocommerce' ), '', 'filter_action', false );
+		submit_button( __( 'Filter', 'dazont-ecom' ), '', 'filter_action', false );
 		echo '</div>';
 	}
 }

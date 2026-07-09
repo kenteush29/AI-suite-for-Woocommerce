@@ -1,10 +1,17 @@
-# Restock for WooCommerce
+# Dazont Ecom
 
-Restock backlog manager for WooCommerce. Lists every product-line (simple
-product or variable parent) that has **at least one out-of-stock item**, ranked
-by **total sales**, so you can prioritise restocking by real demand.
+A modular WooCommerce toolkit. Modules are shipped as they are finished and
+fully tested.
 
-## Features
+## Modules
+
+### Restock (live)
+
+Restock backlog manager. Lists every product-line (simple product or variable
+parent) that has **at least one out-of-stock item**, ranked by **total sales**,
+so you can prioritise restocking by real demand.
+
+## Restock — features
 
 - One row per product-line — never one row per variation in the main view.
 - Columns: Product · Category · Price · OOS variations (`x/y`) · Total Sales.
@@ -29,7 +36,7 @@ by **total sales**, so you can prioritise restocking by real demand.
 
 ## Installation
 
-1. Download `restock-for-woocommerce.zip` from the
+1. Download `dazont-ecom.zip` from the
    [latest release](https://github.com/kenteush29/AI-suite-for-Woocommerce/releases).
    *(Use the ZIP asset attached to the release, not the "Source code" archive.)*
 2. In WordPress: **Plugins → Add New → Upload Plugin** → select the ZIP →
