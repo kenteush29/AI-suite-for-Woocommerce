@@ -18,8 +18,25 @@ final class AICS_Restock {
 	public const LAST_RECALC = 'aics_restock_last_recalc';
 	public const MENU_SLUG   = 'aics-restockage';
 
-	/** Order statuses considered as "paid" for sales aggregation. */
-	private const PAID_STATUSES = [ 'completed', 'processing', 'on-hold' ];
+	/**
+	 * Order statuses counted for the "interest" metric.
+	 *
+	 * This indicator measures demand/interest in a product, NOT revenue, so it
+	 * counts EVERY real order — including refunded, cancelled and failed ones
+	 * (a refund caused by an out-of-stock item is still a strong buying signal).
+	 * Refund line-items are never subtracted: the ordered quantity is what counts.
+	 */
+	private function get_counted_statuses(): array {
+		if ( function_exists( 'wc_get_order_statuses' ) ) {
+			// e.g. wc-pending, wc-processing, wc-completed, wc-refunded, wc-cancelled…
+			$statuses = array_keys( wc_get_order_statuses() );
+			return array_map(
+				static fn( string $s ): string => preg_replace( '/^wc-/', '', $s ),
+				$statuses
+			);
+		}
+		return [ 'pending', 'processing', 'on-hold', 'completed', 'cancelled', 'refunded', 'failed' ];
+	}
 
 	private static ?self $instance = null;
 
@@ -303,14 +320,15 @@ final class AICS_Restock {
 		$line_totals = []; // canonical product/parent id => qty
 		$var_totals  = []; // canonical variation id      => qty
 
-		$page  = 1;
-		$limit = 100;
+		$statuses = $this->get_counted_statuses();
+		$page     = 1;
+		$limit    = 100;
 
 		do {
 			$orders = wc_get_orders( [
 				'limit'   => $limit,
 				'page'    => $page,
-				'status'  => self::PAID_STATUSES,
+				'status'  => $statuses,
 				'orderby' => 'ID',
 				'order'   => 'ASC',
 				'return'  => 'objects',

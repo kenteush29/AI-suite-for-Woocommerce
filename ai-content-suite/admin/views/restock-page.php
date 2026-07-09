@@ -7,7 +7,7 @@ defined( 'ABSPATH' ) || exit;
 	<h1 class="wp-heading-inline"><?php esc_html_e( 'Restockage', 'ai-content-suite' ); ?></h1>
 
 	<p class="description" style="margin:8px 0 16px; max-width:820px;">
-		<?php esc_html_e( 'Product-lines with at least one out-of-stock item. Sorted by sales (highest impact first). Click a variable product to reveal its out-of-stock variations.', 'ai-content-suite' ); ?>
+		<?php esc_html_e( 'Product-lines with at least one out-of-stock item, sorted by interest (total units ever ordered — a demand signal, not revenue). Click a variable product to reveal its out-of-stock variations.', 'ai-content-suite' ); ?>
 	</p>
 
 	<div class="aics-restock-toolbar" style="margin-bottom:12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">

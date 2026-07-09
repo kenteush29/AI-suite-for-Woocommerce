@@ -40,9 +40,9 @@ final class AICS_Restock_List_Table extends WP_List_Table {
 			'category'   => __( 'Category', 'ai-content-suite' ),
 			'price'      => __( 'Price', 'ai-content-suite' ),
 			'oos'        => __( 'OOS variations', 'ai-content-suite' ),
-			'sales'      => __( 'Sales', 'ai-content-suite' )
+			'sales'      => __( 'Interest', 'ai-content-suite' )
 				. ' <span class="dashicons dashicons-editor-help" title="'
-				. esc_attr__( 'Total units sold across all paid orders (completed, processing, on-hold), aggregated across all WPML languages.', 'ai-content-suite' )
+				. esc_attr__( 'Demand indicator, not revenue: total units ordered across ALL orders — including refunded, cancelled and failed — never reduced by refunds, aggregated across all WPML languages.', 'ai-content-suite' )
 				. '" style="font-size:16px;width:16px;height:16px;color:#999;cursor:help;"></span>',
 		];
 	}
