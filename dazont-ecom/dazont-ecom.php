@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       Dazont Ecom
  * Plugin URI:        https://github.com/kenteush29/Dazont-Ecom-for-WooCommerce
- * Description:       Dazont Ecom toolkit for WooCommerce. Modules: Restock (out-of-stock backlog) and Trending Products (best-sellers shortcode). More modules coming.
- * Version:           1.2.1
+ * Description:       Dazont Ecom toolkit for WooCommerce. Modules: Restock (out-of-stock backlog), Trending Products (best-sellers shortcode) and Marketing & Discounts (scheduled sales, banners, cart/bulk discounts). More modules coming.
+ * Version:           1.3.0
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Dazont
@@ -14,7 +14,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'DZE_VERSION', '1.2.1' );
+define( 'DZE_VERSION', '1.3.0' );
 define( 'DZE_FILE',    __FILE__ );
 define( 'DZE_DIR',     plugin_dir_path( __FILE__ ) );
 define( 'DZE_URL',     plugin_dir_url( __FILE__ ) );
@@ -63,6 +63,7 @@ final class DZE_Plugin {
 
 		DZE_Restock::instance();
 		DZE_Trending::instance();
+		DZE_Discounts::instance();
 	}
 
 	public static function activate(): void {

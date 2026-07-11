@@ -43,3 +43,8 @@
 	max-width: 92vw; max-height: 92vh; object-fit: contain;
 	box-shadow: 0 8px 40px rgba(0,0,0,0.5); background: #fff; border-radius: 4px;
 }
+
+/* Discounts module */
+.dze-status-ok { color: #0a7040; font-weight: 600; }
+.dze-danger { color: #b32d2e; }
+.dze-danger:hover { color: #d63638; }
