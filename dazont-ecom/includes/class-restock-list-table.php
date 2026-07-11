@@ -36,6 +36,7 @@ final class DZE_Restock_List_Table extends WP_List_Table {
 	public function get_columns(): array {
 		return [
 			'cb'       => '<input type="checkbox" />',
+			'thumb'    => __( 'Image', 'dazont-ecom' ),
 			'title'    => __( 'Product', 'dazont-ecom' ),
 			'category' => __( 'Category', 'dazont-ecom' ),
 			'price'    => __( 'Price', 'dazont-ecom' ),
@@ -53,6 +54,10 @@ final class DZE_Restock_List_Table extends WP_List_Table {
 			'<input type="checkbox" class="dze-cb" name="ids[]" value="%d" />',
 			(int) $item['id']
 		);
+	}
+
+	public function column_thumb( $item ): string {
+		return DZE_Restock::thumb_html( get_post_thumbnail_id( $item['id'] ) );
 	}
 
 	public function column_restock( $item ): string {

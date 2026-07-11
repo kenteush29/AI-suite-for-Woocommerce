@@ -14,6 +14,12 @@ so you can prioritise restocking by real demand.
 ## Restock — features
 
 - One row per product-line — never one row per variation in the main view.
+- **Product & variation thumbnails**, click to open the full-size image in a
+  lightbox (full image loaded only on click) — handy for sourcing without
+  leaving the page.
+- **Admin-only & zero front-end cost**: the module wires nothing on front-end
+  requests except the weekly cron hook. Future modules follow the same rule —
+  front-end code loads only where it's needed.
 - **One-click Restock** per row + **Bulk restock** (top & bottom): sets the
   product (and its out-of-stock variations) back to `instock` and clears any
   tracked quantity, so status is the single source of truth (no stock/status

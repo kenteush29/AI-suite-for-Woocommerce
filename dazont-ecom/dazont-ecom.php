@@ -3,7 +3,7 @@
  * Plugin Name:       Dazont Ecom
  * Plugin URI:        https://github.com/kenteush29/Dazont-Ecom-for-WooCommerce
  * Description:       Dazont Ecom toolkit for WooCommerce. First module: Restock — lists out-of-stock product-lines ranked by total sales, with per-variation drill-down and WPML-aware sales aggregation. More modules coming.
- * Version:           1.1.1
+ * Version:           1.1.2
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Dazont
@@ -14,7 +14,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'DZE_VERSION', '1.1.1' );
+define( 'DZE_VERSION', '1.1.2' );
 define( 'DZE_FILE',    __FILE__ );
 define( 'DZE_DIR',     plugin_dir_path( __FILE__ ) );
 define( 'DZE_URL',     plugin_dir_url( __FILE__ ) );
