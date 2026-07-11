@@ -52,7 +52,7 @@
 			'<table class="widefat striped dze-subtable">' +
 			'<thead><tr>' +
 			'<th class="check-column"><input type="checkbox" class="dze-var-all" checked /></th>' +
-			'<th>Variation</th><th>SKU</th><th>Price</th><th>Sales</th>' +
+			'<th>Image</th><th>Variation</th><th>SKU</th><th>Price</th><th>Sales</th>' +
 			'</tr></thead>' +
 			'<tbody>' + rowsHtml + '</tbody></table>' +
 			'<p><button type="button" class="button button-primary dze-restock-vars" data-parent="' + parent + '">' +
@@ -82,6 +82,19 @@
 			$status.css('color', '#c0392b').text(i18n.error);
 			$btn.prop('disabled', false);
 		});
+	});
+
+	// ---- Thumbnail lightbox (full image loaded only on click) ----
+	$(document).on('click', '.dze-thumb, .dze-thumb-zoom', function () {
+		var full = $(this).closest('.dze-thumb-wrap').find('.dze-thumb').data('full');
+		if (!full) { return; }
+		$('body').append(
+			'<div class="dze-lightbox"><img src="' + full + '" alt="" /></div>'
+		);
+	});
+	$(document).on('click', '.dze-lightbox', function () { $(this).remove(); });
+	$(document).on('keydown', function (e) {
+		if (e.key === 'Escape') { $('.dze-lightbox').remove(); }
 	});
 
 	// ---- Main-list select-all sync (WP renders #cb-select-all-1 / -2) ----

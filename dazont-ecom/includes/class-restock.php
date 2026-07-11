@@ -27,11 +27,18 @@ final class DZE_Restock {
 	}
 
 	private function __construct() {
+		// Cron must be wired in every context — real WP-Cron runs are NOT is_admin().
+		// This is intentionally the only footprint on front-end requests.
+		add_action( 'init',          [ $this, 'maybe_schedule_cron' ] );
+		add_action( self::CRON_HOOK, [ $this, 'recalc_sales' ] );
+
+		// Admin-only UI: menu, assets and AJAX endpoints never load on the front end.
+		if ( ! is_admin() ) {
+			return;
+		}
+
 		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
-		add_action( 'init',                  [ $this, 'maybe_schedule_cron' ] );
-
-		add_action( self::CRON_HOOK, [ $this, 'recalc_sales' ] );
 
 		add_action( 'wp_ajax_dze_variations', [ $this, 'ajax_variations' ] );
 		add_action( 'wp_ajax_dze_recalc',     [ $this, 'ajax_recalc' ] );
@@ -201,6 +208,26 @@ final class DZE_Restock {
 		return (int) get_post_meta( $id, self::SALES_META, true );
 	}
 
+	/**
+	 * Small clickable thumbnail (opens the full-size image in a lightbox).
+	 * The full-size URL is loaded only when the user clicks — no front-end cost.
+	 */
+	public static function thumb_html( int $attachment_id ): string {
+		if ( ! $attachment_id ) {
+			return '<span class="dze-nothumb">—</span>';
+		}
+		$small = wp_get_attachment_image_url( $attachment_id, [ 48, 48 ] );
+		$full  = wp_get_attachment_image_url( $attachment_id, 'full' );
+		if ( ! $small ) {
+			return '<span class="dze-nothumb">—</span>';
+		}
+		return sprintf(
+			'<span class="dze-thumb-wrap"><img src="%1$s" class="dze-thumb" data-full="%2$s" width="48" height="48" loading="lazy" alt="" /><span class="dze-thumb-zoom dashicons dashicons-search" aria-hidden="true"></span></span>',
+			esc_url( $small ),
+			esc_url( $full ?: $small )
+		);
+	}
+
 	// -------------------------------------------------------------------------
 	// AJAX: lazy-load variations
 	// -------------------------------------------------------------------------
@@ -242,8 +269,15 @@ final class DZE_Restock {
 			$price = $variation->get_price_html();
 			$sales = (int) get_post_meta( (int) $vid, self::SALES_META, true );
 
+			// Variation image, falling back to the parent product image.
+			$img_id = (int) $variation->get_image_id();
+			if ( ! $img_id ) {
+				$img_id = (int) get_post_thumbnail_id( $parent_id );
+			}
+
 			$rows_html .= '<tr>'
 				. '<td class="check-column"><input type="checkbox" class="dze-var-cb" value="' . (int) $vid . '" checked /></td>'
+				. '<td>' . self::thumb_html( $img_id ) . '</td>'
 				. '<td>' . esc_html( $name ) . '</td>'
 				. '<td>' . esc_html( $sku !== '' ? $sku : '—' ) . '</td>'
 				. '<td>' . wp_kses_post( $price !== '' ? $price : '—' ) . '</td>'
