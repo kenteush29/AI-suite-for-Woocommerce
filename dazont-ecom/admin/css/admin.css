@@ -13,3 +13,6 @@
 .dze-subtable { margin: 4px 0; }
 .dze-subtable th { font-size: 12px; }
 .dze-subtable td { font-size: 13px; }
+.column-cb { width: 2.2em; }
+.column-restock { width: 90px; }
+.dze-bulk-actions { margin-right: 8px; }

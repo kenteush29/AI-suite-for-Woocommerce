@@ -35,6 +35,7 @@ final class DZE_Restock {
 
 		add_action( 'wp_ajax_dze_variations', [ $this, 'ajax_variations' ] );
 		add_action( 'wp_ajax_dze_recalc',     [ $this, 'ajax_recalc' ] );
+		add_action( 'wp_ajax_dze_restock',    [ $this, 'ajax_restock' ] );
 	}
 
 	// -------------------------------------------------------------------------
@@ -88,6 +89,11 @@ final class DZE_Restock {
 				'error'      => __( 'Error', 'dazont-ecom' ),
 				'noVar'      => __( 'No out-of-stock variations found.', 'dazont-ecom' ),
 				'subNote'    => __( 'Only out-of-stock variations are listed. The product\'s Total Sales above covers all its variations (in stock included).', 'dazont-ecom' ),
+				'restock'    => __( 'Restock', 'dazont-ecom' ),
+				'restocking' => __( 'Restocking…', 'dazont-ecom' ),
+				'noSelection'=> __( 'No product selected. Tick at least one checkbox.', 'dazont-ecom' ),
+				'confirmBulk'=> __( 'Set the selected products back in stock (and clear their tracked quantity)?', 'dazont-ecom' ),
+				'bulkDone'   => __( 'Restocked', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -266,6 +272,67 @@ final class DZE_Restock {
 			),
 			'timestamp' => wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), time() ),
 		] );
+	}
+
+	// -------------------------------------------------------------------------
+	// AJAX: restock a product-line
+	// -------------------------------------------------------------------------
+
+	public function ajax_restock(): void {
+		check_ajax_referer( self::NONCE, 'nonce' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
+		}
+
+		$id = isset( $_POST['id'] ) ? absint( $_POST['id'] ) : 0;
+		if ( ! $id ) {
+			wp_send_json_error( [ 'message' => __( 'Invalid product.', 'dazont-ecom' ) ] );
+		}
+
+		$ok = $this->restock_line( $id );
+		if ( ! $ok ) {
+			wp_send_json_error( [ 'message' => __( 'Could not restock this product.', 'dazont-ecom' ) ] );
+		}
+
+		wp_send_json_success( [ 'id' => $id ] );
+	}
+
+	/**
+	 * Sets a product-line back in stock. For a variable product, every
+	 * out-of-stock variation is restocked and the parent status refreshed.
+	 */
+	private function restock_line( int $id ): bool {
+		$product = wc_get_product( $id );
+		if ( ! $product ) {
+			return false;
+		}
+
+		if ( $product->is_type( 'variable' ) ) {
+			foreach ( $product->get_children() as $vid ) {
+				$variation = wc_get_product( (int) $vid );
+				if ( $variation && $variation->get_stock_status() === 'outofstock' ) {
+					$this->set_in_stock( $variation );
+				}
+			}
+			// Refresh the parent so it no longer reports out-of-stock.
+			$this->set_in_stock( $product );
+			return true;
+		}
+
+		$this->set_in_stock( $product );
+		return true;
+	}
+
+	/**
+	 * Puts a product/variation in stock WITHOUT numeric stock tracking:
+	 * disables stock management and clears any tracked quantity, so the stock
+	 * status is the single source of truth (no status/quantity conflict).
+	 */
+	private function set_in_stock( \WC_Product $product ): void {
+		$product->set_manage_stock( false );
+		$product->set_stock_quantity( null );
+		$product->set_stock_status( 'instock' );
+		$product->save();
 	}
 
 	// -------------------------------------------------------------------------

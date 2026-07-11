@@ -35,6 +35,7 @@ final class DZE_Restock_List_Table extends WP_List_Table {
 
 	public function get_columns(): array {
 		return [
+			'cb'       => '<input type="checkbox" />',
 			'title'    => __( 'Product', 'dazont-ecom' ),
 			'category' => __( 'Category', 'dazont-ecom' ),
 			'price'    => __( 'Price', 'dazont-ecom' ),
@@ -43,7 +44,23 @@ final class DZE_Restock_List_Table extends WP_List_Table {
 				. ' <span class="dashicons dashicons-editor-help" title="'
 				. esc_attr__( 'Total units ordered across ALL orders (including refunded, cancelled and failed), never reduced by refunds, aggregated across all WPML languages. For a variable product this is the sum of ALL its variations, not only the out-of-stock ones.', 'dazont-ecom' )
 				. '" style="font-size:16px;width:16px;height:16px;color:#999;cursor:help;"></span>',
+			'restock'  => __( 'Restock', 'dazont-ecom' ),
 		];
+	}
+
+	public function column_cb( $item ): string {
+		return sprintf(
+			'<input type="checkbox" class="dze-cb" name="ids[]" value="%d" />',
+			(int) $item['id']
+		);
+	}
+
+	public function column_restock( $item ): string {
+		return sprintf(
+			'<button type="button" class="button dze-restock-btn" data-id="%d">%s</button>',
+			(int) $item['id'],
+			esc_html__( 'Restock', 'dazont-ecom' )
+		);
 	}
 
 	protected function get_sortable_columns(): array {
@@ -184,6 +201,16 @@ final class DZE_Restock_List_Table extends WP_List_Table {
 	}
 
 	protected function extra_tablenav( $which ): void {
+		// Bulk restock button: shown both above and below the table.
+		echo '<div class="alignleft actions dze-bulk-actions">';
+		printf(
+			'<button type="button" class="button button-primary dze-bulk-restock">%s</button> ',
+			esc_html__( 'Bulk restock', 'dazont-ecom' )
+		);
+		echo '<span class="dze-bulk-status" style="margin-left:6px;color:#666;"></span>';
+		echo '</div>';
+
+		// Category / per-page filters: only above the table.
 		if ( $which !== 'top' ) {
 			return;
 		}

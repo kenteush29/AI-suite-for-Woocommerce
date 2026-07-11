@@ -78,6 +78,68 @@
 		});
 	});
 
+	// ---- Select-all sync (header checkbox) ----
+	$(document).on('change', 'thead .check-column input[type=checkbox], tfoot .check-column input[type=checkbox]', function () {
+		$('.dze-cb').prop('checked', $(this).prop('checked'));
+	});
+
+	// ---- Per-row restock ----
+	$(document).on('click', '.dze-restock-btn', function () {
+		var $btn = $(this);
+		var id   = $btn.data('id');
+		$btn.prop('disabled', true).text(i18n.restocking);
+		restockOne(id, function (ok) {
+			if (ok) {
+				removeRow(id);
+			} else {
+				$btn.prop('disabled', false).text(i18n.restock);
+			}
+		});
+	});
+
+	// ---- Bulk restock ----
+	$(document).on('click', '.dze-bulk-restock', function () {
+		var ids = [];
+		$('.dze-cb:checked').each(function () { ids.push(parseInt($(this).val(), 10)); });
+
+		if (!ids.length) { alert(i18n.noSelection); return; }
+		if (!confirm(i18n.confirmBulk)) { return; }
+
+		var $status = $('.dze-bulk-status');
+		$('.dze-bulk-restock').prop('disabled', true);
+		$('.dze-cb, thead .check-column input, tfoot .check-column input').prop('disabled', true);
+
+		var total = ids.length;
+		var done  = 0;
+
+		function next() {
+			if (!ids.length) {
+				$status.css('color', '#0a7040').text(i18n.bulkDone + ': ' + done + '/' + total);
+				$('.dze-bulk-restock').prop('disabled', false);
+				return;
+			}
+			var id = ids.shift();
+			done++;
+			$status.css('color', '#666').text(i18n.restocking + ' ' + done + '/' + total);
+			restockOne(id, function (ok) {
+				if (ok) { removeRow(id); }
+				next();
+			});
+		}
+		next();
+	});
+
+	function restockOne(id, cb) {
+		$.post(cfg.ajaxUrl, { action: 'dze_restock', nonce: cfg.nonce, id: id })
+		.done(function (res) { cb(!!(res && res.success)); })
+		.fail(function () { cb(false); });
+	}
+
+	function removeRow(id) {
+		$('#restock-child-' + id).remove();
+		$('#restock-line-' + id).fadeOut(300, function () { $(this).remove(); });
+	}
+
 	function escHtml(str) {
 		return String(str)
 			.replace(/&/g, '&amp;').replace(/</g, '&lt;')
