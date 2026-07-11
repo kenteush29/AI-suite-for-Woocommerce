@@ -94,6 +94,7 @@ final class DZE_Restock {
 				'noSelection'=> __( 'No product selected. Tick at least one checkbox.', 'dazont-ecom' ),
 				'confirmBulk'=> __( 'Set the selected products back in stock (and clear their tracked quantity)?', 'dazont-ecom' ),
 				'bulkDone'   => __( 'Restocked', 'dazont-ecom' ),
+				'restockSelected' => __( 'Restock selected variations', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -242,6 +243,7 @@ final class DZE_Restock {
 			$sales = (int) get_post_meta( (int) $vid, self::SALES_META, true );
 
 			$rows_html .= '<tr>'
+				. '<td class="check-column"><input type="checkbox" class="dze-var-cb" value="' . (int) $vid . '" checked /></td>'
 				. '<td>' . esc_html( $name ) . '</td>'
 				. '<td>' . esc_html( $sku !== '' ? $sku : '—' ) . '</td>'
 				. '<td>' . wp_kses_post( $price !== '' ? $price : '—' ) . '</td>'
@@ -307,6 +309,17 @@ final class DZE_Restock {
 			return false;
 		}
 
+		// A single variation: restock it and re-sync its parent status.
+		if ( $product->is_type( 'variation' ) ) {
+			$this->set_in_stock( $product );
+			$parent_id = $product->get_parent_id();
+			if ( $parent_id && class_exists( 'WC_Product_Variable' ) ) {
+				WC_Product_Variable::sync_stock_status( $parent_id );
+			}
+			return true;
+		}
+
+		// A variable parent (used by bulk restock): restock every OOS variation.
 		if ( $product->is_type( 'variable' ) ) {
 			foreach ( $product->get_children() as $vid ) {
 				$variation = wc_get_product( (int) $vid );
@@ -314,7 +327,6 @@ final class DZE_Restock {
 					$this->set_in_stock( $variation );
 				}
 			}
-			// Refresh the parent so it no longer reports out-of-stock.
 			$this->set_in_stock( $product );
 			return true;
 		}
