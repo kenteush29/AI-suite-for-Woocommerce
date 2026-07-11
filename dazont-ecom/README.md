@@ -14,6 +14,10 @@ so you can prioritise restocking by real demand.
 ## Restock — features
 
 - One row per product-line — never one row per variation in the main view.
+- **One-click Restock** per row + **Bulk restock** (top & bottom): sets the
+  product (and its out-of-stock variations) back to `instock` and clears any
+  tracked quantity, so status is the single source of truth (no stock/status
+  conflict — for stores that don't track numeric stock).
 - Columns: Product · Category · Price · OOS variations (`x/y`) · Total Sales.
 - Click a variable product to reveal its out-of-stock variations (AJAX,
   lazy-loaded — no slowdown on large catalogues).
