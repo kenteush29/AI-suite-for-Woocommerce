@@ -14,9 +14,8 @@ defined( 'ABSPATH' ) || exit;
  */
 final class DZE_Trending {
 
-	public const SHORTCODE        = 'dze_trending_products';
-	public const SHORTCODE_LEGACY = 'time_bestsellers'; // back-compat alias
-	public const NONCE            = 'dze_admin';
+	public const SHORTCODE = 'time_bestsellers';
+	public const NONCE     = 'dze_admin';
 	public const MENU_SLUG        = 'dazont-ecom-trending';
 
 	public const OPT_TIME_PERIOD    = 'dze_trending_time_period';
@@ -49,7 +48,6 @@ final class DZE_Trending {
 		// Shortcode registration must happen on every request (front included)
 		// — it costs nothing until the shortcode is actually rendered.
 		add_shortcode( self::SHORTCODE, [ $this, 'render_shortcode' ] );
-		add_shortcode( self::SHORTCODE_LEGACY, [ $this, 'render_shortcode' ] );
 
 		if ( ! is_admin() ) {
 			return;
@@ -175,6 +173,15 @@ final class DZE_Trending {
 		$limit       = min( self::MAX_LIMIT, max( self::MIN_LIMIT, absint( $atts['limit'] ) ) );
 		$columns     = min( self::MAX_COLUMNS, max( self::MIN_COLUMNS, absint( $atts['columns'] ) ) );
 
+		// Fetch a larger candidate pool than requested: WooCommerce's own
+		// [products] shortcode silently drops out-of-stock products when the
+		// store has "Hide out of stock items from the catalog" enabled — even
+		// when we pass their IDs explicitly. Best-sellers are exactly the
+		// products most likely to be out of stock, so without a buffer the
+		// displayed count randomly falls short of the requested limit as
+		// stock status changes. Overfetching lets WooCommerce's internal
+		// filter drop some candidates while we still end up with `limit`
+		// visible products (unless the whole pool genuinely has fewer).
 		$product_ids = $this->get_trending_product_ids( $time_period, $limit );
 		if ( empty( $product_ids ) ) {
 			return '';
@@ -201,12 +208,21 @@ final class DZE_Trending {
 		return $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table;
 	}
 
+	/** How many extra candidates to fetch per requested slot, and the hard cap. */
+	private const CANDIDATE_MULTIPLIER = 5;
+	private const CANDIDATE_CAP        = 100;
+
 	/**
-	 * @return int[] Product IDs ranked by units sold over the period, cached.
+	 * @return int[] Candidate product IDs ranked by units sold over the
+	 *               period, cached. Returns more than $limit IDs on purpose
+	 *               (see render_shortcode()) so WooCommerce's own visibility
+	 *               filtering doesn't leave fewer than $limit visible.
 	 */
 	private function get_trending_product_ids( int $time_period, int $limit ): array {
+		$candidate_limit = min( self::CANDIDATE_CAP, $limit * self::CANDIDATE_MULTIPLIER );
+
 		$version   = (int) get_option( self::OPT_CACHE_VERSION, 1 );
-		$cache_key = 'dze_trending_v' . $version . '_' . $time_period . '_' . $limit;
+		$cache_key = 'dze_trending_v' . $version . '_' . $time_period . '_' . $candidate_limit;
 
 		$cached = get_transient( $cache_key );
 		if ( is_array( $cached ) ) {
@@ -236,7 +252,7 @@ final class DZE_Trending {
 			 LIMIT %d",
 			$start->format( 'Y-m-d H:i:s' ),
 			$now->format( 'Y-m-d H:i:s' ),
-			$limit
+			$candidate_limit
 		) );
 
 		$product_ids = array_map( 'absint', wp_list_pluck( $results, 'product_id' ) );
