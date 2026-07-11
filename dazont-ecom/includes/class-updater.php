@@ -14,7 +14,7 @@ final class DZE_Updater {
 	private const OWNER     = 'kenteush29';
 	private const REPO      = 'Dazont-Ecom-for-WooCommerce';
 	private const CACHE_KEY = 'dze_gh_latest_release';
-	private const CACHE_TTL = 6 * HOUR_IN_SECONDS;
+	private const CACHE_TTL = 7 * DAY_IN_SECONDS;
 
 	private string $basename; // dazont-ecom/dazont-ecom.php
 	private string $slug;     // dazont-ecom
