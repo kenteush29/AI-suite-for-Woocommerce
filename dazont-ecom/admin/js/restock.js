@@ -35,7 +35,7 @@
 		})
 		.done(function (res) {
 			if (res.success && res.data.count > 0) {
-				$childRow.find('td').html(buildSubTable(res.data.rows));
+				$childRow.find('td').html(buildSubTable(res.data.rows, parent));
 			} else if (res.success) {
 				$childRow.find('td').html('<em>' + escHtml(i18n.noVar) + '</em>');
 			} else {
@@ -47,11 +47,17 @@
 		});
 	});
 
-	function buildSubTable(rowsHtml) {
+	function buildSubTable(rowsHtml, parent) {
 		return '<p class="dze-subnote">' + escHtml(i18n.subNote || '') + '</p>' +
 			'<table class="widefat striped dze-subtable">' +
-			'<thead><tr><th>Variation</th><th>SKU</th><th>Price</th><th>Sales</th></tr></thead>' +
-			'<tbody>' + rowsHtml + '</tbody></table>';
+			'<thead><tr>' +
+			'<th class="check-column"><input type="checkbox" class="dze-var-all" checked /></th>' +
+			'<th>Variation</th><th>SKU</th><th>Price</th><th>Sales</th>' +
+			'</tr></thead>' +
+			'<tbody>' + rowsHtml + '</tbody></table>' +
+			'<p><button type="button" class="button button-primary dze-restock-vars" data-parent="' + parent + '">' +
+			escHtml(i18n.restockSelected) + '</button> ' +
+			'<span class="dze-vars-status" style="margin-left:6px;color:#666;"></span></p>';
 	}
 
 	// ---- Recalculate ----
@@ -78,8 +84,8 @@
 		});
 	});
 
-	// ---- Select-all sync (header checkbox) ----
-	$(document).on('change', 'thead .check-column input[type=checkbox], tfoot .check-column input[type=checkbox]', function () {
+	// ---- Main-list select-all sync (WP renders #cb-select-all-1 / -2) ----
+	$(document).on('change', '#cb-select-all-1, #cb-select-all-2', function () {
 		$('.dze-cb').prop('checked', $(this).prop('checked'));
 	});
 
@@ -96,6 +102,70 @@
 			}
 		});
 	});
+
+	// ---- Variable product: open the variations panel to choose ----
+	$(document).on('click', '.dze-restock-expand', function () {
+		var parent = $(this).data('parent');
+		var $child = $('#restock-child-' + parent);
+		if (!$child.length || !$child.is(':visible')) {
+			$('.dze-toggle[data-parent="' + parent + '"]').trigger('click');
+		}
+	});
+
+	// ---- Sub-table select-all ----
+	$(document).on('change', '.dze-var-all', function () {
+		$(this).closest('table').find('.dze-var-cb').prop('checked', $(this).prop('checked'));
+	});
+
+	// ---- Restock selected variations ----
+	$(document).on('click', '.dze-restock-vars', function () {
+		var $btn    = $(this);
+		var parent  = $btn.data('parent');
+		var $td     = $btn.closest('td');
+		var $status = $td.find('.dze-vars-status');
+		var $cbs    = $td.find('.dze-var-cb:checked');
+
+		if (!$cbs.length) { alert(i18n.noSelection); return; }
+
+		var ids = [];
+		$cbs.each(function () { ids.push(parseInt($(this).val(), 10)); });
+
+		var total = ids.length;
+		var done  = 0;
+		$btn.prop('disabled', true);
+
+		function next() {
+			if (!ids.length) {
+				updateParentBadge(parent, done);
+				$btn.prop('disabled', false);
+				return;
+			}
+			var id = ids.shift();
+			$status.css('color', '#666').text(i18n.restocking + ' ' + (done + 1) + '/' + total);
+			restockOne(id, function (ok) {
+				if (ok) {
+					done++;
+					$td.find('.dze-var-cb[value="' + id + '"]').closest('tr').remove();
+				}
+				next();
+			});
+		}
+		next();
+	});
+
+	// Decrement the parent's "OOS x/y" badge; remove the line when it hits 0.
+	function updateParentBadge(parent, restocked) {
+		var $badge = $('#restock-line-' + parent + ' .dze-oos-badge');
+		if (!$badge.length) { return; }
+		var parts = $badge.text().split('/');
+		var left  = parseInt(parts[0], 10) - restocked;
+		var total = parts[1];
+		if (left <= 0) {
+			removeRow(parent);
+		} else {
+			$badge.text(left + '/' + total);
+		}
+	}
 
 	// ---- Bulk restock ----
 	$(document).on('click', '.dze-bulk-restock', function () {

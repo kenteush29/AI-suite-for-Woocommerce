@@ -56,6 +56,15 @@ final class DZE_Restock_List_Table extends WP_List_Table {
 	}
 
 	public function column_restock( $item ): string {
+		// Variable products: restock is done per-variation — this button opens
+		// the variations panel so the user can pick which ones to restock.
+		if ( $item['type'] === 'variable' ) {
+			return sprintf(
+				'<button type="button" class="button dze-restock-expand" data-parent="%d">%s</button>',
+				(int) $item['id'],
+				esc_html__( 'Choose…', 'dazont-ecom' )
+			);
+		}
 		return sprintf(
 			'<button type="button" class="button dze-restock-btn" data-id="%d">%s</button>',
 			(int) $item['id'],
