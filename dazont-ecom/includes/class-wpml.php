@@ -27,6 +27,28 @@ final class DZE_Wpml {
 		return (string) apply_filters( 'wpml_current_language', null );
 	}
 
+	/**
+	 * Active languages as a list of [ 'code' => 'en', 'native_name' => 'English' ].
+	 * Empty array when WPML is inactive.
+	 */
+	public static function get_active_languages(): array {
+		if ( ! self::is_active() ) {
+			return [];
+		}
+		$languages = apply_filters( 'wpml_active_languages', null, [ 'skip_missing' => 0 ] );
+		if ( ! is_array( $languages ) ) {
+			return [];
+		}
+		$result = [];
+		foreach ( $languages as $code => $data ) {
+			$result[] = [
+				'code'        => (string) $code,
+				'native_name' => (string) ( $data['native_name'] ?? $code ),
+			];
+		}
+		return $result;
+	}
+
 	/** Language code of a post, or '' when unknown / WPML inactive. */
 	public static function post_language( int $post_id, string $post_type ): string {
 		if ( ! self::is_active() ) {
