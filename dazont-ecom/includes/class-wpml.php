@@ -19,6 +19,14 @@ final class DZE_Wpml {
 		return (string) apply_filters( 'wpml_default_language', null );
 	}
 
+	/** Current request language code, or '' when WPML is inactive. */
+	public static function current_language(): string {
+		if ( ! self::is_active() ) {
+			return '';
+		}
+		return (string) apply_filters( 'wpml_current_language', null );
+	}
+
 	/** Language code of a post, or '' when unknown / WPML inactive. */
 	public static function post_language( int $post_id, string $post_type ): string {
 		if ( ! self::is_active() ) {

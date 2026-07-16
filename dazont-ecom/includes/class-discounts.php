@@ -84,8 +84,9 @@ final class DZE_Discounts {
 		if ( null !== $this->active ) {
 			return $this->active;
 		}
-		$now    = time();
-		$active = [];
+		$now          = time();
+		$current_lang = DZE_Wpml::current_language();
+		$active       = [];
 		foreach ( self::get_rules() as $id => $rule ) {
 			if ( empty( $rule['enabled'] ) ) {
 				continue;
@@ -97,6 +98,11 @@ final class DZE_Discounts {
 				if ( ! empty( $rule['end'] ) && $this->to_ts( $rule['end'] ) < $now ) {
 					continue;
 				}
+			}
+			// Per-language targeting: when WPML is active and the rule limits
+			// itself to certain languages, skip it outside those languages.
+			if ( ! empty( $rule['languages'] ) && $current_lang !== '' && ! in_array( $current_lang, (array) $rule['languages'], true ) ) {
+				continue;
 			}
 			$active[ $id ] = $rule;
 		}
@@ -145,7 +151,6 @@ final class DZE_Discounts {
 			add_filter( 'woocommerce_product_variation_get_sale_price',  [ $this, 'filter_price' ], 20, 2 );
 			add_filter( 'woocommerce_variation_prices_price',            [ $this, 'filter_variation_price' ], 20, 3 );
 			add_filter( 'woocommerce_variation_prices_sale_price',       [ $this, 'filter_variation_price' ], 20, 3 );
-			add_filter( 'woocommerce_product_is_on_sale',               [ $this, 'filter_is_on_sale' ], 20, 2 );
 			add_filter( 'woocommerce_get_variation_prices_hash',        [ $this, 'filter_prices_hash' ], 20, 2 );
 
 			// Coupons: make our dynamic sale honour the coupon "Exclude sale
@@ -162,18 +167,20 @@ final class DZE_Discounts {
 			add_action( 'woocommerce_before_single_product', function () { $this->render_location( 'product' ); } );
 			add_action( 'woocommerce_before_shop_loop',      function () { $this->render_location( 'shop' ); } );
 			add_action( 'woocommerce_before_cart',           function () { $this->render_location( 'cart' ); } );
+
+			// Top of site (above the header) + homepage-only, both via wp_body_open.
 			add_action( 'wp_body_open', function () {
+				$this->render_location( 'top' );
 				if ( is_front_page() || is_home() ) {
 					$this->render_location( 'home' );
 				}
 			} );
 
-			// Site-wide banner "under the menu": Astra fires astra_masthead_after
-			// right after the header; fall back to wp_body_open on other themes.
-			$sitewide_hook = ( defined( 'ASTRA_THEME_VERSION' ) || function_exists( 'astra_masthead_content' ) )
-				? 'astra_masthead_after'
-				: 'wp_body_open';
-			add_action( $sitewide_hook, function () { $this->render_location( 'sitewide' ); } );
+			// Below the header (under the menu). Astra fires astra_header_after
+			// right after the whole header/menu.
+			if ( defined( 'ASTRA_THEME_VERSION' ) || function_exists( 'astra_header_markup' ) ) {
+				add_action( 'astra_header_after', function () { $this->render_location( 'below_header' ); } );
+			}
 
 			// User-defined hooks (free choice — e.g. any Astra hook).
 			foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
@@ -253,7 +260,7 @@ final class DZE_Discounts {
 	// =========================================================================
 
 	public function filter_price( $price, $product ) {
-		if ( ! $product instanceof \WC_Product || $price === '' ) {
+		if ( ! $product instanceof \WC_Product ) {
 			return $price;
 		}
 		$percent = $this->sale_percent_for( $product );
@@ -268,7 +275,7 @@ final class DZE_Discounts {
 	}
 
 	public function filter_variation_price( $price, $variation, $product ) {
-		if ( ! $variation instanceof \WC_Product || $price === '' ) {
+		if ( ! $variation instanceof \WC_Product ) {
 			return $price;
 		}
 		$percent = $this->sale_percent_for( $variation );
@@ -280,13 +287,6 @@ final class DZE_Discounts {
 			return $price;
 		}
 		return $this->discounted( $regular, $percent );
-	}
-
-	public function filter_is_on_sale( $on_sale, $product ) {
-		if ( $product instanceof \WC_Product && $this->sale_percent_for( $product ) > 0 ) {
-			return true;
-		}
-		return $on_sale;
 	}
 
 	public function filter_prices_hash( $hash, $product ) {
@@ -407,16 +407,17 @@ final class DZE_Discounts {
 			return; // one banner per rule per page load.
 		}
 
+		// Banner text, translated in-plugin per WPML language.
 		$text = trim( (string) ( $rule['banner_text'] ?? '' ) );
+		if ( DZE_Wpml::is_active() ) {
+			$lang = DZE_Wpml::current_language();
+			$i18n = (array) ( $rule['banner_text_i18n'] ?? [] );
+			if ( $lang !== '' && ! empty( $i18n[ $lang ] ) ) {
+				$text = trim( (string) $i18n[ $lang ] );
+			}
+		}
 		if ( $text === '' ) {
 			return;
-		}
-
-		// WPML: register + translate the banner text (String Translation).
-		if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
-			$name = 'banner_' . $id;
-			do_action( 'wpml_register_single_string', 'dazont-ecom', $name, $text );
-			$text = (string) apply_filters( 'wpml_translate_single_string', $text, 'dazont-ecom', $name );
 		}
 
 		self::$rendered[ $id ] = true;
@@ -433,8 +434,10 @@ final class DZE_Discounts {
 			}
 		}
 
+		// Typography is intentionally left to the theme (no font-size / weight
+		// override) — only the background, colour and padding are set.
 		printf(
-			'<div class="dze-promo-banner" style="background:%1$s;color:%2$s;text-align:center;padding:10px 16px;font-weight:600;">%3$s%4$s</div>',
+			'<div class="dze-promo-banner" style="background:%1$s;color:%2$s;text-align:center;padding:10px 16px;">%3$s%4$s</div>',
 			esc_attr( $bg ),
 			esc_attr( $color ),
 			esc_html( $text ),
@@ -526,6 +529,7 @@ final class DZE_Discounts {
 			return;
 		}
 		wp_enqueue_style( 'dze-admin', DZE_URL . 'admin/css/admin.css', [], DZE_VERSION );
+		wp_enqueue_media(); // Media Library picker for the hero image fields.
 		wp_enqueue_script( 'dze-discounts', DZE_URL . 'admin/js/discounts.js', [ 'jquery' ], DZE_VERSION, true );
 	}
 
@@ -539,6 +543,7 @@ final class DZE_Discounts {
 		$edit_id     = isset( $_GET['edit'] ) ? sanitize_text_field( wp_unslash( $_GET['edit'] ) ) : '';
 		$editing     = $edit_id !== '' && isset( $rules[ $edit_id ] ) ? $rules[ $edit_id ] : null;
 		$categories  = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => false ] );
+		$languages   = DZE_Wpml::get_active_languages();
 
 		require DZE_DIR . 'admin/views/discounts-page.php';
 	}
@@ -578,11 +583,13 @@ final class DZE_Discounts {
 			'banner_bg'        => $this->sanitize_hex( $in['banner_bg'] ?? '#111111' ),
 			'banner_color'     => $this->sanitize_hex( $in['banner_color'] ?? '#ffffff' ),
 			'banner_locations' => array_values( array_intersect(
-				[ 'product', 'shop', 'home', 'cart', 'sitewide' ],
+				[ 'top', 'below_header', 'product', 'shop', 'home', 'cart' ],
 				array_map( 'sanitize_key', (array) ( $in['banner_locations'] ?? [] ) )
 			) ),
 			'banner_hooks'      => sanitize_text_field( $in['banner_hooks'] ?? '' ),
 			'banner_timer'      => ! empty( $in['banner_timer'] ),
+			'banner_text_i18n'  => $this->sanitize_i18n( $in['banner_text_i18n'] ?? [] ),
+			'languages'         => array_values( array_filter( array_map( 'sanitize_key', (array) ( $in['languages'] ?? [] ) ) ) ),
 			'hero_swap_enabled' => ! empty( $in['hero_swap_enabled'] ),
 			'hero_source_id'    => absint( $in['hero_source_id'] ?? 0 ),
 			'hero_event_id'     => absint( $in['hero_event_id'] ?? 0 ),
@@ -624,6 +631,21 @@ final class DZE_Discounts {
 	}
 
 	// ---- sanitizers ----
+
+	private function sanitize_i18n( $value ): array {
+		if ( ! is_array( $value ) ) {
+			return [];
+		}
+		$clean = [];
+		foreach ( $value as $lang => $text ) {
+			$lang = sanitize_key( $lang );
+			$text = sanitize_text_field( $text );
+			if ( $lang !== '' && $text !== '' ) {
+				$clean[ $lang ] = $text;
+			}
+		}
+		return $clean;
+	}
 
 	private function parse_hooks( $raw ): array {
 		$parts = preg_split( '/[\s,]+/', (string) $raw, -1, PREG_SPLIT_NO_EMPTY );

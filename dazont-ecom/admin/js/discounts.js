@@ -34,6 +34,38 @@
 		$('.dze-field-products').toggle(scope === 'products');
 	}
 
+	// ---- Media Library picker for hero images ----
+	var frame = null;
+	$(document).on('click', '.dze-hero-select', function (e) {
+		e.preventDefault();
+		var $cell = $(this).closest('.dze-hero-picker');
+
+		frame = wp.media({
+			title: 'Select image',
+			button: { text: 'Use this image' },
+			library: { type: 'image' },
+			multiple: false
+		});
+
+		frame.on('select', function () {
+			var att = frame.state().get('selection').first().toJSON();
+			var url = (att.sizes && att.sizes.thumbnail) ? att.sizes.thumbnail.url : att.url;
+			$cell.find('input[type=hidden]').val(att.id);
+			$cell.find('.dze-hero-preview').attr('src', url).show();
+			$cell.find('.dze-hero-clear').show();
+		});
+
+		frame.open();
+	});
+
+	$(document).on('click', '.dze-hero-clear', function (e) {
+		e.preventDefault();
+		var $cell = $(this).closest('.dze-hero-picker');
+		$cell.find('input[type=hidden]').val('');
+		$cell.find('.dze-hero-preview').attr('src', '').hide();
+		$(this).hide();
+	});
+
 	$(function () {
 		refreshType();
 		refreshScope();

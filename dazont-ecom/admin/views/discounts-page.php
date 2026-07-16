@@ -118,6 +118,22 @@ $banner_locs = (array) ( $editing['banner_locations'] ?? [ 'product', 'home' ] )
 			</tr>
 		</table>
 
+		<?php if ( ! empty( $languages ) ) :
+			$rule_langs = (array) ( $editing['languages'] ?? [] ); ?>
+		<h3><?php esc_html_e( 'Languages', 'dazont-ecom' ); ?></h3>
+		<table class="form-table" role="presentation">
+			<tr>
+				<th scope="row"><?php esc_html_e( 'Enable on languages', 'dazont-ecom' ); ?></th>
+				<td>
+					<?php foreach ( $languages as $lang ) : ?>
+						<label style="margin-right:14px;"><input type="checkbox" name="languages[]" value="<?php echo esc_attr( $lang['code'] ); ?>" <?php checked( in_array( $lang['code'], $rule_langs, true ) ); ?> /> <?php echo esc_html( $lang['native_name'] ); ?></label>
+					<?php endforeach; ?>
+					<p class="description"><?php esc_html_e( 'Leave all unchecked to apply on every language. Otherwise the rule only runs on the selected languages.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
+		</table>
+		<?php endif; ?>
+
 		<h3><?php esc_html_e( 'Scope', 'dazont-ecom' ); ?></h3>
 		<table class="form-table" role="presentation">
 			<tr>
@@ -163,8 +179,21 @@ $banner_locs = (array) ( $editing['banner_locations'] ?? [ 'product', 'home' ] )
 				</tr>
 				<tr>
 					<th scope="row"><label for="dze-banner-text"><?php esc_html_e( 'Banner text', 'dazont-ecom' ); ?></label></th>
-					<td><input type="text" id="dze-banner-text" name="banner_text" class="large-text" value="<?php echo esc_attr( $e( 'banner_text' ) ); ?>" placeholder="<?php esc_attr_e( 'e.g. 🔥 Summer Sale — 20% off everything!', 'dazont-ecom' ); ?>" /></td>
+					<td><input type="text" id="dze-banner-text" name="banner_text" class="large-text" value="<?php echo esc_attr( $e( 'banner_text' ) ); ?>" placeholder="<?php esc_attr_e( 'e.g. 🔥 Summer Sale — 20% off everything!', 'dazont-ecom' ); ?>" />
+					<?php if ( ! empty( $languages ) ) : ?>
+						<p class="description"><?php esc_html_e( 'Default text (used when a translation below is empty).', 'dazont-ecom' ); ?></p>
+					<?php endif; ?>
+					</td>
 				</tr>
+				<?php if ( ! empty( $languages ) ) :
+					$i18n = (array) ( $editing['banner_text_i18n'] ?? [] );
+					foreach ( $languages as $lang ) : ?>
+				<tr>
+					<th scope="row"><label><?php echo esc_html( sprintf( __( 'Banner text (%s)', 'dazont-ecom' ), $lang['native_name'] ) ); ?></label></th>
+					<td><input type="text" name="banner_text_i18n[<?php echo esc_attr( $lang['code'] ); ?>]" class="large-text" value="<?php echo esc_attr( $i18n[ $lang['code'] ] ?? '' ); ?>" placeholder="<?php echo esc_attr( sprintf( __( 'Translation for %s', 'dazont-ecom' ), $lang['native_name'] ) ); ?>" /></td>
+				</tr>
+					<?php endforeach;
+				endif; ?>
 				<tr>
 					<th scope="row"><?php esc_html_e( 'Colors', 'dazont-ecom' ); ?></th>
 					<td>
@@ -178,22 +207,23 @@ $banner_locs = (array) ( $editing['banner_locations'] ?? [ 'product', 'home' ] )
 					<td>
 						<?php
 						$locs = [
-							'sitewide' => __( 'Site-wide (under header, every page)', 'dazont-ecom' ),
-							'product'  => __( 'Product page', 'dazont-ecom' ),
-							'shop'     => __( 'Shop / archives', 'dazont-ecom' ),
-							'home'     => __( 'Homepage', 'dazont-ecom' ),
-							'cart'     => __( 'Cart', 'dazont-ecom' ),
+							'top'          => __( 'Top of site — above the header (every page)', 'dazont-ecom' ),
+							'below_header' => __( 'Below the header — under the menu (every page)', 'dazont-ecom' ),
+							'product'      => __( 'Product page', 'dazont-ecom' ),
+							'shop'         => __( 'Shop / archives', 'dazont-ecom' ),
+							'home'         => __( 'Homepage only (top of the home page)', 'dazont-ecom' ),
+							'cart'         => __( 'Cart', 'dazont-ecom' ),
 						];
 						foreach ( $locs as $key => $label ) : ?>
 							<label style="margin-right:14px;display:inline-block;"><input type="checkbox" name="banner_locations[]" value="<?php echo esc_attr( $key ); ?>" <?php checked( in_array( $key, $banner_locs, true ) ); ?> /> <?php echo esc_html( $label ); ?></label>
 						<?php endforeach; ?>
-						<p class="description"><?php esc_html_e( 'Site-wide uses the Astra "astra_masthead_after" hook (falls back to wp_body_open on other themes). You can also place [dze_promo_banner] anywhere.', 'dazont-ecom' ); ?></p>
+						<p class="description"><?php esc_html_e( '"Below the header" uses the Astra astra_header_after hook. If it doesn\'t land exactly where you want, use the Custom hooks field. You can also place [dze_promo_banner] anywhere. Banner text inherits your theme\'s typography.', 'dazont-ecom' ); ?></p>
 					</td>
 				</tr>
 				<tr>
 					<th scope="row"><label for="dze-banner-hooks"><?php esc_html_e( 'Custom hooks', 'dazont-ecom' ); ?></label></th>
 					<td>
-						<input type="text" id="dze-banner-hooks" name="banner_hooks" class="regular-text" value="<?php echo esc_attr( $e( 'banner_hooks' ) ); ?>" placeholder="astra_masthead_after, astra_header_after" />
+						<input type="text" id="dze-banner-hooks" name="banner_hooks" class="regular-text" value="<?php echo esc_attr( $e( 'banner_hooks' ) ); ?>" placeholder="astra_header_after, astra_masthead_after" />
 						<p class="description"><?php esc_html_e( 'Optional. Comma-separated theme/plugin action hook names where the banner should also be printed — full freedom to target any Astra hook.', 'dazont-ecom' ); ?></p>
 					</td>
 				</tr>
@@ -211,16 +241,30 @@ $banner_locs = (array) ( $editing['banner_locations'] ?? [ 'product', 'home' ] )
 					<th scope="row"><?php esc_html_e( 'Swap an image', 'dazont-ecom' ); ?></th>
 					<td><label><input type="checkbox" name="hero_swap_enabled" value="1" <?php checked( ! empty( $editing['hero_swap_enabled'] ) ); ?> /> <?php esc_html_e( 'Replace an image while this event is active (auto-reverts at the end)', 'dazont-ecom' ); ?></label></td>
 				</tr>
+				<?php
+				$hero_source_id  = (int) $e( 'hero_source_id', 0 );
+				$hero_event_id   = (int) $e( 'hero_event_id', 0 );
+				$hero_source_url = $hero_source_id ? wp_get_attachment_image_url( $hero_source_id, [ 80, 80 ] ) : '';
+				$hero_event_url  = $hero_event_id ? wp_get_attachment_image_url( $hero_event_id, [ 80, 80 ] ) : '';
+				?>
 				<tr>
-					<th scope="row"><label for="dze-hero-source"><?php esc_html_e( 'Current image ID', 'dazont-ecom' ); ?></label></th>
-					<td><input type="number" id="dze-hero-source" name="hero_source_id" class="small-text" min="0" value="<?php echo esc_attr( $e( 'hero_source_id' ) ); ?>" />
-						<p class="description"><?php esc_html_e( 'Media Library attachment ID of the image currently shown on the homepage (open the image in the Media Library — the ID is in the URL).', 'dazont-ecom' ); ?></p>
+					<th scope="row"><?php esc_html_e( 'Current image', 'dazont-ecom' ); ?></th>
+					<td class="dze-hero-picker" data-target="hero_source_id">
+						<input type="hidden" name="hero_source_id" value="<?php echo esc_attr( $hero_source_id ); ?>" />
+						<img class="dze-hero-preview" src="<?php echo esc_url( $hero_source_url ); ?>" alt="" style="<?php echo $hero_source_url ? '' : 'display:none;'; ?>width:80px;height:80px;object-fit:cover;border:1px solid #dcdcde;border-radius:4px;vertical-align:middle;margin-right:8px;" />
+						<button type="button" class="button dze-hero-select"><?php esc_html_e( 'Select image', 'dazont-ecom' ); ?></button>
+						<button type="button" class="button-link dze-hero-clear" style="<?php echo $hero_source_url ? '' : 'display:none;'; ?>margin-left:6px;"><?php esc_html_e( 'Remove', 'dazont-ecom' ); ?></button>
+						<p class="description"><?php esc_html_e( 'The image currently displayed on the homepage that you want to replace during the event.', 'dazont-ecom' ); ?></p>
 					</td>
 				</tr>
 				<tr>
-					<th scope="row"><label for="dze-hero-event"><?php esc_html_e( 'Event image ID', 'dazont-ecom' ); ?></label></th>
-					<td><input type="number" id="dze-hero-event" name="hero_event_id" class="small-text" min="0" value="<?php echo esc_attr( $e( 'hero_event_id' ) ); ?>" />
-						<p class="description"><?php esc_html_e( 'Attachment ID of the event image (e.g. Black Friday banner) to display instead, for the duration of the event. Works for images inserted from the Media Library, not CSS-background images.', 'dazont-ecom' ); ?></p>
+					<th scope="row"><?php esc_html_e( 'Event image', 'dazont-ecom' ); ?></th>
+					<td class="dze-hero-picker" data-target="hero_event_id">
+						<input type="hidden" name="hero_event_id" value="<?php echo esc_attr( $hero_event_id ); ?>" />
+						<img class="dze-hero-preview" src="<?php echo esc_url( $hero_event_url ); ?>" alt="" style="<?php echo $hero_event_url ? '' : 'display:none;'; ?>width:80px;height:80px;object-fit:cover;border:1px solid #dcdcde;border-radius:4px;vertical-align:middle;margin-right:8px;" />
+						<button type="button" class="button dze-hero-select"><?php esc_html_e( 'Select image', 'dazont-ecom' ); ?></button>
+						<button type="button" class="button-link dze-hero-clear" style="<?php echo $hero_event_url ? '' : 'display:none;'; ?>margin-left:6px;"><?php esc_html_e( 'Remove', 'dazont-ecom' ); ?></button>
+						<p class="description"><?php esc_html_e( 'The event image (e.g. Black Friday) shown instead for the duration. Works for Media Library images, not CSS-background images.', 'dazont-ecom' ); ?></p>
 					</td>
 				</tr>
 			</table>
