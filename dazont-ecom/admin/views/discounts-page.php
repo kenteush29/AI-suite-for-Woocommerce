@@ -177,11 +177,50 @@ $banner_locs = (array) ( $editing['banner_locations'] ?? [ 'product', 'home' ] )
 					<th scope="row"><?php esc_html_e( 'Locations', 'dazont-ecom' ); ?></th>
 					<td>
 						<?php
-						$locs = [ 'product' => __( 'Product page', 'dazont-ecom' ), 'shop' => __( 'Shop / archives', 'dazont-ecom' ), 'home' => __( 'Homepage', 'dazont-ecom' ), 'cart' => __( 'Cart', 'dazont-ecom' ) ];
+						$locs = [
+							'sitewide' => __( 'Site-wide (under header, every page)', 'dazont-ecom' ),
+							'product'  => __( 'Product page', 'dazont-ecom' ),
+							'shop'     => __( 'Shop / archives', 'dazont-ecom' ),
+							'home'     => __( 'Homepage', 'dazont-ecom' ),
+							'cart'     => __( 'Cart', 'dazont-ecom' ),
+						];
 						foreach ( $locs as $key => $label ) : ?>
-							<label style="margin-right:14px;"><input type="checkbox" name="banner_locations[]" value="<?php echo esc_attr( $key ); ?>" <?php checked( in_array( $key, $banner_locs, true ) ); ?> /> <?php echo esc_html( $label ); ?></label>
+							<label style="margin-right:14px;display:inline-block;"><input type="checkbox" name="banner_locations[]" value="<?php echo esc_attr( $key ); ?>" <?php checked( in_array( $key, $banner_locs, true ) ); ?> /> <?php echo esc_html( $label ); ?></label>
 						<?php endforeach; ?>
-						<p class="description"><?php esc_html_e( 'Homepage banner requires a theme that supports wp_body_open (most modern themes). You can also place [dze_promo_banner] anywhere.', 'dazont-ecom' ); ?></p>
+						<p class="description"><?php esc_html_e( 'Site-wide uses the Astra "astra_masthead_after" hook (falls back to wp_body_open on other themes). You can also place [dze_promo_banner] anywhere.', 'dazont-ecom' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="dze-banner-hooks"><?php esc_html_e( 'Custom hooks', 'dazont-ecom' ); ?></label></th>
+					<td>
+						<input type="text" id="dze-banner-hooks" name="banner_hooks" class="regular-text" value="<?php echo esc_attr( $e( 'banner_hooks' ) ); ?>" placeholder="astra_masthead_after, astra_header_after" />
+						<p class="description"><?php esc_html_e( 'Optional. Comma-separated theme/plugin action hook names where the banner should also be printed — full freedom to target any Astra hook.', 'dazont-ecom' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Countdown timer', 'dazont-ecom' ); ?></th>
+					<td><label><input type="checkbox" name="banner_timer" value="1" <?php checked( ! empty( $editing['banner_timer'] ) ); ?> /> <?php esc_html_e( 'Show a live countdown to the sale end date inside the banner', 'dazont-ecom' ); ?></label>
+						<p class="description"><?php esc_html_e( 'Requires an End date in the schedule above.', 'dazont-ecom' ); ?></p>
+					</td>
+				</tr>
+			</table>
+
+			<h3><?php esc_html_e( 'Homepage image swap (big events)', 'dazont-ecom' ); ?></h3>
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row"><?php esc_html_e( 'Swap an image', 'dazont-ecom' ); ?></th>
+					<td><label><input type="checkbox" name="hero_swap_enabled" value="1" <?php checked( ! empty( $editing['hero_swap_enabled'] ) ); ?> /> <?php esc_html_e( 'Replace an image while this event is active (auto-reverts at the end)', 'dazont-ecom' ); ?></label></td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="dze-hero-source"><?php esc_html_e( 'Current image ID', 'dazont-ecom' ); ?></label></th>
+					<td><input type="number" id="dze-hero-source" name="hero_source_id" class="small-text" min="0" value="<?php echo esc_attr( $e( 'hero_source_id' ) ); ?>" />
+						<p class="description"><?php esc_html_e( 'Media Library attachment ID of the image currently shown on the homepage (open the image in the Media Library — the ID is in the URL).', 'dazont-ecom' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="dze-hero-event"><?php esc_html_e( 'Event image ID', 'dazont-ecom' ); ?></label></th>
+					<td><input type="number" id="dze-hero-event" name="hero_event_id" class="small-text" min="0" value="<?php echo esc_attr( $e( 'hero_event_id' ) ); ?>" />
+						<p class="description"><?php esc_html_e( 'Attachment ID of the event image (e.g. Black Friday banner) to display instead, for the duration of the event. Works for images inserted from the Media Library, not CSS-background images.', 'dazont-ecom' ); ?></p>
 					</td>
 				</tr>
 			</table>

@@ -148,11 +148,42 @@ final class DZE_Discounts {
 			add_filter( 'woocommerce_product_is_on_sale',               [ $this, 'filter_is_on_sale' ], 20, 2 );
 			add_filter( 'woocommerce_get_variation_prices_hash',        [ $this, 'filter_prices_hash' ], 20, 2 );
 
-			// Banners.
-			add_action( 'woocommerce_before_single_product', [ $this, 'render_banner_product' ] );
-			add_action( 'woocommerce_before_shop_loop',      [ $this, 'render_banner_shop' ] );
-			add_action( 'woocommerce_before_cart',           [ $this, 'render_banner_cart' ] );
-			add_action( 'wp_body_open',                      [ $this, 'render_banner_home' ] );
+			// Coupons: make our dynamic sale honour the coupon "Exclude sale
+			// items" setting (WooCommerce otherwise only knows native sales).
+			add_filter( 'woocommerce_coupon_is_valid_for_product', [ $this, 'coupon_exclude_sale' ], 20, 4 );
+
+			// Homepage / hero image swap for big events (auto-reverts after).
+			if ( $this->build_hero_map() ) {
+				add_filter( 'wp_get_attachment_image_src', [ $this, 'swap_image_src' ], 20, 4 );
+				add_filter( 'wp_get_attachment_url',       [ $this, 'swap_image_url' ], 20, 2 );
+			}
+
+			// Banners at named locations.
+			add_action( 'woocommerce_before_single_product', function () { $this->render_location( 'product' ); } );
+			add_action( 'woocommerce_before_shop_loop',      function () { $this->render_location( 'shop' ); } );
+			add_action( 'woocommerce_before_cart',           function () { $this->render_location( 'cart' ); } );
+			add_action( 'wp_body_open', function () {
+				if ( is_front_page() || is_home() ) {
+					$this->render_location( 'home' );
+				}
+			} );
+
+			// Site-wide banner "under the menu": Astra fires astra_masthead_after
+			// right after the header; fall back to wp_body_open on other themes.
+			$sitewide_hook = ( defined( 'ASTRA_THEME_VERSION' ) || function_exists( 'astra_masthead_content' ) )
+				? 'astra_masthead_after'
+				: 'wp_body_open';
+			add_action( $sitewide_hook, function () { $this->render_location( 'sitewide' ); } );
+
+			// User-defined hooks (free choice — e.g. any Astra hook).
+			foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
+				if ( empty( $rule['banner_enabled'] ) || empty( $rule['banner_hooks'] ) ) {
+					continue;
+				}
+				foreach ( $this->parse_hooks( $rule['banner_hooks'] ) as $hook ) {
+					add_action( $hook, function () use ( $rule ) { $this->render_single_banner( $rule ); } );
+				}
+			}
 		}
 
 		if ( $has_cart ) {
@@ -347,43 +378,132 @@ final class DZE_Discounts {
 	// Banners
 	// =========================================================================
 
-	public function render_banner_product(): void { $this->render_banner( 'product' ); }
-	public function render_banner_shop(): void    { $this->render_banner( 'shop' ); }
-	public function render_banner_cart(): void    { $this->render_banner( 'cart' ); }
-	public function render_banner_home(): void {
-		if ( is_front_page() || is_home() ) {
-			$this->render_banner( 'home' );
-		}
-	}
+	/** @var array<string,bool> Rule ids already rendered this request (dedupe). */
+	private static array $rendered = [];
+	private static bool $timer_script_done = false;
 
 	public function shortcode_banner( $atts ): string {
 		ob_start();
-		$this->render_banner( 'shortcode', true );
+		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
+			$this->render_single_banner( $rule );
+		}
 		return (string) ob_get_clean();
 	}
 
-	private function render_banner( string $location, bool $force = false ): void {
+	private function render_location( string $location ): void {
 		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
-			if ( empty( $rule['banner_enabled'] ) ) {
-				continue;
+			if ( in_array( $location, (array) ( $rule['banner_locations'] ?? [] ), true ) ) {
+				$this->render_single_banner( $rule );
 			}
-			$locations = (array) ( $rule['banner_locations'] ?? [] );
-			if ( ! $force && ! in_array( $location, $locations, true ) ) {
-				continue;
-			}
-			$text = trim( (string) ( $rule['banner_text'] ?? '' ) );
-			if ( $text === '' ) {
-				continue;
-			}
-			$bg    = $rule['banner_bg'] ?? '#111111';
-			$color = $rule['banner_color'] ?? '#ffffff';
-			printf(
-				'<div class="dze-promo-banner" style="background:%1$s;color:%2$s;text-align:center;padding:10px 16px;font-weight:600;">%3$s</div>',
-				esc_attr( $bg ),
-				esc_attr( $color ),
-				esc_html( $text )
-			);
 		}
+	}
+
+	private function render_single_banner( array $rule ): void {
+		if ( empty( $rule['banner_enabled'] ) ) {
+			return;
+		}
+		$id = (string) ( $rule['id'] ?? md5( (string) wp_json_encode( $rule ) ) );
+		if ( isset( self::$rendered[ $id ] ) ) {
+			return; // one banner per rule per page load.
+		}
+
+		$text = trim( (string) ( $rule['banner_text'] ?? '' ) );
+		if ( $text === '' ) {
+			return;
+		}
+
+		// WPML: register + translate the banner text (String Translation).
+		if ( defined( 'ICL_SITEPRESS_VERSION' ) ) {
+			$name = 'banner_' . $id;
+			do_action( 'wpml_register_single_string', 'dazont-ecom', $name, $text );
+			$text = (string) apply_filters( 'wpml_translate_single_string', $text, 'dazont-ecom', $name );
+		}
+
+		self::$rendered[ $id ] = true;
+
+		$bg    = $rule['banner_bg'] ?? '#111111';
+		$color = $rule['banner_color'] ?? '#ffffff';
+
+		$timer = '';
+		if ( ! empty( $rule['banner_timer'] ) && ! empty( $rule['end'] ) ) {
+			$end_ts = $this->to_ts( $rule['end'] );
+			if ( $end_ts > time() ) {
+				$timer = ' <span class="dze-timer" data-end="' . esc_attr( (string) $end_ts ) . '"></span>';
+				$this->print_timer_script();
+			}
+		}
+
+		printf(
+			'<div class="dze-promo-banner" style="background:%1$s;color:%2$s;text-align:center;padding:10px 16px;font-weight:600;">%3$s%4$s</div>',
+			esc_attr( $bg ),
+			esc_attr( $color ),
+			esc_html( $text ),
+			$timer // already-escaped markup built above.
+		);
+	}
+
+	private function print_timer_script(): void {
+		if ( self::$timer_script_done ) {
+			return;
+		}
+		self::$timer_script_done = true;
+		?>
+<script>
+(function(){function u(){var n=Date.now();document.querySelectorAll('.dze-timer').forEach(function(el){var e=parseInt(el.getAttribute('data-end'),10)*1000,d=Math.max(0,e-n),s=Math.floor(d/1000),dd=Math.floor(s/86400);s%=86400;var h=Math.floor(s/3600);s%=3600;var m=Math.floor(s/60);s%=60;el.textContent=(dd>0?dd+'d ':'')+h+'h '+m+'m '+s+'s';});}u();setInterval(u,1000);})();
+</script>
+		<?php
+	}
+
+	// =========================================================================
+	// Coupons + hero image swap
+	// =========================================================================
+
+	public function coupon_exclude_sale( $valid, $product, $coupon, $values ) {
+		if ( $product instanceof \WC_Product
+			&& $coupon instanceof \WC_Coupon
+			&& $coupon->get_exclude_sale_items()
+			&& $this->sale_percent_for( $product ) > 0
+		) {
+			return false;
+		}
+		return $valid;
+	}
+
+	private ?array $hero_map = null;
+
+	private function build_hero_map(): array {
+		if ( null !== $this->hero_map ) {
+			return $this->hero_map;
+		}
+		$map = [];
+		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
+			if ( ! empty( $rule['hero_swap_enabled'] ) && ! empty( $rule['hero_source_id'] ) && ! empty( $rule['hero_event_id'] ) ) {
+				$map[ (int) $rule['hero_source_id'] ] = (int) $rule['hero_event_id'];
+			}
+		}
+		return $this->hero_map = $map;
+	}
+
+	public function swap_image_src( $image, $attachment_id, $size, $icon ) {
+		$map = $this->build_hero_map();
+		if ( isset( $map[ (int) $attachment_id ] ) ) {
+			$new = wp_get_attachment_image_src( $map[ (int) $attachment_id ], $size, $icon );
+			if ( $new ) {
+				return $new;
+			}
+		}
+		return $image;
+	}
+
+	public function swap_image_url( $url, $attachment_id ) {
+		$map = $this->build_hero_map();
+		if ( isset( $map[ (int) $attachment_id ] ) ) {
+			$new = wp_get_attachment_url( $map[ (int) $attachment_id ] );
+			if ( $new ) {
+				return $new;
+			}
+		}
+		return $url;
 	}
 
 	// =========================================================================
@@ -458,9 +578,14 @@ final class DZE_Discounts {
 			'banner_bg'        => $this->sanitize_hex( $in['banner_bg'] ?? '#111111' ),
 			'banner_color'     => $this->sanitize_hex( $in['banner_color'] ?? '#ffffff' ),
 			'banner_locations' => array_values( array_intersect(
-				[ 'product', 'shop', 'home', 'cart' ],
+				[ 'product', 'shop', 'home', 'cart', 'sitewide' ],
 				array_map( 'sanitize_key', (array) ( $in['banner_locations'] ?? [] ) )
 			) ),
+			'banner_hooks'      => sanitize_text_field( $in['banner_hooks'] ?? '' ),
+			'banner_timer'      => ! empty( $in['banner_timer'] ),
+			'hero_swap_enabled' => ! empty( $in['hero_swap_enabled'] ),
+			'hero_source_id'    => absint( $in['hero_source_id'] ?? 0 ),
+			'hero_event_id'     => absint( $in['hero_event_id'] ?? 0 ),
 		];
 
 		$rules[ $id ] = $rule;
@@ -499,6 +624,18 @@ final class DZE_Discounts {
 	}
 
 	// ---- sanitizers ----
+
+	private function parse_hooks( $raw ): array {
+		$parts = preg_split( '/[\s,]+/', (string) $raw, -1, PREG_SPLIT_NO_EMPTY );
+		$hooks = [];
+		foreach ( $parts as $p ) {
+			$p = preg_replace( '/[^a-z0-9_]/', '', strtolower( $p ) );
+			if ( $p !== '' ) {
+				$hooks[] = $p;
+			}
+		}
+		return array_values( array_unique( $hooks ) );
+	}
 
 	private function parse_ids( $raw ): array {
 		$parts = preg_split( '/[\s,]+/', (string) $raw, -1, PREG_SPLIT_NO_EMPTY );
