@@ -23,9 +23,53 @@ foreach ( $languages as $l ) {
 		<?php esc_html_e( 'Push your scheduled sales to Google Merchant Center as merchant promotions (for Google Ads / free listings). One Merchant Center account is used per language.', 'dazont-ecom' ); ?>
 	</p>
 
+	<?php if ( isset( $_GET['gmc_connected'] ) ) : ?>
+		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Google account connected.', 'dazont-ecom' ); ?></p></div>
+	<?php endif; ?>
+	<?php if ( isset( $_GET['gmc_error'] ) ) : ?>
+		<div class="notice notice-error is-dismissible"><p><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['gmc_error'] ) ) ); ?></p></div>
+	<?php endif; ?>
+
+	<h2 class="title"><?php esc_html_e( 'Connect with Google (recommended)', 'dazont-ecom' ); ?></h2>
+	<div style="background:#f6f7f7;border:1px solid #dcdcde;border-radius:4px;padding:14px 18px;max-width:820px;">
+		<?php if ( $connected ) : ?>
+			<p style="margin-top:0;">
+				<span style="color:#0a7040;font-weight:600;">&#10003; <?php esc_html_e( 'Connected', 'dazont-ecom' ); ?></span>
+				<?php if ( ! empty( $oauth['email'] ) ) : ?> — <code><?php echo esc_html( $oauth['email'] ); ?></code><?php endif; ?>
+			</p>
+			<a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=dze_gmc_disconnect' ), 'dze_gmc_disconnect' ) ); ?>" class="button"><?php esc_html_e( 'Disconnect', 'dazont-ecom' ); ?></a>
+		<?php else : ?>
+			<p style="margin-top:0;"><?php esc_html_e( 'Create an OAuth Client ID (type “Web application”) in Google Cloud → APIs & Services → Credentials, then paste its Client ID and Secret below and click Connect. You sign in with your own Google account — one connection covers every Merchant Center you have access to.', 'dazont-ecom' ); ?></p>
+			<p>
+				<label style="font-weight:600;"><?php esc_html_e( 'Authorized redirect URI to add to your OAuth client:', 'dazont-ecom' ); ?></label><br>
+				<input type="text" readonly value="<?php echo esc_attr( $redirect_uri ); ?>" class="large-text code" onclick="this.select();" />
+			</p>
+			<?php if ( $oauth_ready ) : ?>
+				<a href="<?php echo esc_url( $authorize_url ); ?>" class="button button-primary"><?php esc_html_e( 'Connect Google account', 'dazont-ecom' ); ?></a>
+				<span class="description" style="margin-left:8px;"><?php esc_html_e( 'Save the Client ID/Secret first if you just entered them.', 'dazont-ecom' ); ?></span>
+			<?php else : ?>
+				<p class="description"><?php esc_html_e( 'Enter and save the Client ID and Secret below, then a “Connect” button appears here.', 'dazont-ecom' ); ?></p>
+			<?php endif; ?>
+		<?php endif; ?>
+	</div>
+
 	<form method="post" action="options.php">
 		<?php settings_fields( 'dze_gmc_options' ); ?>
 
+		<h2 class="title"><?php esc_html_e( 'OAuth client', 'dazont-ecom' ); ?></h2>
+		<table class="form-table" role="presentation">
+			<tr>
+				<th scope="row"><label for="dze-oauth-id"><?php esc_html_e( 'Client ID', 'dazont-ecom' ); ?></label></th>
+				<td><input type="text" id="dze-oauth-id" name="<?php echo esc_attr( DZE_Gmc::OPT_OAUTH . '[client_id]' ); ?>" value="<?php echo esc_attr( $oauth['client_id'] ?? '' ); ?>" class="large-text" placeholder="xxxxxxxx.apps.googleusercontent.com" /></td>
+			</tr>
+			<tr>
+				<th scope="row"><label for="dze-oauth-secret"><?php esc_html_e( 'Client Secret', 'dazont-ecom' ); ?></label></th>
+				<td><input type="text" id="dze-oauth-secret" name="<?php echo esc_attr( DZE_Gmc::OPT_OAUTH . '[client_secret]' ); ?>" value="<?php echo esc_attr( $oauth['client_secret'] ?? '' ); ?>" class="large-text" placeholder="GOCSPX-…" /></td>
+			</tr>
+		</table>
+
+		<details style="max-width:820px;margin:10px 0;">
+			<summary style="cursor:pointer;font-weight:600;"><?php esc_html_e( 'Advanced: service account instead of OAuth', 'dazont-ecom' ); ?></summary>
 		<h2 class="title"><?php esc_html_e( 'Service account credentials', 'dazont-ecom' ); ?></h2>
 		<?php if ( $creds_locked ) : ?>
 			<div class="notice notice-info inline"><p><?php esc_html_e( 'Credentials are provided by the DZE_GMC_SERVICE_ACCOUNT constant (wp-config.php). This is the recommended, most secure option.', 'dazont-ecom' ); ?></p></div>
@@ -47,6 +91,7 @@ foreach ( $languages as $l ) {
 				</tr>
 			</table>
 		<?php endif; ?>
+		</details>
 
 		<h2 class="title"><?php esc_html_e( 'Merchant accounts per language', 'dazont-ecom' ); ?></h2>
 		<table class="form-table" role="presentation">

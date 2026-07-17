@@ -20,9 +20,13 @@ final class DZE_Gmc {
 	public const CRON_HOOK   = 'dze_gmc_sync';
 	public const OPT_ACCOUNTS    = 'dze_gmc_accounts';
 	public const OPT_CREDENTIALS = 'dze_gmc_credentials';
+	public const OPT_OAUTH       = 'dze_gmc_oauth';
 
 	private const API_BASE   = 'https://shoppingcontent.googleapis.com/content/v2.1';
 	private const SCOPE      = 'https://www.googleapis.com/auth/content';
+	private const OAUTH_SCOPE = 'https://www.googleapis.com/auth/content https://www.googleapis.com/auth/userinfo.email';
+	private const AUTH_URL    = 'https://accounts.google.com/o/oauth2/v2/auth';
+	private const TOKEN_URL   = 'https://oauth2.googleapis.com/token';
 	private const TOKEN_TTL  = 3300; // seconds
 
 	private static ?self $instance = null;
@@ -46,6 +50,8 @@ final class DZE_Gmc {
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_ajax_dze_gmc_sync',      [ $this, 'ajax_sync' ] );
 		add_action( 'wp_ajax_dze_gmc_test',      [ $this, 'ajax_test' ] );
+		add_action( 'admin_post_dze_gmc_oauth',       [ $this, 'handle_oauth_callback' ] );
+		add_action( 'admin_post_dze_gmc_disconnect',  [ $this, 'handle_disconnect' ] );
 	}
 
 	public function maybe_schedule_cron(): void {
@@ -75,8 +81,13 @@ final class DZE_Gmc {
 		return [ 'default' ];
 	}
 
+	public function is_authenticated(): bool {
+		$o = self::get_oauth();
+		return ! empty( $o['refresh_token'] ) || null !== $this->get_credentials();
+	}
+
 	public function is_configured(): bool {
-		if ( null === $this->get_credentials() ) {
+		if ( ! $this->is_authenticated() ) {
 			return false;
 		}
 		foreach ( self::get_accounts() as $acc ) {
@@ -119,6 +130,157 @@ final class DZE_Gmc {
 	public function register_settings(): void {
 		register_setting( 'dze_gmc_options', self::OPT_CREDENTIALS, [ 'sanitize_callback' => [ $this, 'sanitize_credentials' ] ] );
 		register_setting( 'dze_gmc_options', self::OPT_ACCOUNTS, [ 'sanitize_callback' => [ $this, 'sanitize_accounts' ] ] );
+		register_setting( 'dze_gmc_options', self::OPT_OAUTH, [ 'sanitize_callback' => [ $this, 'sanitize_oauth' ] ] );
+	}
+
+	/**
+	 * Persist the OAuth client id/secret from the form while preserving the
+	 * refresh token / connected email obtained through the "Connect" flow.
+	 */
+	public function sanitize_oauth( $value ): array {
+		$existing = self::get_oauth();
+		$in       = is_array( $value ) ? $value : [];
+		return [
+			'client_id'     => sanitize_text_field( $in['client_id'] ?? ( $existing['client_id'] ?? '' ) ),
+			'client_secret' => sanitize_text_field( $in['client_secret'] ?? ( $existing['client_secret'] ?? '' ) ),
+			'refresh_token' => (string) ( $existing['refresh_token'] ?? '' ),
+			'email'         => (string) ( $existing['email'] ?? '' ),
+		];
+	}
+
+	public static function get_oauth(): array {
+		$o = get_option( self::OPT_OAUTH, [] );
+		return is_array( $o ) ? $o : [];
+	}
+
+	public function oauth_redirect_uri(): string {
+		return admin_url( 'admin-post.php?action=dze_gmc_oauth' );
+	}
+
+	public function oauth_authorize_url(): string {
+		$o = self::get_oauth();
+		return self::AUTH_URL . '?' . http_build_query( [
+			'client_id'     => $o['client_id'] ?? '',
+			'redirect_uri'  => $this->oauth_redirect_uri(),
+			'response_type' => 'code',
+			'scope'         => self::OAUTH_SCOPE,
+			'access_type'   => 'offline',
+			'prompt'        => 'consent',
+			'state'         => wp_create_nonce( 'dze_gmc_oauth' ),
+		] );
+	}
+
+	public function handle_oauth_callback(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
+		}
+		$settings_url = admin_url( 'admin.php?page=' . self::MENU_SLUG );
+
+		$state = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
+		if ( ! wp_verify_nonce( $state, 'dze_gmc_oauth' ) ) {
+			wp_safe_redirect( add_query_arg( 'gmc_error', rawurlencode( __( 'Security check failed.', 'dazont-ecom' ) ), $settings_url ) );
+			exit;
+		}
+		if ( ! empty( $_GET['error'] ) ) {
+			wp_safe_redirect( add_query_arg( 'gmc_error', rawurlencode( sanitize_text_field( wp_unslash( $_GET['error'] ) ) ), $settings_url ) );
+			exit;
+		}
+		$code = isset( $_GET['code'] ) ? sanitize_text_field( wp_unslash( $_GET['code'] ) ) : '';
+		$o    = self::get_oauth();
+		if ( $code === '' || empty( $o['client_id'] ) || empty( $o['client_secret'] ) ) {
+			wp_safe_redirect( add_query_arg( 'gmc_error', rawurlencode( __( 'Missing code or client credentials.', 'dazont-ecom' ) ), $settings_url ) );
+			exit;
+		}
+
+		$response = wp_remote_post( self::TOKEN_URL, [
+			'timeout' => 25,
+			'body'    => [
+				'code'          => $code,
+				'client_id'     => $o['client_id'],
+				'client_secret' => $o['client_secret'],
+				'redirect_uri'  => $this->oauth_redirect_uri(),
+				'grant_type'    => 'authorization_code',
+			],
+		] );
+		if ( is_wp_error( $response ) ) {
+			wp_safe_redirect( add_query_arg( 'gmc_error', rawurlencode( $response->get_error_message() ), $settings_url ) );
+			exit;
+		}
+		$data = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( empty( $data['refresh_token'] ) ) {
+			$msg = $data['error_description'] ?? ( $data['error'] ?? __( 'No refresh token returned. Remove the app from your Google account and reconnect.', 'dazont-ecom' ) );
+			wp_safe_redirect( add_query_arg( 'gmc_error', rawurlencode( $msg ), $settings_url ) );
+			exit;
+		}
+
+		$o['refresh_token'] = $data['refresh_token'];
+		$o['email']         = $this->fetch_account_email( $data['access_token'] ?? '' );
+		update_option( self::OPT_OAUTH, $o, false );
+
+		if ( ! empty( $data['access_token'] ) && ! empty( $data['expires_in'] ) ) {
+			set_transient( 'dze_gmc_oauth_token', $data['access_token'], min( (int) $data['expires_in'] - 60, self::TOKEN_TTL ) );
+		}
+
+		wp_safe_redirect( add_query_arg( 'gmc_connected', '1', $settings_url ) );
+		exit;
+	}
+
+	private function fetch_account_email( string $access_token ): string {
+		if ( $access_token === '' ) {
+			return '';
+		}
+		$r = wp_remote_get( 'https://www.googleapis.com/oauth2/v2/userinfo', [
+			'timeout' => 15,
+			'headers' => [ 'Authorization' => 'Bearer ' . $access_token ],
+		] );
+		if ( is_wp_error( $r ) ) {
+			return '';
+		}
+		$d = json_decode( wp_remote_retrieve_body( $r ), true );
+		return isset( $d['email'] ) ? sanitize_email( $d['email'] ) : '';
+	}
+
+	public function handle_disconnect(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) || ! check_admin_referer( 'dze_gmc_disconnect' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
+		}
+		$o = self::get_oauth();
+		$o['refresh_token'] = '';
+		$o['email']         = '';
+		update_option( self::OPT_OAUTH, $o, false );
+		delete_transient( 'dze_gmc_oauth_token' );
+		wp_safe_redirect( admin_url( 'admin.php?page=' . self::MENU_SLUG ) );
+		exit;
+	}
+
+	private function oauth_access_token(): string {
+		$cached = get_transient( 'dze_gmc_oauth_token' );
+		if ( is_string( $cached ) && $cached !== '' ) {
+			return $cached;
+		}
+		$o = self::get_oauth();
+		if ( empty( $o['refresh_token'] ) || empty( $o['client_id'] ) || empty( $o['client_secret'] ) ) {
+			throw new RuntimeException( __( 'Google account is not connected.', 'dazont-ecom' ) );
+		}
+		$response = wp_remote_post( self::TOKEN_URL, [
+			'timeout' => 20,
+			'body'    => [
+				'client_id'     => $o['client_id'],
+				'client_secret' => $o['client_secret'],
+				'refresh_token' => $o['refresh_token'],
+				'grant_type'    => 'refresh_token',
+			],
+		] );
+		if ( is_wp_error( $response ) ) {
+			throw new RuntimeException( $response->get_error_message() );
+		}
+		$data = json_decode( wp_remote_retrieve_body( $response ), true );
+		if ( empty( $data['access_token'] ) ) {
+			$msg = $data['error_description'] ?? ( $data['error'] ?? 'Unknown refresh error' );
+			throw new RuntimeException( sprintf( __( 'Google token refresh failed: %s', 'dazont-ecom' ), $msg ) );
+		}
+		set_transient( 'dze_gmc_oauth_token', $data['access_token'], min( (int) ( $data['expires_in'] ?? 3600 ) - 60, self::TOKEN_TTL ) );
+		return $data['access_token'];
 	}
 
 	public function sanitize_credentials( $value ): string {
@@ -168,11 +330,16 @@ final class DZE_Gmc {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
-		$accounts     = self::get_accounts();
-		$keys         = self::account_keys();
-		$languages    = DZE_Wpml::get_active_languages();
-		$has_creds    = ( null !== $this->get_credentials() );
-		$creds_locked = defined( 'DZE_GMC_SERVICE_ACCOUNT' );
+		$accounts      = self::get_accounts();
+		$keys          = self::account_keys();
+		$languages     = DZE_Wpml::get_active_languages();
+		$has_creds     = ( null !== $this->get_credentials() );
+		$creds_locked  = defined( 'DZE_GMC_SERVICE_ACCOUNT' );
+		$oauth         = self::get_oauth();
+		$redirect_uri  = $this->oauth_redirect_uri();
+		$oauth_ready   = ! empty( $oauth['client_id'] ) && ! empty( $oauth['client_secret'] );
+		$connected     = ! empty( $oauth['refresh_token'] );
+		$authorize_url = $oauth_ready ? $this->oauth_authorize_url() : '';
 		require DZE_DIR . 'admin/views/gmc-settings.php';
 	}
 
@@ -181,9 +348,16 @@ final class DZE_Gmc {
 	// =========================================================================
 
 	private function get_access_token(): string {
+		// Prefer the connected Google account (OAuth) — the natural in-plugin flow.
+		$oauth = self::get_oauth();
+		if ( ! empty( $oauth['refresh_token'] ) ) {
+			return $this->oauth_access_token();
+		}
+
+		// Fallback: service-account credentials (JWT).
 		$sa = $this->get_credentials();
 		if ( null === $sa ) {
-			throw new RuntimeException( __( 'No Google service-account credentials configured.', 'dazont-ecom' ) );
+			throw new RuntimeException( __( 'No Google authentication configured. Connect your Google account above.', 'dazont-ecom' ) );
 		}
 
 		$cache_key = 'dze_gmc_token_' . md5( $sa['client_email'] );
