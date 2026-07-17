@@ -92,10 +92,8 @@ final class DZE_Discounts {
 				continue;
 			}
 			if ( ( $rule['type'] ?? '' ) === 'sale' ) {
-				if ( ! empty( $rule['start'] ) && $this->to_ts( $rule['start'] ) > $now ) {
-					continue;
-				}
-				if ( ! empty( $rule['end'] ) && $this->to_ts( $rule['end'] ) < $now ) {
+				[ $start, $end ] = $this->window_ts( $rule );
+				if ( $now < $start || $now > $end ) {
 					continue;
 				}
 			}
@@ -111,12 +109,44 @@ final class DZE_Discounts {
 		return $active;
 	}
 
-	private function to_ts( string $local_datetime ): int {
+	/**
+	 * A rule's active window as [ start_ts, end_ts ] in the site timezone.
+	 * Dates are day-granular: start snaps to 00:00:00, end to 23:59:59
+	 * (inclusive). Missing bounds become ±infinity.
+	 */
+	public function window_ts( array $rule ): array {
+		$tz    = wp_timezone();
+		$start = PHP_INT_MIN;
+		$end   = PHP_INT_MAX;
 		try {
-			return ( new DateTimeImmutable( $local_datetime, wp_timezone() ) )->getTimestamp();
+			if ( ! empty( $rule['start'] ) ) {
+				$start = ( new DateTimeImmutable( $rule['start'] . ' 00:00:00', $tz ) )->getTimestamp();
+			}
+			if ( ! empty( $rule['end'] ) ) {
+				$end = ( new DateTimeImmutable( $rule['end'] . ' 23:59:59', $tz ) )->getTimestamp();
+			}
 		} catch ( \Exception $e ) {
-			return 0;
+			return [ PHP_INT_MIN, PHP_INT_MAX ];
 		}
+		return [ $start, $end ];
+	}
+
+	/** Status label for a rule: active | scheduled | passed | inactive. */
+	public function rule_status( array $rule ): string {
+		if ( empty( $rule['enabled'] ) ) {
+			return 'inactive';
+		}
+		if ( ( $rule['type'] ?? '' ) === 'sale' ) {
+			[ $start, $end ] = $this->window_ts( $rule );
+			$now = time();
+			if ( $now < $start ) {
+				return 'scheduled';
+			}
+			if ( $now > $end ) {
+				return 'passed';
+			}
+		}
+		return 'active';
 	}
 
 	private function rules_of_type( string $type ): array {
@@ -167,10 +197,8 @@ final class DZE_Discounts {
 
 	/** True when two sale windows overlap (open-ended = ±infinity). */
 	private function sale_windows_overlap( array $a, array $b ): bool {
-		$a_start = ! empty( $a['start'] ) ? $this->to_ts( $a['start'] ) : PHP_INT_MIN;
-		$a_end   = ! empty( $a['end'] )   ? $this->to_ts( $a['end'] )   : PHP_INT_MAX;
-		$b_start = ! empty( $b['start'] ) ? $this->to_ts( $b['start'] ) : PHP_INT_MIN;
-		$b_end   = ! empty( $b['end'] )   ? $this->to_ts( $b['end'] )   : PHP_INT_MAX;
+		[ $a_start, $a_end ] = $this->window_ts( $a );
+		[ $b_start, $b_end ] = $this->window_ts( $b );
 		return $a_start <= $b_end && $b_start <= $a_end;
 	}
 
@@ -492,7 +520,7 @@ final class DZE_Discounts {
 
 		$timer = '';
 		if ( ! empty( $rule['banner_timer'] ) && ! empty( $rule['end'] ) ) {
-			$end_ts = $this->to_ts( $rule['end'] );
+			[ , $end_ts ] = $this->window_ts( $rule );
 			if ( $end_ts > time() ) {
 				$timer = ' <span class="dze-timer" data-end="' . esc_attr( (string) $end_ts ) . '"></span>';
 				$this->print_timer_script();
@@ -790,8 +818,8 @@ final class DZE_Discounts {
 
 	private function sanitize_dt( string $value ): string {
 		$value = trim( $value );
-		// Expected format from <input type="datetime-local">: YYYY-MM-DDTHH:MM
-		return preg_match( '/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/', $value ) ? $value : '';
+		// Day-granular schedule from <input type="date">: YYYY-MM-DD.
+		return preg_match( '/^\d{4}-\d{2}-\d{2}$/', $value ) ? $value : '';
 	}
 
 	private function sanitize_hex( string $value ): string {

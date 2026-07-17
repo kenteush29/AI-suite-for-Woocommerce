@@ -62,10 +62,10 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 			<tr class="dze-field-schedule">
 				<th scope="row"><?php esc_html_e( 'Schedule', 'dazont-ecom' ); ?></th>
 				<td>
-					<label><?php esc_html_e( 'Start', 'dazont-ecom' ); ?> <input type="datetime-local" name="start" value="<?php echo esc_attr( $e( 'start' ) ); ?>" /></label>
+					<label><?php esc_html_e( 'Start', 'dazont-ecom' ); ?> <input type="date" name="start" value="<?php echo esc_attr( $e( 'start' ) ); ?>" /></label>
 					&nbsp;
-					<label><?php esc_html_e( 'End', 'dazont-ecom' ); ?> <input type="datetime-local" name="end" value="<?php echo esc_attr( $e( 'end' ) ); ?>" /></label>
-					<p class="description"><?php esc_html_e( 'Leave blank for no start/end limit. Uses the site timezone. Only one promotion can run at a time.', 'dazont-ecom' ); ?></p>
+					<label><?php esc_html_e( 'End', 'dazont-ecom' ); ?> <input type="date" name="end" value="<?php echo esc_attr( $e( 'end' ) ); ?>" /></label>
+					<p class="description"><?php esc_html_e( 'Day-granular: the sale runs from the start date at 00:00 through the end date at 23:59 (site timezone). Leave blank for no limit. Only one promotion can run at a time.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
 		</table>
@@ -141,8 +141,15 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 					</td>
 				</tr>
 				<?php if ( ! empty( $languages ) ) :
-					$i18n = (array) ( $editing['banner_text_i18n'] ?? [] );
-					foreach ( $languages as $lang ) : ?>
+					$i18n         = (array) ( $editing['banner_text_i18n'] ?? [] );
+					$default_lang = DZE_Wpml::default_language();
+					foreach ( $languages as $lang ) :
+						// The default language uses the "Banner text" field above —
+						// no need to duplicate it as a translation.
+						if ( $lang['code'] === $default_lang ) {
+							continue;
+						}
+						?>
 				<tr>
 					<th scope="row"><label>
 						<?php if ( ! empty( $lang['flag'] ) ) : ?><img src="<?php echo esc_url( $lang['flag'] ); ?>" alt="" style="width:18px;height:12px;vertical-align:middle;margin-right:4px;" /><?php endif; ?>
