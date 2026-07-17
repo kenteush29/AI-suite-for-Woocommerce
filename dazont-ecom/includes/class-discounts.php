@@ -99,9 +99,10 @@ final class DZE_Discounts {
 					continue;
 				}
 			}
-			// Per-language targeting: when WPML is active and the rule limits
-			// itself to certain languages, skip it outside those languages.
-			if ( ! empty( $rule['languages'] ) && $current_lang !== '' && ! in_array( $current_lang, (array) $rule['languages'], true ) ) {
+			// Per-language activation: the default language is always eligible;
+			// a non-default language is eligible only when the banner text is
+			// translated for it (see rule_effective_languages). WPML only.
+			if ( $current_lang !== '' && ! in_array( $current_lang, $this->rule_effective_languages( $rule ), true ) ) {
 				continue;
 			}
 			$active[ $id ] = $rule;
@@ -120,6 +121,76 @@ final class DZE_Discounts {
 
 	private function rules_of_type( string $type ): array {
 		return array_filter( $this->get_active_rules(), static fn( $r ) => ( $r['type'] ?? '' ) === $type );
+	}
+
+	/**
+	 * Language codes a rule is effectively active in (WPML). The default
+	 * language is always included; a non-default language is included only when
+	 * the rule's banner text is translated for it. Empty when WPML is inactive.
+	 */
+	public function rule_effective_languages( array $rule ): array {
+		if ( ! DZE_Wpml::is_active() ) {
+			return [];
+		}
+		$default    = DZE_Wpml::default_language();
+		$selected   = (array) ( $rule['languages'] ?? [] );
+		$i18n       = (array) ( $rule['banner_text_i18n'] ?? [] );
+		$has_banner = ! empty( $rule['banner_enabled'] ) && trim( (string) ( $rule['banner_text'] ?? '' ) ) !== '';
+
+		$out = [];
+		foreach ( DZE_Wpml::get_active_languages() as $lang ) {
+			$code = $lang['code'];
+			if ( ! empty( $selected ) && ! in_array( $code, $selected, true ) ) {
+				continue; // not targeted by this rule.
+			}
+			if ( $code !== $default && $has_banner && empty( $i18n[ $code ] ) ) {
+				continue; // non-default language requires a translated banner.
+			}
+			$out[] = $code;
+		}
+		return $out;
+	}
+
+	/**
+	 * Standard product-page banner positions → [hook, priority].
+	 */
+	public static function product_positions(): array {
+		return [
+			'before_product'     => [ 'label' => __( 'Above the product (default)', 'dazont-ecom' ), 'hook' => 'woocommerce_before_single_product', 'prio' => 10 ],
+			'before_title'       => [ 'label' => __( 'Before the title', 'dazont-ecom' ),            'hook' => 'woocommerce_single_product_summary', 'prio' => 4 ],
+			'after_title'        => [ 'label' => __( 'After the title', 'dazont-ecom' ),             'hook' => 'woocommerce_single_product_summary', 'prio' => 6 ],
+			'before_price'       => [ 'label' => __( 'Before the price', 'dazont-ecom' ),            'hook' => 'woocommerce_single_product_summary', 'prio' => 9 ],
+			'before_add_to_cart' => [ 'label' => __( 'Before Add to cart', 'dazont-ecom' ),         'hook' => 'woocommerce_single_product_summary', 'prio' => 29 ],
+			'after_add_to_cart'  => [ 'label' => __( 'After Add to cart', 'dazont-ecom' ),          'hook' => 'woocommerce_single_product_summary', 'prio' => 31 ],
+		];
+	}
+
+	/** True when two sale windows overlap (open-ended = ±infinity). */
+	private function sale_windows_overlap( array $a, array $b ): bool {
+		$a_start = ! empty( $a['start'] ) ? $this->to_ts( $a['start'] ) : PHP_INT_MIN;
+		$a_end   = ! empty( $a['end'] )   ? $this->to_ts( $a['end'] )   : PHP_INT_MAX;
+		$b_start = ! empty( $b['start'] ) ? $this->to_ts( $b['start'] ) : PHP_INT_MIN;
+		$b_end   = ! empty( $b['end'] )   ? $this->to_ts( $b['end'] )   : PHP_INT_MAX;
+		return $a_start <= $b_end && $b_start <= $a_end;
+	}
+
+	/**
+	 * Returns the title of an enabled sale whose window overlaps $rule, or ''
+	 * (used to forbid two promotions running at the same time).
+	 */
+	private function conflicting_sale( array $rule ): string {
+		if ( ( $rule['type'] ?? '' ) !== 'sale' ) {
+			return '';
+		}
+		foreach ( self::get_rules() as $oid => $other ) {
+			if ( $oid === ( $rule['id'] ?? '' ) ) {
+				continue;
+			}
+			if ( ( $other['type'] ?? '' ) === 'sale' && ! empty( $other['enabled'] ) && $this->sale_windows_overlap( $rule, $other ) ) {
+				return (string) ( $other['title'] !== '' ? $other['title'] : $oid );
+			}
+		}
+		return '';
 	}
 
 	// =========================================================================
@@ -163,32 +234,26 @@ final class DZE_Discounts {
 				add_filter( 'wp_get_attachment_url',       [ $this, 'swap_image_url' ], 20, 2 );
 			}
 
-			// Banners at named locations.
-			add_action( 'woocommerce_before_single_product', function () { $this->render_location( 'product' ); } );
-			add_action( 'woocommerce_before_shop_loop',      function () { $this->render_location( 'shop' ); } );
-			add_action( 'woocommerce_before_cart',           function () { $this->render_location( 'cart' ); } );
-
-			// Top of site (above the header) + homepage-only, both via wp_body_open.
-			add_action( 'wp_body_open', function () {
-				$this->render_location( 'top' );
-				if ( is_front_page() || is_home() ) {
-					$this->render_location( 'home' );
-				}
-			} );
-
-			// Below the header (under the menu). Astra fires astra_header_after
-			// right after the whole header/menu.
+			// Banner: single location per rule (Top / Below header / Product).
+			$positions = self::product_positions();
+			add_action( 'wp_body_open', function () { $this->render_location( 'top' ); } );
 			if ( defined( 'ASTRA_THEME_VERSION' ) || function_exists( 'astra_header_markup' ) ) {
 				add_action( 'astra_header_after', function () { $this->render_location( 'below_header' ); } );
 			}
-
-			// User-defined hooks (free choice — e.g. any Astra hook).
 			foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
-				if ( empty( $rule['banner_enabled'] ) || empty( $rule['banner_hooks'] ) ) {
+				if ( empty( $rule['banner_enabled'] ) ) {
 					continue;
 				}
-				foreach ( $this->parse_hooks( $rule['banner_hooks'] ) as $hook ) {
-					add_action( $hook, function () use ( $rule ) { $this->render_single_banner( $rule ); } );
+				// Product-page banner at the chosen standard WooCommerce position.
+				if ( ( $rule['banner_location'] ?? '' ) === 'product' ) {
+					$pos = $positions[ $rule['product_position'] ?? 'before_product' ] ?? $positions['before_product'];
+					add_action( $pos['hook'], function () use ( $rule ) { $this->render_single_banner( $rule ); }, $pos['prio'] );
+				}
+				// Optional user-defined hooks (free choice — any Astra hook).
+				if ( ! empty( $rule['banner_hooks'] ) ) {
+					foreach ( $this->parse_hooks( $rule['banner_hooks'] ) as $hook ) {
+						add_action( $hook, function () use ( $rule ) { $this->render_single_banner( $rule ); } );
+					}
 				}
 			}
 		}
@@ -392,7 +457,7 @@ final class DZE_Discounts {
 
 	private function render_location( string $location ): void {
 		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
-			if ( in_array( $location, (array) ( $rule['banner_locations'] ?? [] ), true ) ) {
+			if ( ( $rule['banner_location'] ?? '' ) === $location ) {
 				$this->render_single_banner( $rule );
 			}
 		}
@@ -540,12 +605,40 @@ final class DZE_Discounts {
 
 		$rules       = self::get_rules();
 		$type_labels = self::type_labels();
-		$edit_id     = isset( $_GET['edit'] ) ? sanitize_text_field( wp_unslash( $_GET['edit'] ) ) : '';
-		$editing     = $edit_id !== '' && isset( $rules[ $edit_id ] ) ? $rules[ $edit_id ] : null;
-		$categories  = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => false ] );
 		$languages   = DZE_Wpml::get_active_languages();
 
+		$edit_id = isset( $_GET['edit'] ) ? sanitize_text_field( wp_unslash( $_GET['edit'] ) ) : '';
+		$is_new  = isset( $_GET['new'] );
+		$editing = ( $edit_id !== '' && isset( $rules[ $edit_id ] ) ) ? $rules[ $edit_id ] : null;
+
+		// Edit / create screen is a separate page from the list.
+		if ( $is_new || $editing ) {
+			$categories       = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => false ] );
+			$product_positions = self::product_positions();
+			require DZE_DIR . 'admin/views/discounts-edit.php';
+			return;
+		}
+
+		$notice = get_transient( 'dze_discount_notice' );
+		if ( $notice ) {
+			delete_transient( 'dze_discount_notice' );
+		}
 		require DZE_DIR . 'admin/views/discounts-page.php';
+	}
+
+	/** Public helper for the list view: flags of languages a rule is active in. */
+	public function rule_language_flags( array $rule ): array {
+		if ( ! DZE_Wpml::is_active() ) {
+			return [];
+		}
+		$codes = $this->rule_effective_languages( $rule );
+		$flags = [];
+		foreach ( DZE_Wpml::get_active_languages() as $lang ) {
+			if ( in_array( $lang['code'], $codes, true ) ) {
+				$flags[] = $lang;
+			}
+		}
+		return $flags;
 	}
 
 	// =========================================================================
@@ -561,13 +654,16 @@ final class DZE_Discounts {
 		$in    = wp_unslash( $_POST );
 		$rules = self::get_rules();
 
-		$id   = ! empty( $in['rule_id'] ) ? sanitize_key( $in['rule_id'] ) : 'r' . uniqid();
-		$type = in_array( $in['type'] ?? '', array_keys( self::type_labels() ), true ) ? $in['type'] : 'sale';
-
-		$scope = in_array( $in['scope'] ?? 'all', [ 'all', 'categories', 'products' ], true ) ? $in['scope'] : 'all';
+		$id      = ! empty( $in['rule_id'] ) ? sanitize_key( $in['rule_id'] ) : 'r' . uniqid();
+		$type    = in_array( $in['type'] ?? '', array_keys( self::type_labels() ), true ) ? $in['type'] : 'sale';
+		$scope   = in_array( $in['scope'] ?? 'all', [ 'all', 'categories', 'products' ], true ) ? $in['scope'] : 'all';
+		$b_loc   = in_array( $in['banner_location'] ?? '', [ 'top', 'below_header', 'product' ], true ) ? $in['banner_location'] : 'top';
+		$b_pos   = array_key_exists( $in['product_position'] ?? '', self::product_positions() ) ? $in['product_position'] : 'before_product';
+		$created = ( isset( $rules[ $id ]['created_at'] ) && $rules[ $id ]['created_at'] ) ? (int) $rules[ $id ]['created_at'] : time();
 
 		$rule = [
 			'id'            => $id,
+			'created_at'    => $created,
 			'title'         => sanitize_text_field( $in['title'] ?? '' ),
 			'type'          => $type,
 			'enabled'       => ! empty( $in['enabled'] ),
@@ -582,10 +678,8 @@ final class DZE_Discounts {
 			'banner_text'      => sanitize_text_field( $in['banner_text'] ?? '' ),
 			'banner_bg'        => $this->sanitize_hex( $in['banner_bg'] ?? '#111111' ),
 			'banner_color'     => $this->sanitize_hex( $in['banner_color'] ?? '#ffffff' ),
-			'banner_locations' => array_values( array_intersect(
-				[ 'top', 'below_header', 'product', 'shop', 'home', 'cart' ],
-				array_map( 'sanitize_key', (array) ( $in['banner_locations'] ?? [] ) )
-			) ),
+			'banner_location'  => $b_loc,
+			'product_position' => $b_pos,
 			'banner_hooks'      => sanitize_text_field( $in['banner_hooks'] ?? '' ),
 			'banner_timer'      => ! empty( $in['banner_timer'] ),
 			'banner_text_i18n'  => $this->sanitize_i18n( $in['banner_text_i18n'] ?? [] ),
@@ -595,10 +689,26 @@ final class DZE_Discounts {
 			'hero_event_id'     => absint( $in['hero_event_id'] ?? 0 ),
 		];
 
+		// Only one promotion (sale) may be active at a time: if this enabled sale
+		// overlaps another enabled sale, save it disabled and report the clash.
+		$args = [ 'page' => self::MENU_SLUG, 'saved' => 1 ];
+		if ( $rule['enabled'] ) {
+			$clash = $this->conflicting_sale( $rule );
+			if ( $clash !== '' ) {
+				$rule['enabled'] = false;
+				set_transient( 'dze_discount_notice', sprintf(
+					/* translators: %s: conflicting promotion title */
+					__( 'Saved as disabled: its dates overlap the active promotion "%s". Only one promotion can run at a time.', 'dazont-ecom' ),
+					$clash
+				), 60 );
+				$args['saved'] = 0;
+			}
+		}
+
 		$rules[ $id ] = $rule;
 		self::save_rules( $rules );
 
-		wp_safe_redirect( add_query_arg( [ 'page' => self::MENU_SLUG, 'saved' => 1 ], admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
@@ -623,7 +733,21 @@ final class DZE_Discounts {
 		$id    = isset( $_GET['rule'] ) ? sanitize_key( wp_unslash( $_GET['rule'] ) ) : '';
 		$rules = self::get_rules();
 		if ( isset( $rules[ $id ] ) ) {
-			$rules[ $id ]['enabled'] = empty( $rules[ $id ]['enabled'] );
+			$enabling = empty( $rules[ $id ]['enabled'] );
+			// Enabling a sale that overlaps another active sale is forbidden.
+			if ( $enabling ) {
+				$clash = $this->conflicting_sale( $rules[ $id ] );
+				if ( $clash !== '' ) {
+					set_transient( 'dze_discount_notice', sprintf(
+						/* translators: %s: conflicting promotion title */
+						__( 'Cannot enable: its dates overlap the active promotion "%s". Only one promotion can run at a time.', 'dazont-ecom' ),
+						$clash
+					), 60 );
+					wp_safe_redirect( add_query_arg( [ 'page' => self::MENU_SLUG ], admin_url( 'admin.php' ) ) );
+					exit;
+				}
+			}
+			$rules[ $id ]['enabled'] = $enabling;
 			self::save_rules( $rules );
 		}
 		wp_safe_redirect( add_query_arg( [ 'page' => self::MENU_SLUG ], admin_url( 'admin.php' ) ) );

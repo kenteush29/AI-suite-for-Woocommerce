@@ -44,6 +44,7 @@ final class DZE_Wpml {
 			$result[] = [
 				'code'        => (string) $code,
 				'native_name' => (string) ( $data['native_name'] ?? $code ),
+				'flag'        => (string) ( $data['country_flag_url'] ?? '' ),
 			];
 		}
 		return $result;

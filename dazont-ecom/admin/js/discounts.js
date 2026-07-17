@@ -34,6 +34,11 @@
 		$('.dze-field-products').toggle(scope === 'products');
 	}
 
+	function refreshBannerLocation() {
+		var loc = $('.dze-banner-loc:checked').val();
+		$('.dze-field-product-position').toggle(loc === 'product');
+	}
+
 	// ---- Media Library picker for hero images ----
 	var frame = null;
 	$(document).on('click', '.dze-hero-select', function (e) {
@@ -69,8 +74,10 @@
 	$(function () {
 		refreshType();
 		refreshScope();
+		refreshBannerLocation();
 		$('#dze-type').on('change', refreshType);
 		$(document).on('change', '.dze-scope', refreshScope);
+		$(document).on('change', '.dze-banner-loc', refreshBannerLocation);
 	});
 
 }(jQuery));
