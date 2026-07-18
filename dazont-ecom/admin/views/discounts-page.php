@@ -82,7 +82,16 @@ $gmc_on     = $gmc && $gmc->is_configured();
 			<tr>
 				<td><strong><a href="<?php echo esc_url( $edit_url ); ?>"><?php echo esc_html( $r['title'] !== '' ? $r['title'] : '(untitled)' ); ?></a></strong></td>
 				<td><?php echo esc_html( $type_labels[ $r['type'] ] ?? $r['type'] ); ?></td>
-				<td><?php echo esc_html( rtrim( rtrim( (string) ( $r['percent'] ?? 0 ), '0' ), '.' ) ); ?>%</td>
+				<td><?php
+				if ( ( $r['type'] ?? '' ) === 'bulk_order' ) {
+					$pcts = array_map( static fn( $t ) => (float) ( $t['percent'] ?? 0 ), (array) ( $r['tiers'] ?? [] ) );
+					echo $pcts
+						? esc_html( sprintf( __( 'up to %s%%', 'dazont-ecom' ), rtrim( rtrim( (string) max( $pcts ), '0' ), '.' ) ) )
+						: '<span style="color:#999;">—</span>';
+				} else {
+					echo esc_html( rtrim( rtrim( (string) ( $r['percent'] ?? 0 ), '0' ), '.' ) ) . '%';
+				}
+				?></td>
 				<td><?php echo esc_html( $scope_txt ); ?></td>
 				<?php if ( ! empty( $languages ) ) : ?>
 				<td>
@@ -136,8 +145,10 @@ $gmc_on     = $gmc && $gmc->is_configured();
 	</table>
 
 	<p class="description" style="margin-top:12px;">
-		<?php echo $is_events
-			? esc_html__( 'Only one marketing event can be active at a time — overlapping ones are kept disabled.', 'dazont-ecom' )
-			: esc_html__( 'Discounts are evergreen: enable a rule once and it keeps applying (no schedule).', 'dazont-ecom' ); ?>
+		<?php if ( $is_events ) : ?>
+			<?php esc_html_e( 'Only one marketing event can be active at a time — overlapping ones are kept disabled.', 'dazont-ecom' ); ?>
+		<?php else : ?>
+			<?php esc_html_e( 'Discounts are evergreen: enable a rule once and it keeps applying (no schedule). They appear in the cart as a promo-code line — “Bundle” for a Bulk offer per item, “Wholesale” for a Bulk order.', 'dazont-ecom' ); ?>
+		<?php endif; ?>
 	</p>
 </div>

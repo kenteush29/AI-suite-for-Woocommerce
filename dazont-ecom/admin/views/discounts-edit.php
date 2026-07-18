@@ -56,7 +56,7 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 					</select>
 				</td>
 			</tr>
-			<tr>
+			<tr class="dze-field-percent">
 				<th scope="row"><label for="dze-percent"><?php esc_html_e( 'Discount (%)', 'dazont-ecom' ); ?></label></th>
 				<td><input type="number" id="dze-percent" name="percent" min="0" max="100" step="0.01" class="small-text" value="<?php echo esc_attr( $e( 'percent', '10' ) ); ?>" /> %</td>
 			</tr>
@@ -67,6 +67,46 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				<td>
 					<input type="number" id="dze-threshold" name="threshold" min="0" step="1" class="small-text" value="<?php echo esc_attr( $e( 'threshold', '2' ) ); ?>" />
 					<p class="description dze-threshold-help"></p>
+				</td>
+			</tr>
+
+			<?php
+			// Bulk order (tiered) fields.
+			$tiers = (array) ( $editing['tiers'] ?? [] );
+			if ( empty( $tiers ) ) {
+				$tiers = DZE_Discounts::default_tiers();
+			}
+			$tiers = array_values( $tiers );
+			for ( $i = count( $tiers ); $i < 4; $i++ ) {
+				$tiers[] = [ 'qty' => 0, 'percent' => 0 ];
+			}
+			?>
+			<tr class="dze-field-min-subtotal">
+				<th scope="row"><label for="dze-min-subtotal"><?php esc_html_e( 'Minimum cart subtotal', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<input type="number" id="dze-min-subtotal" name="min_subtotal" min="0" step="0.01" class="small-text" value="<?php echo esc_attr( $e( 'min_subtotal', '0' ) ); ?>" />
+					<p class="description"><?php esc_html_e( 'The cart must reach this amount before any tier applies. Leave 0 to ignore.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
+			<tr class="dze-field-min-qty">
+				<th scope="row"><label for="dze-min-qty"><?php esc_html_e( 'Minimum total quantity', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<input type="number" id="dze-min-qty" name="min_qty" min="0" step="1" class="small-text" value="<?php echo esc_attr( $e( 'min_qty', '0' ) ); ?>" />
+					<p class="description"><?php esc_html_e( 'Total items across all products, before any tier applies. Leave 0 to ignore.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
+			<tr class="dze-field-tiers">
+				<th scope="row"><?php esc_html_e( 'Quantity tiers', 'dazont-ecom' ); ?></th>
+				<td>
+					<?php foreach ( $tiers as $i => $tier ) : ?>
+						<p style="margin:0 0 6px;">
+							<?php esc_html_e( 'From', 'dazont-ecom' ); ?>
+							<input type="number" name="tiers[<?php echo (int) $i; ?>][qty]" min="0" step="1" class="small-text" value="<?php echo esc_attr( (int) ( $tier['qty'] ?? 0 ) ); ?>" />
+							<?php esc_html_e( 'items → discount', 'dazont-ecom' ); ?>
+							<input type="number" name="tiers[<?php echo (int) $i; ?>][percent]" min="0" max="100" step="0.01" class="small-text" value="<?php echo esc_attr( (float) ( $tier['percent'] ?? 0 ) ); ?>" /> %
+						</p>
+					<?php endforeach; ?>
+					<p class="description"><?php esc_html_e( 'The highest tier reached applies (strongest discount, in the customer\'s favour). Set a percent to 0 to disable a tier.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
 			<?php endif; ?>

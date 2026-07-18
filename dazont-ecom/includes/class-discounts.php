@@ -4,19 +4,21 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Rule storage and admin UI for both the "Marketing Events" page (sale type —
  * recurring, date-bound promotions, with the AI calendar) and the "Discounts"
- * page (cart_qty/cart_subtotal/bulk — evergreen rules, set up once). Same
- * storage and save/delete/toggle handlers; the two admin pages differ only in
- * which rule types they show and edit (see types_for_mode()).
+ * page (evergreen cart-level rules, set up once). Same storage and save/delete/
+ * toggle handlers; the two admin pages differ only in which rule types they
+ * show and edit (see types_for_mode()).
  *
  * Rule types:
- *   - sale          : scheduled site-wide % sale (shown as a struck-through
- *                     price across catalog + product pages), with an optional
- *                     promo banner at chosen locations.
- *   - cart_qty      : % off the in-scope cart subtotal once total in-scope
- *                     quantity reaches a threshold.
- *   - cart_subtotal : % off the in-scope cart subtotal once it reaches an amount.
- *   - bulk          : % off a product's line once its own quantity reaches N
- *                     (the "buy 2+ of the same product" offer).
+ *   - sale       : scheduled site-wide % sale (shown as a struck-through price
+ *                  across catalog + product pages), with an optional promo
+ *                  banner at chosen locations.
+ *   - bulk       : "Bulk offer per item" — % off a product's line once its own
+ *                  quantity reaches N (the "buy 2+ of the same product" offer).
+ *                  Shown in the cart as a "Bundle" fee line.
+ *   - bulk_order : "Bulk order" — tiered % off the in-scope cart, gated on an
+ *                  optional minimum subtotal and/or minimum total quantity; the
+ *                  highest reached quantity tier wins. Shown as a "Wholesale"
+ *                  fee line.
  *
  * Scope for every rule: whole store, specific categories, or specific products.
  * Discounts are percentage-only by design.
@@ -28,12 +30,14 @@ defined( 'ABSPATH' ) || exit;
 final class DZE_Discounts {
 
 	public const OPTION    = 'dze_discount_rules';
-	public const MENU_SLUG        = 'dazont-ecom-discounts';       // Discounts page: cart_qty / cart_subtotal / bulk (set up once).
+	public const MENU_SLUG        = 'dazont-ecom-discounts';       // Discounts page: bulk / bulk_order (set up once).
 	public const MENU_SLUG_EVENTS = 'dazont-ecom-marketing-events'; // Marketing Events page: sale type (recurring, date-bound), + AI calendar.
 	public const SAVE_NONCE = 'dze_discounts_save';
 
 	/** Rule types shown on the "Marketing Events" page. */
 	private const EVENT_TYPES = [ 'sale' ];
+	/** Rule types shown on the "Discounts" page (cart-level, evergreen). */
+	private const DISCOUNT_TYPES = [ 'bulk', 'bulk_order' ];
 
 	/** @var array<string,array>|null Cached active rules for this request. */
 	private ?array $active = null;
@@ -78,25 +82,22 @@ final class DZE_Discounts {
 
 	public static function type_labels(): array {
 		return [
-			'sale'          => __( 'Scheduled sale (site-wide %)', 'dazont-ecom' ),
-			'cart_qty'      => __( 'Cart quantity discount', 'dazont-ecom' ),
-			'cart_subtotal' => __( 'Cart subtotal discount', 'dazont-ecom' ),
-			'bulk'          => __( 'Bulk (same product, qty ≥ N)', 'dazont-ecom' ),
+			'sale'       => __( 'Scheduled sale (site-wide %)', 'dazont-ecom' ),
+			'bulk'       => __( 'Bulk offer per item', 'dazont-ecom' ),
+			'bulk_order' => __( 'Bulk order', 'dazont-ecom' ),
 		];
 	}
 
 	/**
 	 * Type labels for one admin page: 'events' (recurring, date-bound scheduled
-	 * sales — with the AI calendar) or 'discounts' (evergreen cart/bulk rules,
+	 * sales — with the AI calendar) or 'discounts' (evergreen cart-level rules,
 	 * set up once). Restricts both the list and the Type dropdown on the edit
 	 * screen so each page only ever shows/creates its own kind of rule.
 	 */
 	public static function types_for_mode( string $mode ): array {
 		$all = self::type_labels();
-		if ( 'events' === $mode ) {
-			return array_intersect_key( $all, array_flip( self::EVENT_TYPES ) );
-		}
-		return array_diff_key( $all, array_flip( self::EVENT_TYPES ) );
+		$keys = ( 'events' === $mode ) ? self::EVENT_TYPES : self::DISCOUNT_TYPES;
+		return array_intersect_key( $all, array_flip( $keys ) );
 	}
 
 	/**
@@ -262,8 +263,10 @@ final class DZE_Discounts {
 		}
 
 		$has_sale = ! empty( $this->rules_of_type( 'sale' ) );
-		$has_cart = ! empty( $this->rules_of_type( 'cart_qty' ) ) || ! empty( $this->rules_of_type( 'cart_subtotal' ) );
-		$has_bulk = ! empty( $this->rules_of_type( 'bulk' ) );
+		// Both discount types show as a labelled negative line in the cart
+		// (like a promo code): "Bundle" (bulk offer per item) and "Wholesale"
+		// (bulk order tiers).
+		$has_fees = ! empty( $this->rules_of_type( 'bulk' ) ) || ! empty( $this->rules_of_type( 'bulk_order' ) );
 
 		if ( $has_sale ) {
 			add_filter( 'woocommerce_product_get_price',                 [ $this, 'filter_price' ], 20, 2 );
@@ -308,11 +311,8 @@ final class DZE_Discounts {
 			}
 		}
 
-		if ( $has_cart ) {
+		if ( $has_fees ) {
 			add_action( 'woocommerce_cart_calculate_fees', [ $this, 'apply_cart_fees' ], 20, 1 );
-		}
-		if ( $has_bulk ) {
-			add_action( 'woocommerce_before_calculate_totals', [ $this, 'apply_bulk' ], 20, 1 );
 		}
 	}
 
@@ -419,52 +419,19 @@ final class DZE_Discounts {
 	// Cart discounts
 	// =========================================================================
 
+	/**
+	 * Both discounts show as a labelled negative line in the cart (like a promo
+	 * code): "Bundle" for the per-item bulk offer, "Wholesale" for the tiered
+	 * bulk order.
+	 */
 	public function apply_cart_fees( $cart ): void {
 		if ( ! $cart instanceof \WC_Cart || ( is_admin() && ! wp_doing_ajax() ) ) {
 			return;
 		}
+		$decimals = function_exists( 'wc_get_price_decimals' ) ? wc_get_price_decimals() : 2;
 
-		foreach ( [ 'cart_qty', 'cart_subtotal' ] as $type ) {
-			foreach ( $this->rules_of_type( $type ) as $rule ) {
-				$threshold = (float) ( $rule['threshold'] ?? 0 );
-				if ( $threshold <= 0 ) {
-					continue;
-				}
-
-				$scope_subtotal = 0.0;
-				$scope_qty      = 0;
-				foreach ( $cart->get_cart() as $item ) {
-					$product = $item['data'] ?? null;
-					if ( ! $product instanceof \WC_Product ) {
-						continue;
-					}
-					if ( ! $this->product_in_scope( $rule, $product->get_id(), $product->get_parent_id() ) ) {
-						continue;
-					}
-					$scope_subtotal += (float) $product->get_price() * (int) $item['quantity'];
-					$scope_qty      += (int) $item['quantity'];
-				}
-
-				$meets = ( $type === 'cart_qty' ) ? ( $scope_qty >= $threshold ) : ( $scope_subtotal >= $threshold );
-				if ( ! $meets || $scope_subtotal <= 0 ) {
-					continue;
-				}
-
-				$percent = (float) ( $rule['percent'] ?? 0 );
-				$amount  = $scope_subtotal * ( $percent / 100 );
-				if ( $amount > 0 ) {
-					$label = $rule['title'] !== '' ? $rule['title'] : __( 'Discount', 'dazont-ecom' );
-					$cart->add_fee( $label, -1 * round( $amount, wc_get_price_decimals() ), false );
-				}
-			}
-		}
-	}
-
-	public function apply_bulk( $cart ): void {
-		if ( ! $cart instanceof \WC_Cart || ( is_admin() && ! wp_doing_ajax() ) ) {
-			return;
-		}
-
+		// --- Bundle: bulk offer per item (same product, qty ≥ threshold) ---
+		$bundle = 0.0;
 		foreach ( $cart->get_cart() as $item ) {
 			$product = $item['data'] ?? null;
 			if ( ! $product instanceof \WC_Product ) {
@@ -475,18 +442,71 @@ final class DZE_Discounts {
 			if ( $percent <= 0 ) {
 				continue;
 			}
-
-			// Base off regular price (+ any active site sale) so repeated
-			// recalculations stay idempotent — never off the already-set price.
-			$regular = (float) $product->get_regular_price();
-			if ( $regular <= 0 ) {
-				$regular = (float) $product->get_price();
-			}
-			$sale = $this->sale_percent_for( $product );
-			$base = $sale > 0 ? $this->discounted( $regular, $sale ) : $regular;
-
-			$product->set_price( $this->discounted( $base, $percent ) );
+			$bundle += ( (float) $product->get_price() * $qty ) * ( $percent / 100 );
 		}
+		if ( $bundle > 0 ) {
+			$cart->add_fee( __( 'Bundle', 'dazont-ecom' ), -1 * round( $bundle, $decimals ), false );
+		}
+
+		// --- Wholesale: bulk order (tiered, with optional min conditions) ---
+		$wholesale = $this->wholesale_discount( $cart );
+		if ( $wholesale > 0 ) {
+			$cart->add_fee( __( 'Wholesale', 'dazont-ecom' ), -1 * round( $wholesale, $decimals ), false );
+		}
+	}
+
+	/**
+	 * Best bulk-order discount amount for the cart. Each rule gates on an
+	 * optional minimum subtotal and/or minimum total quantity (a 0 means "no
+	 * requirement"; any set requirement must be met — AND). Within a rule, the
+	 * highest matching quantity tier wins; across rules, the biggest discount
+	 * wins — always in the customer's favour.
+	 */
+	private function wholesale_discount( \WC_Cart $cart ): float {
+		$best = 0.0;
+		foreach ( $this->rules_of_type( 'bulk_order' ) as $rule ) {
+			$subtotal = 0.0;
+			$qty      = 0;
+			foreach ( $cart->get_cart() as $item ) {
+				$product = $item['data'] ?? null;
+				if ( ! $product instanceof \WC_Product ) {
+					continue;
+				}
+				if ( ! $this->product_in_scope( $rule, $product->get_id(), $product->get_parent_id() ) ) {
+					continue;
+				}
+				$subtotal += (float) $product->get_price() * (int) $item['quantity'];
+				$qty      += (int) $item['quantity'];
+			}
+			if ( $subtotal <= 0 ) {
+				continue;
+			}
+
+			$min_sub = (float) ( $rule['min_subtotal'] ?? 0 );
+			$min_qty = (int) ( $rule['min_qty'] ?? 0 );
+			if ( $min_sub > 0 && $subtotal < $min_sub ) {
+				continue;
+			}
+			if ( $min_qty > 0 && $qty < $min_qty ) {
+				continue;
+			}
+
+			// Highest tier whose quantity threshold is reached (strongest wins).
+			$percent = 0.0;
+			foreach ( (array) ( $rule['tiers'] ?? [] ) as $tier ) {
+				$t_qty = (int) ( $tier['qty'] ?? 0 );
+				$t_pct = (float) ( $tier['percent'] ?? 0 );
+				if ( $qty >= $t_qty && $t_pct > $percent ) {
+					$percent = $t_pct;
+				}
+			}
+			if ( $percent <= 0 ) {
+				continue;
+			}
+
+			$best = max( $best, $subtotal * ( $percent / 100 ) );
+		}
+		return $best;
 	}
 
 	// =========================================================================
@@ -744,6 +764,10 @@ final class DZE_Discounts {
 			'start'         => $this->sanitize_dt( $in['start'] ?? '' ),
 			'end'           => $this->sanitize_dt( $in['end'] ?? '' ),
 			'threshold'     => max( 0, (float) ( $in['threshold'] ?? 0 ) ),
+			// Bulk order (tiered) fields.
+			'min_subtotal'  => max( 0, (float) ( $in['min_subtotal'] ?? 0 ) ),
+			'min_qty'       => max( 0, (int) ( $in['min_qty'] ?? 0 ) ),
+			'tiers'         => $this->sanitize_tiers( $in['tiers'] ?? [] ),
 			'banner_enabled'   => ! empty( $in['banner_enabled'] ),
 			'banner_text'      => sanitize_text_field( $in['banner_text'] ?? '' ),
 			'banner_bg'        => $this->sanitize_hex( $in['banner_bg'] ?? '#111111' ),
@@ -761,7 +785,9 @@ final class DZE_Discounts {
 
 		// Only one promotion (sale) may be active at a time: if this enabled sale
 		// overlaps another enabled sale, save it disabled and report the clash.
-		$args = [ 'page' => self::MENU_SLUG, 'saved' => 1 ];
+		// Return to the page this rule type belongs to.
+		$back_slug = in_array( $type, self::EVENT_TYPES, true ) ? self::MENU_SLUG_EVENTS : self::MENU_SLUG;
+		$args = [ 'page' => $back_slug, 'saved' => 1 ];
 		if ( $rule['enabled'] ) {
 			$clash = $this->conflicting_sale( $rule );
 			if ( $clash !== '' ) {
@@ -862,6 +888,30 @@ final class DZE_Discounts {
 		$value = trim( $value );
 		// Day-granular schedule from <input type="date">: YYYY-MM-DD.
 		return preg_match( '/^\d{4}-\d{2}-\d{2}$/', $value ) ? $value : '';
+	}
+
+	/** Bulk-order quantity tiers: keep rows that have a discount, sorted by qty. */
+	private function sanitize_tiers( $value ): array {
+		$out = [];
+		foreach ( (array) $value as $tier ) {
+			$qty = max( 0, (int) ( $tier['qty'] ?? 0 ) );
+			$pct = min( 100, max( 0, (float) ( $tier['percent'] ?? 0 ) ) );
+			if ( $pct > 0 ) {
+				$out[] = [ 'qty' => $qty, 'percent' => $pct ];
+			}
+		}
+		usort( $out, static fn( $a, $b ) => $a['qty'] <=> $b['qty'] );
+		return $out;
+	}
+
+	/** Default bulk-order tiers seeded on the create screen. */
+	public static function default_tiers(): array {
+		return [
+			[ 'qty' => 1,  'percent' => 5 ],
+			[ 'qty' => 6,  'percent' => 10 ],
+			[ 'qty' => 11, 'percent' => 15 ],
+			[ 'qty' => 21, 'percent' => 20 ],
+		];
 	}
 
 	private function sanitize_hex( string $value ): string {

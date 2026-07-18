@@ -3,29 +3,34 @@
 	'use strict';
 
 	var thresholdLabels = {
-		cart_qty      : 'Minimum items in cart',
-		cart_subtotal : 'Minimum cart subtotal',
-		bulk          : 'Minimum quantity of the same product'
+		bulk : 'Minimum quantity of the same product'
 	};
 	var thresholdHelp = {
-		cart_qty      : 'Discount applies once the in-scope cart quantity reaches this number.',
-		cart_subtotal : 'Discount applies once the in-scope cart subtotal reaches this amount.',
-		bulk          : 'Per-product discount applies once a customer buys at least this many of the same product.'
+		bulk : 'The discount applies to a product line once its own quantity reaches this number (repeats for each qualifying product). Shown in the cart as "Bundle".'
 	};
 
 	function refreshType() {
 		var type = $('#dze-type').val();
 		var isSale = (type === 'sale');
-		var usesThreshold = thresholdLabels.hasOwnProperty(type);
+		var isBulk = (type === 'bulk');
+		var isBulkOrder = (type === 'bulk_order');
 
+		// Marketing Events only.
 		$('.dze-field-schedule').toggle(isSale);
 		$('.dze-field-banner').toggle(isSale);
-		$('.dze-field-threshold').toggle(usesThreshold);
 
-		if (usesThreshold) {
-			$('.dze-threshold-label').text(thresholdLabels[type]);
-			$('.dze-threshold-help').text(thresholdHelp[type]);
+		// Percent is used by sale + bulk; bulk_order uses per-tier percents.
+		$('.dze-field-percent').toggle(!isBulkOrder);
+
+		// Bulk offer per item.
+		$('.dze-field-threshold').toggle(isBulk);
+		if (isBulk) {
+			$('.dze-threshold-label').text(thresholdLabels.bulk);
+			$('.dze-threshold-help').text(thresholdHelp.bulk);
 		}
+
+		// Bulk order (tiered).
+		$('.dze-field-min-subtotal, .dze-field-min-qty, .dze-field-tiers').toggle(isBulkOrder);
 	}
 
 	function refreshScope() {
