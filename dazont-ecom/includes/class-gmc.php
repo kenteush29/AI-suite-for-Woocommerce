@@ -20,7 +20,8 @@ final class DZE_Gmc {
 	public const CRON_HOOK   = 'dze_gmc_sync';
 	public const OPT_ACCOUNTS    = 'dze_gmc_accounts';
 	public const OPT_CREDENTIALS = 'dze_gmc_credentials';
-	public const OPT_OAUTH       = 'dze_gmc_oauth';
+	public const OPT_OAUTH       = 'dze_gmc_oauth';       // OAuth client (id/secret) — form-managed.
+	public const OPT_CONNECTION  = 'dze_gmc_connection';  // Connected account (refresh token/email) — flow-managed only.
 
 	private const API_BASE   = 'https://shoppingcontent.googleapis.com/content/v2.1';
 	private const SCOPE      = 'https://www.googleapis.com/auth/content';
@@ -82,8 +83,8 @@ final class DZE_Gmc {
 	}
 
 	public function is_authenticated(): bool {
-		$o = self::get_oauth();
-		return ! empty( $o['refresh_token'] ) || null !== $this->get_credentials();
+		$c = self::get_connection();
+		return ! empty( $c['refresh_token'] ) || null !== $this->get_credentials();
 	}
 
 	public function is_configured(): bool {
@@ -134,8 +135,14 @@ final class DZE_Gmc {
 	}
 
 	/**
-	 * Persist the OAuth client id/secret from the form while preserving the
-	 * refresh token / connected email obtained through the "Connect" flow.
+	 * Persist ONLY the OAuth client id/secret from the settings form.
+	 *
+	 * The connected account's refresh token/email live in a separate option
+	 * (OPT_CONNECTION) that the settings form never touches. That is the whole
+	 * point of the split: previously the token shared this option, so every
+	 * "Save Changes" (e.g. after entering merchant IDs) re-wrote this row and
+	 * could wipe the refresh token obtained through the Connect flow — the
+	 * cause of the "oauth_refresh_token=missing, oauth_client=present" error.
 	 */
 	public function sanitize_oauth( $value ): array {
 		$existing = self::get_oauth();
@@ -143,24 +150,48 @@ final class DZE_Gmc {
 		return [
 			'client_id'     => sanitize_text_field( $in['client_id'] ?? ( $existing['client_id'] ?? '' ) ),
 			'client_secret' => sanitize_text_field( $in['client_secret'] ?? ( $existing['client_secret'] ?? '' ) ),
-			'refresh_token' => (string) ( $existing['refresh_token'] ?? '' ),
-			'email'         => (string) ( $existing['email'] ?? '' ),
 		];
 	}
 
+	/** OAuth client credentials (id/secret) — managed by the settings form. */
 	public static function get_oauth(): array {
-		// Force a fresh read from the DB: this option is written by a redirect
-		// (admin-post.php) and read moments later by an AJAX request, which can
-		// land on a different PHP process/server with a stale persistent object
-		// cache (Redis/Memcached) if one is active — bypass it defensively.
-		// Autoloaded options are cached as a single 'alloptions' blob rather
-		// than under their own key, so both must be cleared or the option's
-		// own cache key delete above is a no-op and this keeps reading the
-		// pre-connect (empty) snapshot forever.
-		wp_cache_delete( self::OPT_OAUTH, 'options' );
-		wp_cache_delete( 'alloptions', 'options' );
 		$o = get_option( self::OPT_OAUTH, [] );
 		return is_array( $o ) ? $o : [];
+	}
+
+	/**
+	 * Connected-account state (refresh_token/email), written only by the OAuth
+	 * callback and the disconnect handler — never by the settings form.
+	 *
+	 * Forces a fresh DB read: this option is written by a redirect
+	 * (admin-post.php) and read moments later by an AJAX request, which can
+	 * land on a different PHP worker with a stale persistent object cache
+	 * (Redis/Memcached). Non-autoloaded options are cached under their own key
+	 * and, when absent, can also be shadowed by the 'alloptions' blob and the
+	 * 'notoptions' set — clear all three so the read cannot serve a pre-connect
+	 * (empty) snapshot.
+	 *
+	 * Also migrates a legacy token that older versions stored inside the
+	 * OAuth-client option, so an existing working connection is not lost.
+	 */
+	public static function get_connection(): array {
+		wp_cache_delete( self::OPT_CONNECTION, 'options' );
+		wp_cache_delete( 'notoptions', 'options' );
+		wp_cache_delete( 'alloptions', 'options' );
+		$c = get_option( self::OPT_CONNECTION, null );
+
+		if ( null === $c ) {
+			// Migrate from the legacy shared option (<= v1.4.3) if present.
+			$legacy = get_option( self::OPT_OAUTH, [] );
+			$c      = [
+				'refresh_token' => is_array( $legacy ) ? (string) ( $legacy['refresh_token'] ?? '' ) : '',
+				'email'         => is_array( $legacy ) ? (string) ( $legacy['email'] ?? '' ) : '',
+			];
+			if ( $c['refresh_token'] !== '' ) {
+				update_option( self::OPT_CONNECTION, $c, false );
+			}
+		}
+		return is_array( $c ) ? $c : [];
 	}
 
 	public function oauth_redirect_uri(): string {
@@ -217,15 +248,34 @@ final class DZE_Gmc {
 			exit;
 		}
 		$data = json_decode( wp_remote_retrieve_body( $response ), true );
-		if ( empty( $data['refresh_token'] ) ) {
-			$msg = $data['error_description'] ?? ( $data['error'] ?? __( 'No refresh token returned. Remove the app from your Google account and reconnect.', 'dazont-ecom' ) );
+
+		// A hard error from Google (bad code, redirect_uri mismatch, etc.) —
+		// surface it verbatim so the exact cause is visible on the page.
+		if ( ! empty( $data['error'] ) ) {
+			$msg = $data['error_description'] ?? $data['error'];
 			wp_safe_redirect( add_query_arg( 'gmc_error', rawurlencode( $msg ), $settings_url ) );
 			exit;
 		}
 
-		$o['refresh_token'] = $data['refresh_token'];
-		$o['email']         = $this->fetch_account_email( $data['access_token'] ?? '' );
-		update_option( self::OPT_OAUTH, $o, false );
+		// Google only returns a refresh_token when the app has not been
+		// authorised before (or when prompt=consent is honoured). If none comes
+		// back, keep any token we already stored rather than failing outright.
+		$conn    = self::get_connection();
+		$refresh = ! empty( $data['refresh_token'] ) ? (string) $data['refresh_token'] : (string) ( $conn['refresh_token'] ?? '' );
+		if ( $refresh === '' ) {
+			$msg = __( 'Google did not return a refresh token. Revoke this app at myaccount.google.com/permissions, then click Connect again.', 'dazont-ecom' );
+			wp_safe_redirect( add_query_arg( 'gmc_error', rawurlencode( $msg ), $settings_url ) );
+			exit;
+		}
+
+		$conn['refresh_token'] = $refresh;
+		if ( ! empty( $data['access_token'] ) ) {
+			$email = $this->fetch_account_email( $data['access_token'] );
+			if ( $email !== '' ) {
+				$conn['email'] = $email;
+			}
+		}
+		update_option( self::OPT_CONNECTION, $conn, false );
 
 		if ( ! empty( $data['access_token'] ) && ! empty( $data['expires_in'] ) ) {
 			set_transient( 'dze_gmc_oauth_token', $data['access_token'], min( (int) $data['expires_in'] - 60, self::TOKEN_TTL ) );
@@ -254,10 +304,7 @@ final class DZE_Gmc {
 		if ( ! current_user_can( 'manage_woocommerce' ) || ! check_admin_referer( 'dze_gmc_disconnect' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
-		$o = self::get_oauth();
-		$o['refresh_token'] = '';
-		$o['email']         = '';
-		update_option( self::OPT_OAUTH, $o, false );
+		update_option( self::OPT_CONNECTION, [ 'refresh_token' => '', 'email' => '' ], false );
 		delete_transient( 'dze_gmc_oauth_token' );
 		wp_safe_redirect( admin_url( 'admin.php?page=' . self::MENU_SLUG ) );
 		exit;
@@ -268,8 +315,9 @@ final class DZE_Gmc {
 		if ( is_string( $cached ) && $cached !== '' ) {
 			return $cached;
 		}
-		$o = self::get_oauth();
-		if ( empty( $o['refresh_token'] ) || empty( $o['client_id'] ) || empty( $o['client_secret'] ) ) {
+		$o    = self::get_oauth();
+		$conn = self::get_connection();
+		if ( empty( $conn['refresh_token'] ) || empty( $o['client_id'] ) || empty( $o['client_secret'] ) ) {
 			throw new RuntimeException( __( 'Google account is not connected.', 'dazont-ecom' ) );
 		}
 		$response = wp_remote_post( self::TOKEN_URL, [
@@ -277,7 +325,7 @@ final class DZE_Gmc {
 			'body'    => [
 				'client_id'     => $o['client_id'],
 				'client_secret' => $o['client_secret'],
-				'refresh_token' => $o['refresh_token'],
+				'refresh_token' => $conn['refresh_token'],
 				'grant_type'    => 'refresh_token',
 			],
 		] );
@@ -346,9 +394,10 @@ final class DZE_Gmc {
 		$has_creds     = ( null !== $this->get_credentials() );
 		$creds_locked  = defined( 'DZE_GMC_SERVICE_ACCOUNT' );
 		$oauth         = self::get_oauth();
+		$connection    = self::get_connection();
 		$redirect_uri  = $this->oauth_redirect_uri();
 		$oauth_ready   = ! empty( $oauth['client_id'] ) && ! empty( $oauth['client_secret'] );
-		$connected     = ! empty( $oauth['refresh_token'] );
+		$connected     = ! empty( $connection['refresh_token'] );
 		$authorize_url = $oauth_ready ? $this->oauth_authorize_url() : '';
 		require DZE_DIR . 'admin/views/gmc-settings.php';
 	}
@@ -360,7 +409,8 @@ final class DZE_Gmc {
 	private function get_access_token(): string {
 		// Prefer the connected Google account (OAuth) — the natural in-plugin flow.
 		$oauth = self::get_oauth();
-		if ( ! empty( $oauth['refresh_token'] ) ) {
+		$conn  = self::get_connection();
+		if ( ! empty( $conn['refresh_token'] ) ) {
 			return $this->oauth_access_token();
 		}
 
@@ -370,7 +420,7 @@ final class DZE_Gmc {
 			throw new RuntimeException( sprintf(
 				/* translators: internal diagnostic state, not translated */
 				__( 'No Google authentication configured. Connect your Google account above. (debug: oauth_refresh_token=%s, oauth_client=%s, service_account=%s)', 'dazont-ecom' ),
-				empty( $oauth['refresh_token'] ) ? 'missing' : 'present',
+				empty( $conn['refresh_token'] ) ? 'missing' : 'present',
 				( ! empty( $oauth['client_id'] ) && ! empty( $oauth['client_secret'] ) ) ? 'present' : 'missing',
 				defined( 'DZE_GMC_SERVICE_ACCOUNT' ) ? 'constant' : ( get_option( self::OPT_CREDENTIALS, '' ) !== '' ? 'option-set-but-invalid' : 'none' )
 			) );

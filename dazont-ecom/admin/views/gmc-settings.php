@@ -35,7 +35,7 @@ foreach ( $languages as $l ) {
 		<?php if ( $connected ) : ?>
 			<p style="margin-top:0;">
 				<span style="color:#0a7040;font-weight:600;">&#10003; <?php esc_html_e( 'Connected', 'dazont-ecom' ); ?></span>
-				<?php if ( ! empty( $oauth['email'] ) ) : ?> — <code><?php echo esc_html( $oauth['email'] ); ?></code><?php endif; ?>
+				<?php if ( ! empty( $connection['email'] ) ) : ?> — <code><?php echo esc_html( $connection['email'] ); ?></code><?php endif; ?>
 			</p>
 			<a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=dze_gmc_disconnect' ), 'dze_gmc_disconnect' ) ); ?>" class="button"><?php esc_html_e( 'Disconnect', 'dazont-ecom' ); ?></a>
 		<?php else : ?>
@@ -130,6 +130,33 @@ foreach ( $languages as $l ) {
 	<p><?php esc_html_e( 'Verify the credentials by requesting a Google access token.', 'dazont-ecom' ); ?></p>
 	<button type="button" id="dze-gmc-test" class="button button-secondary"><?php esc_html_e( 'Test connection', 'dazont-ecom' ); ?></button>
 	<span id="dze-gmc-test-status" style="margin-left:8px;font-size:13px;"></span>
+
+	<?php
+	// Live authentication state read straight from storage, so what the test
+	// evaluates is visible without having to click it.
+	$diag = [
+		__( 'OAuth client', 'dazont-ecom' )      => ( ! empty( $oauth['client_id'] ) && ! empty( $oauth['client_secret'] ) ) ? [ 'ok', __( 'present', 'dazont-ecom' ) ] : [ 'no', __( 'missing', 'dazont-ecom' ) ],
+		__( 'Refresh token', 'dazont-ecom' )     => ! empty( $connection['refresh_token'] ) ? [ 'ok', __( 'stored', 'dazont-ecom' ) ] : [ 'no', __( 'missing', 'dazont-ecom' ) ],
+		__( 'Connected account', 'dazont-ecom' ) => ! empty( $connection['email'] ) ? [ 'ok', $connection['email'] ] : [ 'na', '—' ],
+		__( 'Service account', 'dazont-ecom' )   => $has_creds ? [ 'ok', $creds_locked ? __( 'constant', 'dazont-ecom' ) : __( 'option', 'dazont-ecom' ) ] : [ 'na', __( 'none', 'dazont-ecom' ) ],
+	];
+	?>
+	<table class="widefat striped" style="max-width:520px;margin-top:12px;">
+		<tbody>
+		<?php foreach ( $diag as $label => $state ) :
+			$color = $state[0] === 'ok' ? '#0a7040' : ( $state[0] === 'no' ? '#b32d2e' : '#666' );
+			$mark  = $state[0] === 'ok' ? '&#10003;' : ( $state[0] === 'no' ? '&#10007;' : '•' );
+		?>
+			<tr>
+				<td style="width:180px;font-weight:600;"><?php echo esc_html( $label ); ?></td>
+				<td style="color:<?php echo esc_attr( $color ); ?>;"><?php echo $mark; // phpcs:ignore ?> <?php echo esc_html( $state[1] ); ?></td>
+			</tr>
+		<?php endforeach; ?>
+		</tbody>
+	</table>
+	<p class="description" style="max-width:820px;margin-top:6px;">
+		<?php esc_html_e( 'If “Refresh token” shows missing while the OAuth client is present, click “Connect Google account” above. Saving other settings no longer clears the connection.', 'dazont-ecom' ); ?>
+	</p>
 
 	<hr />
 	<p class="description" style="max-width:820px;">
