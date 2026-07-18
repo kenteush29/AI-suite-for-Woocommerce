@@ -66,6 +66,7 @@ final class DZE_Gmc {
 		add_action( 'wp_ajax_dze_gmc_sync',      [ $this, 'ajax_sync' ] );
 		add_action( 'wp_ajax_dze_gmc_test',      [ $this, 'ajax_test' ] );
 		add_action( 'wp_ajax_dze_gmc_verify',    [ $this, 'ajax_verify' ] );
+		add_action( 'wp_ajax_dze_gmc_register',  [ $this, 'ajax_register' ] );
 		add_action( 'admin_post_dze_gmc_oauth',       [ $this, 'handle_oauth_callback' ] );
 		add_action( 'admin_post_dze_gmc_disconnect',  [ $this, 'handle_disconnect' ] );
 	}
@@ -414,6 +415,7 @@ final class DZE_Gmc {
 				'syncing'   => __( 'Syncing…', 'dazont-ecom' ),
 				'testing'   => __( 'Testing…', 'dazont-ecom' ),
 				'verifying' => __( 'Verifying…', 'dazont-ecom' ),
+				'registering' => __( 'Registering…', 'dazont-ecom' ),
 				'done'      => __( 'Done', 'dazont-ecom' ),
 				'error'     => __( 'Error', 'dazont-ecom' ),
 			],
@@ -830,6 +832,46 @@ final class DZE_Gmc {
 				__( 'Reachable: %s', 'dazont-ecom' ),
 				$name
 			) ] );
+		} catch ( \Throwable $e ) {
+			wp_send_json_error( [ 'message' => $e->getMessage() ] );
+		}
+	}
+
+	/**
+	 * Registers the calling GCP project as a developer of the given Merchant
+	 * Center account — the one-time step the Merchant API requires before it
+	 * accepts direct API calls ("GCP project … is not registered with the
+	 * merchant account"). Idempotent: registering an already-registered project
+	 * simply succeeds.
+	 */
+	public function register_gcp( string $merchant_id ): array {
+		$token = $this->get_access_token();
+		$url   = self::MERCHANT_API . '/' . self::ACCOUNTS_SUBAPI . '/accounts/' . $merchant_id . '/developerRegistration:registerGcp';
+		$conn  = self::get_connection();
+		$body  = [];
+		if ( ! empty( $conn['email'] ) ) {
+			$body['developerEmail'] = $conn['email'];
+		}
+		return $this->request( 'POST', $url, $token, $body ?: null );
+	}
+
+	public function ajax_register(): void {
+		check_ajax_referer( self::NONCE, 'nonce' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
+		}
+		$merchant_id = isset( $_POST['merchant_id'] ) ? preg_replace( '/[^0-9]/', '', (string) wp_unslash( $_POST['merchant_id'] ) ) : '';
+		if ( $merchant_id === '' ) {
+			wp_send_json_error( [ 'message' => __( 'Enter a Merchant ID first.', 'dazont-ecom' ) ] );
+		}
+		try {
+			$data = $this->register_gcp( $merchant_id );
+			$gcp  = ! empty( $data['gcpIds'] ) ? implode( ', ', (array) $data['gcpIds'] ) : '';
+			wp_send_json_success( [ 'message' => $gcp !== ''
+				/* translators: %s: registered GCP project id(s) */
+				? sprintf( __( 'GCP project registered (%s). Wait ~5 min, then Sync.', 'dazont-ecom' ), $gcp )
+				: __( 'GCP project registered. Wait ~5 min, then Sync.', 'dazont-ecom' )
+			] );
 		} catch ( \Throwable $e ) {
 			wp_send_json_error( [ 'message' => $e->getMessage() ] );
 		}

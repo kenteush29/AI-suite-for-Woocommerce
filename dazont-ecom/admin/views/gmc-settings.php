@@ -108,6 +108,7 @@ foreach ( $languages as $l ) {
 						<input type="text" id="dze-mid-<?php echo esc_attr( $key ); ?>" name="<?php echo esc_attr( DZE_Gmc::OPT_ACCOUNTS . '[' . $key . '][merchant_id]' ); ?>" value="<?php echo esc_attr( $acc['merchant_id'] ?? '' ); ?>" class="regular-text" placeholder="e.g. 123456789" />
 					</label>
 					<button type="button" class="button dze-gmc-verify" data-target="dze-mid-<?php echo esc_attr( $key ); ?>"><?php esc_html_e( 'Verify', 'dazont-ecom' ); ?></button>
+					<button type="button" class="button dze-gmc-register" data-target="dze-mid-<?php echo esc_attr( $key ); ?>"><?php esc_html_e( 'Register GCP', 'dazont-ecom' ); ?></button>
 					<span class="dze-gmc-verify-status" style="font-size:13px;margin-left:4px;"></span>
 					<br style="line-height:2.4;">
 					<label><?php esc_html_e( 'Target countries', 'dazont-ecom' ); ?>
@@ -126,6 +127,10 @@ foreach ( $languages as $l ) {
 		<p class="description" style="max-width:820px;">
 			<?php esc_html_e( 'Target countries = one or more 2-letter ISO codes, comma-separated. A Google promotion always targets a single country, so the plugin creates one promotion per country listed here.', 'dazont-ecom' ); ?><br>
 			<?php esc_html_e( 'A language is not a country: for English, list every country you actually run promotions in (e.g. US, GB, CA, AU). Each country must be enabled in your Merchant Center Promotions program and the account must sell/ship there. Only the countries you list here are offered as sync targets in the promotions list.', 'dazont-ecom' ); ?>
+		</p>
+		<p class="description" style="max-width:820px;">
+			<strong><?php esc_html_e( 'First time?', 'dazont-ecom' ); ?></strong>
+			<?php esc_html_e( 'Click “Register GCP” once per account. This registers your Google Cloud project with the merchant account (required before the Merchant API accepts calls). After registering, wait about 5 minutes, then use Verify / Sync.', 'dazont-ecom' ); ?>
 		</p>
 
 		<?php submit_button(); ?>

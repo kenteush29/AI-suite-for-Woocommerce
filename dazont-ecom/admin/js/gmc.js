@@ -45,6 +45,29 @@
 		.always(function () { $btn.prop('disabled', false); });
 	});
 
+	// ---- Settings: register the GCP project with the merchant account ----
+	$(document).on('click', '.dze-gmc-register', function () {
+		var $btn    = $(this);
+		var $status = $btn.siblings('.dze-gmc-verify-status');
+		var mid     = ($('#' + $btn.data('target')).val() || '').replace(/[^0-9]/g, '');
+		if (!mid) {
+			$status.css('color', '#b32d2e').text('✕ ' + (i18n.error));
+			return;
+		}
+		$btn.prop('disabled', true);
+		$status.css('color', '#666').text(i18n.registering);
+		$.post(cfg.ajaxUrl, { action: 'dze_gmc_register', nonce: cfg.nonce, merchant_id: mid })
+		.done(function (res) {
+			if (res.success) {
+				$status.css('color', '#0a7040').text('✓ ' + res.data.message);
+			} else {
+				$status.css('color', '#b32d2e').text('✕ ' + ((res.data && res.data.message) || i18n.error));
+			}
+		})
+		.fail(function () { $status.css('color', '#b32d2e').text(i18n.error); })
+		.always(function () { $btn.prop('disabled', false); });
+	});
+
 	// ---- Discounts list: sync one / sync selected ----
 	function sync(ids, $feedback) {
 		if (!ids.length) { return; }
