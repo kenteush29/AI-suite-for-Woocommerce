@@ -130,7 +130,7 @@ final class DZE_Gmc {
 	public function register_settings(): void {
 		register_setting( 'dze_gmc_options', self::OPT_CREDENTIALS, [ 'sanitize_callback' => [ $this, 'sanitize_credentials' ] ] );
 		register_setting( 'dze_gmc_options', self::OPT_ACCOUNTS, [ 'sanitize_callback' => [ $this, 'sanitize_accounts' ] ] );
-		register_setting( 'dze_gmc_options', self::OPT_OAUTH, [ 'sanitize_callback' => [ $this, 'sanitize_oauth' ] ] );
+		register_setting( 'dze_gmc_options', self::OPT_OAUTH, [ 'sanitize_callback' => [ $this, 'sanitize_oauth' ], 'autoload' => false ] );
 	}
 
 	/**
@@ -153,7 +153,12 @@ final class DZE_Gmc {
 		// (admin-post.php) and read moments later by an AJAX request, which can
 		// land on a different PHP process/server with a stale persistent object
 		// cache (Redis/Memcached) if one is active — bypass it defensively.
+		// Autoloaded options are cached as a single 'alloptions' blob rather
+		// than under their own key, so both must be cleared or the option's
+		// own cache key delete above is a no-op and this keeps reading the
+		// pre-connect (empty) snapshot forever.
 		wp_cache_delete( self::OPT_OAUTH, 'options' );
+		wp_cache_delete( 'alloptions', 'options' );
 		$o = get_option( self::OPT_OAUTH, [] );
 		return is_array( $o ) ? $o : [];
 	}
