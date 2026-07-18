@@ -8,9 +8,15 @@
 	// ---- Generate suggestions ----
 	$('#dze-mai-generate').on('click', function () {
 		var $btn = $(this), $status = $('#dze-mai-gen-status');
+		var start = $('#dze-mai-start').val();
+		var end   = $('#dze-mai-end').val();
+		if (!start || !end) {
+			$status.css('color', '#b32d2e').text(i18n.needDates);
+			return;
+		}
 		$btn.prop('disabled', true);
 		$status.css('color', '#666').text(i18n.generating);
-		$.post(cfg.ajaxUrl, { action: 'dze_mai_generate', nonce: cfg.nonce })
+		$.post(cfg.ajaxUrl, { action: 'dze_mai_generate', nonce: cfg.nonce, start_date: start, end_date: end })
 		.done(function (res) {
 			if (res.success) {
 				$status.css('color', '#0a7040').text('✓ ' + res.data.message);

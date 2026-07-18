@@ -61,7 +61,6 @@ final class DZE_Gmc {
 		if ( ! is_admin() ) {
 			return;
 		}
-		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
 		add_action( 'admin_init',            [ $this, 'register_settings' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_ajax_dze_gmc_sync',      [ $this, 'ajax_sync' ] );
@@ -153,16 +152,7 @@ final class DZE_Gmc {
 		return null;
 	}
 
-	public function register_menu(): void {
-		add_submenu_page(
-			DZE_Restock::MENU_SLUG,
-			__( 'Google Merchant Center', 'dazont-ecom' ),
-			__( 'Google Merchant Center', 'dazont-ecom' ),
-			'manage_woocommerce',
-			self::MENU_SLUG,
-			[ $this, 'render_settings_page' ]
-		);
-	}
+	// No own submenu: rendered as a tab inside DZE_Settings (see render_settings_page()).
 
 	public function register_settings(): void {
 		register_setting( 'dze_gmc_options', self::OPT_CREDENTIALS, [ 'sanitize_callback' => [ $this, 'sanitize_credentials' ] ] );
@@ -257,7 +247,7 @@ final class DZE_Gmc {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
-		$settings_url = admin_url( 'admin.php?page=' . self::MENU_SLUG );
+		$settings_url = admin_url( 'admin.php?page=' . DZE_Settings::MENU_SLUG . '&tab=gmc' );
 
 		$state = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
 		if ( ! wp_verify_nonce( $state, 'dze_gmc_oauth' ) ) {
@@ -348,7 +338,7 @@ final class DZE_Gmc {
 		}
 		update_option( self::OPT_CONNECTION, [ 'refresh_token' => '', 'email' => '' ], false );
 		delete_transient( 'dze_gmc_oauth_token' );
-		wp_safe_redirect( admin_url( 'admin.php?page=' . self::MENU_SLUG ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=' . DZE_Settings::MENU_SLUG . '&tab=gmc' ) );
 		exit;
 	}
 
@@ -410,8 +400,8 @@ final class DZE_Gmc {
 	}
 
 	public function enqueue_assets( string $hook ): void {
-		// Load on the GMC settings page and on the Discounts list (sync buttons).
-		if ( strpos( $hook, self::MENU_SLUG ) === false && strpos( $hook, DZE_Discounts::MENU_SLUG ) === false ) {
+		// Load on the Settings page (GMC tab) and on the Marketing Events list (sync buttons).
+		if ( strpos( $hook, DZE_Settings::MENU_SLUG ) === false && strpos( $hook, DZE_Discounts::MENU_SLUG_EVENTS ) === false ) {
 			return;
 		}
 		wp_enqueue_script( 'dze-gmc', DZE_URL . 'admin/js/gmc.js', [ 'jquery' ], DZE_VERSION, true );

@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       Dazont Ecom
  * Plugin URI:        https://github.com/kenteush29/Dazont-Ecom-for-WooCommerce
- * Description:       Dazont Ecom toolkit for WooCommerce. Modules: Restock (out-of-stock backlog), Trending Products (best-sellers shortcode), Marketing & Discounts (scheduled sales, banners, cart/bulk discounts), Google Merchant Center promotion sync and an AI Marketing Assistant (generates a marketing calendar). More modules coming.
- * Version:           1.6.0
+ * Description:       Dazont Ecom toolkit for WooCommerce. Modules: Restock (out-of-stock backlog), Trending Products (best-sellers shortcode), Marketing Events (scheduled sales, banners, AI-generated calendar), Discounts (evergreen cart/bulk rules), Google Merchant Center promotion sync and Settings (GMC + AI Marketing configuration). More modules coming.
+ * Version:           1.7.0
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Dazont
@@ -14,7 +14,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'DZE_VERSION', '1.6.0' );
+define( 'DZE_VERSION', '1.7.0' );
 define( 'DZE_FILE',    __FILE__ );
 define( 'DZE_DIR',     plugin_dir_path( __FILE__ ) );
 define( 'DZE_URL',     plugin_dir_url( __FILE__ ) );
@@ -66,6 +66,7 @@ final class DZE_Plugin {
 		DZE_Discounts::instance();
 		DZE_Gmc::instance();
 		DZE_Marketing_Ai::instance();
+		DZE_Settings::instance();
 	}
 
 	public static function activate(): void {

@@ -12,9 +12,6 @@ foreach ( $languages as $l ) {
 	$lang_names[ $l['code'] ] = $l['native_name'];
 }
 ?>
-<div class="wrap dze-wrap">
-	<h1><?php esc_html_e( 'Google Merchant Center', 'dazont-ecom' ); ?></h1>
-
 	<?php if ( isset( $_GET['settings-updated'] ) ) : ?>
 		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Settings saved.', 'dazont-ecom' ); ?></p></div>
 	<?php endif; ?>
@@ -187,6 +184,5 @@ foreach ( $languages as $l ) {
 
 	<hr />
 	<p class="description" style="max-width:820px;">
-		<?php esc_html_e( 'Sync happens automatically every hour (WP-Cron) for active sales, and can be forced from the Marketing & Discounts list (per promotion or in bulk). Note: GMC promotions apply store-wide (product/category scope is not yet mapped to GMC).', 'dazont-ecom' ); ?>
+		<?php esc_html_e( 'Sync happens automatically every hour (WP-Cron) for active sales, and can be forced from the Marketing Events list (per promotion or in bulk). Note: GMC promotions apply store-wide (product/category scope is not yet mapped to GMC).', 'dazont-ecom' ); ?>
 	</p>
-</div>

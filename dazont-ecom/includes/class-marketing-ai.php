@@ -4,11 +4,17 @@ defined( 'ABSPATH' ) || exit;
 /**
  * AI Marketing Assistant.
  *
- * Generates a marketing calendar (a set of promotion "events") from the shop
- * profile — shop type, target countries, languages — using the Anthropic
- * Claude API. Each suggestion can be accepted (turned into a real scheduled
- * sale in the Discounts module), edited, or refused. A front-end shortcode
- * renders the resulting calendar for the site's home page.
+ * Generates a marketing calendar (a set of promotion "events") for the shop
+ * using the Anthropic Claude API, from context detected automatically from
+ * the site itself (name, categories, sample products, price range, store
+ * country) plus the site's own languages (WPML) and a per-language pool of
+ * likely target countries. Each suggestion can be accepted (turned into a
+ * real scheduled event in the Marketing Events module), edited, or refused.
+ * A front-end shortcode renders the resulting calendar for the home page.
+ *
+ * Configuration (API key, country pools) lives under Settings → AI Marketing
+ * Assistant. The generate/review workflow lives on the Marketing Events page
+ * — this class only supplies the two render_*() methods those pages embed.
  *
  * The Anthropic API key is read from the DZE_ANTHROPIC_API_KEY constant
  * (wp-config.php) when defined, otherwise from a settings field. It is never
@@ -16,7 +22,6 @@ defined( 'ABSPATH' ) || exit;
  */
 final class DZE_Marketing_Ai {
 
-	public const MENU_SLUG       = 'dazont-ecom-marketing-ai';
 	public const NONCE           = 'dze_mai';
 	public const OPT_SETTINGS    = 'dze_mai_settings';
 	public const OPT_SUGGESTIONS = 'dze_mai_suggestions';
@@ -25,6 +30,40 @@ final class DZE_Marketing_Ai {
 	private const API_VERSION   = '2023-06-01';
 	private const MODEL         = 'claude-opus-4-8';
 	private const SHORTCODE     = 'dze_marketing_calendar';
+	/** Internal safety cap on one generation call — not exposed as a setting. */
+	private const MAX_EVENTS = 20;
+
+	/** Default target-country pool per language, seeded on first use. */
+	public const LANGUAGE_COUNTRY_POOLS = [
+		'en' => [ 'US', 'GB', 'CA', 'IE', 'AU', 'NZ' ],
+		'fr' => [ 'FR', 'BE', 'CH', 'LU', 'CA' ],
+		'de' => [ 'DE', 'AT', 'CH' ],
+		'es' => [ 'ES', 'MX', 'AR', 'CO', 'CL', 'PE' ],
+		'it' => [ 'IT', 'CH' ],
+		'pt' => [ 'PT', 'BR' ],
+		'nl' => [ 'NL', 'BE' ],
+		'pl' => [ 'PL' ],
+		'sv' => [ 'SE' ],
+		'da' => [ 'DK' ],
+		'fi' => [ 'FI' ],
+		'nb' => [ 'NO' ],
+		'no' => [ 'NO' ],
+		'el' => [ 'GR' ],
+		'tr' => [ 'TR' ],
+		'ru' => [ 'RU' ],
+		'ja' => [ 'JP' ],
+		'zh' => [ 'CN', 'TW', 'HK', 'SG' ],
+		'ko' => [ 'KR' ],
+		'ar' => [ 'AE', 'SA', 'EG' ],
+		'cs' => [ 'CZ' ],
+		'ro' => [ 'RO' ],
+		'hu' => [ 'HU' ],
+		'he' => [ 'IL' ],
+		'th' => [ 'TH' ],
+		'vi' => [ 'VN' ],
+		'id' => [ 'ID' ],
+		'hi' => [ 'IN' ],
+	];
 
 	private static ?self $instance = null;
 
@@ -42,12 +81,14 @@ final class DZE_Marketing_Ai {
 		if ( ! is_admin() ) {
 			return;
 		}
-		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
 		add_action( 'admin_init',            [ $this, 'register_settings' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_ajax_dze_mai_generate', [ $this, 'ajax_generate' ] );
 		add_action( 'wp_ajax_dze_mai_accept',   [ $this, 'ajax_accept' ] );
 		add_action( 'wp_ajax_dze_mai_refuse',   [ $this, 'ajax_refuse' ] );
+		// No own admin menu: settings render inside DZE_Settings (tab=ai) via
+		// render_settings_section(); the generate/review UI renders inside the
+		// Marketing Events page via render_calendar_panel().
 	}
 
 	// =========================================================================
@@ -58,12 +99,8 @@ final class DZE_Marketing_Ai {
 		$s = get_option( self::OPT_SETTINGS, [] );
 		$s = is_array( $s ) ? $s : [];
 		return wp_parse_args( $s, [
-			'api_key'         => '',
-			'shop_type'       => '',
-			'countries'       => '',
-			'languages'       => '',
-			'horizon_months'  => 6,
-			'max_events'      => 8,
+			'api_key'       => '',
+			'country_pools' => [], // lang_code => [ ISO-3166 alpha-2, ... ]
 		] );
 	}
 
@@ -81,109 +118,167 @@ final class DZE_Marketing_Ai {
 	public function sanitize_settings( $value ): array {
 		$in       = is_array( $value ) ? $value : [];
 		$existing = self::get_settings();
+
 		// Keep the stored key when the field is left blank (so it isn't wiped).
 		$key = trim( (string) ( $in['api_key'] ?? '' ) );
 		if ( $key === '' ) {
 			$key = (string) $existing['api_key'];
 		}
+
+		$pools = [];
+		foreach ( (array) ( $in['country_pools'] ?? [] ) as $lang => $codes ) {
+			$lang  = sanitize_key( $lang );
+			$clean = [];
+			foreach ( (array) $codes as $c ) {
+				$c = strtoupper( preg_replace( '/[^A-Za-z]/', '', (string) $c ) );
+				if ( strlen( $c ) === 2 ) {
+					$clean[ $c ] = $c;
+				}
+			}
+			// Free-text "add more countries" field for this language, if posted.
+			if ( ! empty( $in['country_pools_extra'][ $lang ] ) ) {
+				foreach ( preg_split( '/[\s,;]+/', (string) $in['country_pools_extra'][ $lang ] ) as $c ) {
+					$c = strtoupper( preg_replace( '/[^A-Za-z]/', '', (string) $c ) );
+					if ( strlen( $c ) === 2 ) {
+						$clean[ $c ] = $c;
+					}
+				}
+			}
+			if ( ! empty( $clean ) ) {
+				$pools[ $lang ] = array_values( $clean );
+			}
+		}
+
 		return [
-			'api_key'        => sanitize_text_field( $key ),
-			'shop_type'      => sanitize_textarea_field( $in['shop_type'] ?? '' ),
-			'countries'      => sanitize_text_field( $in['countries'] ?? '' ),
-			'languages'      => sanitize_text_field( $in['languages'] ?? '' ),
-			'horizon_months' => min( 24, max( 1, (int) ( $in['horizon_months'] ?? 6 ) ) ),
-			'max_events'     => min( 24, max( 1, (int) ( $in['max_events'] ?? 8 ) ) ),
+			'api_key'       => sanitize_text_field( $key ),
+			'country_pools' => $pools,
 		];
 	}
 
-	/** Best-effort default target countries, drawn from the GMC configuration. */
-	private function default_countries(): array {
-		$out = [];
-		if ( class_exists( 'DZE_Gmc' ) ) {
-			foreach ( DZE_Gmc::get_accounts() as $acc ) {
-				foreach ( DZE_Gmc::account_countries( $acc ) as $c ) {
-					$out[ $c ] = $c;
-				}
-			}
-		}
-		return array_values( $out );
-	}
-
-	/** Best-effort default languages, from WPML or the site locale. */
-	private function default_languages(): array {
+	/** Active site languages: WPML's list if active, else the single site locale. */
+	public static function active_languages(): array {
 		if ( class_exists( 'DZE_Wpml' ) && DZE_Wpml::is_active() ) {
-			return array_map( static fn( $l ) => $l['code'], DZE_Wpml::get_active_languages() );
+			return DZE_Wpml::get_active_languages();
 		}
-		return [ strtolower( substr( get_locale(), 0, 2 ) ) ];
+		$code = strtolower( substr( get_locale(), 0, 2 ) );
+		return [ [ 'code' => $code, 'native_name' => strtoupper( $code ), 'flag' => '' ] ];
 	}
 
-	private function csv_codes( string $csv, int $len ): array {
-		$out = [];
-		foreach ( preg_split( '/[\s,;]+/', $csv ) as $c ) {
-			$c = preg_replace( '/[^A-Za-z]/', '', (string) $c );
-			if ( $c !== '' ) {
-				$out[] = $len === 2 ? strtoupper( substr( $c, 0, 2 ) ) : strtolower( substr( $c, 0, 2 ) );
-			}
+	/** Countries configured (or, first time, defaulted) for one language. */
+	public static function country_pool_for( string $lang ): array {
+		$saved = self::get_settings()['country_pools'][ $lang ] ?? null;
+		if ( is_array( $saved ) && ! empty( $saved ) ) {
+			return $saved;
 		}
-		return array_values( array_unique( $out ) );
+		return self::LANGUAGE_COUNTRY_POOLS[ $lang ] ?? [];
 	}
 
 	// =========================================================================
-	// Admin page
+	// Settings tab (rendered inside DZE_Settings)
 	// =========================================================================
 
-	public function register_menu(): void {
-		add_submenu_page(
-			class_exists( 'DZE_Restock' ) ? DZE_Restock::MENU_SLUG : 'options-general.php',
-			__( 'AI Marketing Assistant', 'dazont-ecom' ),
-			__( 'AI Marketing', 'dazont-ecom' ),
-			'manage_woocommerce',
-			self::MENU_SLUG,
-			[ $this, 'render_page' ]
-		);
-	}
-
-	public function enqueue_assets( string $hook ): void {
-		if ( strpos( $hook, self::MENU_SLUG ) === false ) {
-			return;
-		}
-		wp_enqueue_script( 'dze-marketing-ai', DZE_URL . 'admin/js/marketing-ai.js', [ 'jquery' ], DZE_VERSION, true );
-		wp_localize_script( 'dze-marketing-ai', 'dzeMai', [
-			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
-			'nonce'   => wp_create_nonce( self::NONCE ),
-			'i18n'    => [
-				'generating' => __( 'Generating…', 'dazont-ecom' ),
-				'accepting'  => __( 'Adding…', 'dazont-ecom' ),
-				'error'      => __( 'Error', 'dazont-ecom' ),
-				'confirmRef' => __( 'Discard this suggestion?', 'dazont-ecom' ),
-			],
-		] );
-	}
-
-	public function render_page(): void {
+	public function render_settings_section(): void {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
-		$settings     = self::get_settings();
-		$suggestions  = self::get_suggestions();
-		$key_locked   = defined( 'DZE_ANTHROPIC_API_KEY' );
-		$has_key      = $this->api_key() !== '';
-		$def_country  = implode( ', ', $this->default_countries() );
-		$def_lang     = implode( ', ', $this->default_languages() );
-		require DZE_DIR . 'admin/views/marketing-ai-page.php';
+		$settings   = self::get_settings();
+		$key_locked = defined( 'DZE_ANTHROPIC_API_KEY' );
+		$has_key    = $this->api_key() !== '';
+		$languages  = self::active_languages();
+		$context    = $this->shop_context_text();
+		require DZE_DIR . 'admin/views/marketing-ai-settings.php';
 	}
 
 	// =========================================================================
-	// Suggestions store
+	// Shop context auto-detection
 	// =========================================================================
 
-	public static function get_suggestions(): array {
-		$s = get_option( self::OPT_SUGGESTIONS, [] );
-		return is_array( $s ) ? $s : [];
+	/** Structured, auto-detected facts about the shop (nothing manually typed). */
+	private function shop_context(): array {
+		$name    = get_bloginfo( 'name' );
+		$tagline = get_bloginfo( 'description' );
+
+		$categories = [];
+		if ( function_exists( 'get_terms' ) ) {
+			$terms = get_terms( [
+				'taxonomy'   => 'product_cat',
+				'hide_empty' => true,
+				'number'     => 12,
+				'orderby'    => 'count',
+				'order'      => 'DESC',
+			] );
+			if ( ! is_wp_error( $terms ) ) {
+				foreach ( $terms as $t ) {
+					if ( $t->slug !== 'uncategorized' ) {
+						$categories[] = $t->name;
+					}
+				}
+			}
+		}
+
+		$products = [];
+		if ( function_exists( 'wc_get_products' ) ) {
+			foreach ( wc_get_products( [ 'limit' => 8, 'status' => 'publish', 'orderby' => 'date', 'order' => 'DESC' ] ) as $p ) {
+				$products[] = $p->get_name();
+			}
+		}
+
+		global $wpdb;
+		$price_min = null;
+		$price_max = null;
+		$row = $wpdb->get_row(
+			"SELECT MIN(CAST(pm.meta_value AS DECIMAL(10,2))) AS min_p, MAX(CAST(pm.meta_value AS DECIMAL(10,2))) AS max_p
+			 FROM {$wpdb->postmeta} pm
+			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+			 WHERE pm.meta_key = '_price' AND pm.meta_value != '' AND p.post_status = 'publish' AND p.post_type = 'product'"
+		);
+		if ( $row && $row->min_p !== null ) {
+			$price_min = round( (float) $row->min_p, 2 );
+			$price_max = round( (float) $row->max_p, 2 );
+		}
+
+		$currency = function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : '';
+		$country  = '';
+		if ( function_exists( 'wc_get_base_location' ) ) {
+			$loc     = wc_get_base_location();
+			$country = (string) ( $loc['country'] ?? '' );
+		}
+
+		return [
+			'name'       => $name,
+			'tagline'    => $tagline,
+			'categories' => $categories,
+			'products'   => $products,
+			'price_min'  => $price_min,
+			'price_max'  => $price_max,
+			'currency'   => $currency,
+			'country'    => $country,
+		];
 	}
 
-	private static function save_suggestions( array $s ): void {
-		update_option( self::OPT_SUGGESTIONS, $s, false );
+	/** Human-readable version of shop_context(), sent to Claude and shown as a preview. */
+	private function shop_context_text(): string {
+		$c     = $this->shop_context();
+		$lines = [];
+		if ( $c['name'] !== '' ) {
+			$lines[] = sprintf( 'Store name: %s', $c['name'] );
+		}
+		if ( $c['tagline'] !== '' ) {
+			$lines[] = sprintf( 'Tagline: %s', $c['tagline'] );
+		}
+		if ( ! empty( $c['categories'] ) ) {
+			$lines[] = sprintf( 'Product categories: %s', implode( ', ', $c['categories'] ) );
+		}
+		if ( ! empty( $c['products'] ) ) {
+			$lines[] = sprintf( 'Example products: %s', implode( ', ', $c['products'] ) );
+		}
+		if ( null !== $c['price_min'] ) {
+			$lines[] = sprintf( 'Typical price range: %s–%s %s', $c['price_min'], $c['price_max'], $c['currency'] );
+		}
+		if ( $c['country'] !== '' ) {
+			$lines[] = sprintf( 'Store based in: %s', $c['country'] );
+		}
+		return implode( "\n", $lines );
 	}
 
 	// =========================================================================
@@ -195,19 +290,21 @@ final class DZE_Marketing_Ai {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
 		}
-		$s = self::get_settings();
 		if ( $this->api_key() === '' ) {
-			wp_send_json_error( [ 'message' => __( 'Add your Anthropic API key first.', 'dazont-ecom' ) ] );
+			wp_send_json_error( [ 'message' => __( 'Add your Anthropic API key first, under Settings → AI Marketing Assistant.', 'dazont-ecom' ) ] );
 		}
 
-		$countries = $this->csv_codes( $s['countries'], 2 ) ?: $this->default_countries();
-		$languages = $this->csv_codes( $s['languages'], 5 ) ?: $this->default_languages();
-		if ( empty( $countries ) ) {
-			wp_send_json_error( [ 'message' => __( 'Set at least one target country.', 'dazont-ecom' ) ] );
+		$start = $this->clean_date( wp_unslash( $_POST['start_date'] ?? '' ) );
+		$end   = $this->clean_date( wp_unslash( $_POST['end_date'] ?? '' ) );
+		if ( $start === '' || $end === '' ) {
+			wp_send_json_error( [ 'message' => __( 'Pick a start and end date for the calendar.', 'dazont-ecom' ) ] );
+		}
+		if ( $start > $end ) {
+			wp_send_json_error( [ 'message' => __( 'The start date must be before the end date.', 'dazont-ecom' ) ] );
 		}
 
 		try {
-			$events = $this->generate_events( $s, $countries, $languages );
+			$events = $this->generate_events( $start, $end );
 		} catch ( \Throwable $e ) {
 			wp_send_json_error( [ 'message' => $e->getMessage() ] );
 		}
@@ -230,11 +327,8 @@ final class DZE_Marketing_Ai {
 	}
 
 	/** Builds the prompt, calls Claude, returns a validated list of events. */
-	private function generate_events( array $s, array $countries, array $languages ): array {
-		$today   = current_time( 'Y-m-d' );
-		$horizon = (int) $s['horizon_months'];
-		$max     = (int) $s['max_events'];
-		$shop    = trim( (string) $s['shop_type'] ) ?: __( 'a general WooCommerce online store', 'dazont-ecom' );
+	private function generate_events( string $start_date, string $end_date ): array {
+		$languages = self::active_languages();
 
 		$system = 'You are an expert e-commerce marketing strategist. You design realistic, '
 			. 'high-impact promotional calendars tied to real commercial moments (seasonal sales, '
@@ -247,24 +341,39 @@ final class DZE_Marketing_Ai {
 			. '"email_subject":string (a marketing email subject line, <=80 chars),'
 			. '"rationale":string (one sentence: why this event, for this audience)}]}';
 
+		$lang_blocks = [];
+		foreach ( $languages as $lang ) {
+			$pool          = self::country_pool_for( $lang['code'] );
+			$lang_blocks[] = sprintf(
+				'- %s (%s): eligible countries = %s',
+				$lang['native_name'],
+				strtoupper( $lang['code'] ),
+				$pool ? implode( ', ', $pool ) : '(none configured — pick sensible ones for this language)'
+			);
+		}
+
+		$context = $this->shop_context_text();
+		if ( $context === '' ) {
+			$context = 'No shop details could be auto-detected.';
+		}
+
 		$user = sprintf(
-			"Shop profile: %s\nTarget countries: %s\nContent languages: %s\nToday's date: %s\n"
-			. "Plan the next %d months. Propose up to %d distinct promotional events.\n\n"
+			"Shop context (auto-detected from the website — trust it):\n%s\n\n"
+			. "Target languages and their eligible countries (only use countries from the "
+			. "matching language's list for that event):\n%s\n\n"
+			. "Plan promotional events strictly between %s and %s (inclusive) — every date must "
+			. "fall in this window. Propose up to %d distinct events.\n\n"
 			. "Rules:\n"
-			. "- Every date must be in the future relative to today and within the next %d months.\n"
 			. "- Events must not overlap in time (each has a clear start and end date).\n"
 			. "- Tie each event to a real commercial moment relevant to its target countries.\n"
-			. "- Pick a realistic discount percentage for the occasion.\n"
-			. "- Use only the target countries and languages listed above.\n"
+			. "- Pick a realistic discount percentage for the occasion and this shop's positioning.\n"
 			. "- Order events chronologically by start_date.\n\n"
 			. "Respond with ONLY a JSON object of this exact shape, no markdown, no commentary:\n%s",
-			$shop,
-			implode( ', ', $countries ),
-			implode( ', ', $languages ),
-			$today,
-			$horizon,
-			$max,
-			$horizon,
+			$context,
+			implode( "\n", $lang_blocks ),
+			$start_date,
+			$end_date,
+			self::MAX_EVENTS,
 			$schema
 		);
 
@@ -285,6 +394,10 @@ final class DZE_Marketing_Ai {
 			if ( $title === '' || $start === '' || $end === '' ) {
 				continue;
 			}
+			// Defensive: drop anything the model placed outside the requested window.
+			if ( $start < $start_date || $end > $end_date ) {
+				continue;
+			}
 			$clean[] = [
 				'title'         => mb_substr( $title, 0, 80 ),
 				'start_date'    => $start,
@@ -297,7 +410,7 @@ final class DZE_Marketing_Ai {
 			];
 		}
 		if ( empty( $clean ) ) {
-			throw new RuntimeException( __( 'The AI returned no usable events. Please try again.', 'dazont-ecom' ) );
+			throw new RuntimeException( __( 'The AI returned no usable events in this date range. Try a wider range.', 'dazont-ecom' ) );
 		}
 		return $clean;
 	}
@@ -371,6 +484,19 @@ final class DZE_Marketing_Ai {
 	}
 
 	// =========================================================================
+	// Suggestions store
+	// =========================================================================
+
+	public static function get_suggestions(): array {
+		$s = get_option( self::OPT_SUGGESTIONS, [] );
+		return is_array( $s ) ? $s : [];
+	}
+
+	private static function save_suggestions( array $s ): void {
+		update_option( self::OPT_SUGGESTIONS, $s, false );
+	}
+
+	// =========================================================================
 	// AJAX: accept / refuse
 	// =========================================================================
 
@@ -407,7 +533,7 @@ final class DZE_Marketing_Ai {
 		self::save_suggestions( $suggestions );
 
 		wp_send_json_success( [
-			'message'  => __( 'Added to your calendar (as a disabled sale — review and enable it in Marketing & Discounts).', 'dazont-ecom' ),
+			'message'  => __( 'Added to your calendar (as a disabled event — review and enable it below).', 'dazont-ecom' ),
 			'rule_id'  => $rule_id,
 		] );
 	}
@@ -425,14 +551,14 @@ final class DZE_Marketing_Ai {
 	}
 
 	/**
-	 * Creates a scheduled-sale rule in the Discounts module from an accepted
-	 * event. Saved DISABLED: the Discounts module only allows one active sale at
-	 * a time, so the user reviews and enables it there. Carries `source=ai` and
-	 * the `klaviyo_email` tracking flag.
+	 * Creates a scheduled-sale rule in the Discounts store (shown on the
+	 * Marketing Events page) from an accepted event. Saved DISABLED: only one
+	 * event can be active at a time, so the user reviews and enables it there.
+	 * Carries the `klaviyo_email` tracking flag.
 	 */
 	private function create_sale_rule( array $ev ): string {
 		if ( ! class_exists( 'DZE_Discounts' ) ) {
-			throw new RuntimeException( __( 'The Discounts module is unavailable.', 'dazont-ecom' ) );
+			throw new RuntimeException( __( 'The Marketing Events module is unavailable.', 'dazont-ecom' ) );
 		}
 		$rules = DZE_Discounts::get_rules();
 		$id    = 'ai' . uniqid();
@@ -442,7 +568,7 @@ final class DZE_Marketing_Ai {
 			'created_at'    => time(),
 			'title'         => $ev['title'],
 			'type'          => 'sale',
-			'enabled'       => false, // one active sale at a time — enable manually.
+			'enabled'       => false, // one active event at a time — enable manually.
 			'percent'       => (float) $ev['percent'],
 			'scope'         => 'all',
 			'category_ids'  => [],
@@ -470,6 +596,35 @@ final class DZE_Marketing_Ai {
 		];
 		update_option( DZE_Discounts::OPTION, $rules, false );
 		return $id;
+	}
+
+	// =========================================================================
+	// Marketing Events panel (rendered at the top of the Marketing Events page)
+	// =========================================================================
+
+	public function enqueue_assets( string $hook ): void {
+		if ( ! class_exists( 'DZE_Discounts' ) || strpos( $hook, DZE_Discounts::MENU_SLUG_EVENTS ) === false ) {
+			return;
+		}
+		wp_enqueue_script( 'dze-marketing-ai', DZE_URL . 'admin/js/marketing-ai.js', [ 'jquery' ], DZE_VERSION, true );
+		wp_localize_script( 'dze-marketing-ai', 'dzeMai', [
+			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+			'nonce'   => wp_create_nonce( self::NONCE ),
+			'i18n'    => [
+				'generating' => __( 'Generating…', 'dazont-ecom' ),
+				'accepting'  => __( 'Adding…', 'dazont-ecom' ),
+				'error'      => __( 'Error', 'dazont-ecom' ),
+				'confirmRef' => __( 'Discard this suggestion?', 'dazont-ecom' ),
+				'needDates'  => __( 'Pick a start and end date first.', 'dazont-ecom' ),
+			],
+		] );
+	}
+
+	/** Generate button + date range + suggestions review table. */
+	public function render_calendar_panel(): void {
+		$has_key     = $this->api_key() !== '';
+		$suggestions = self::get_suggestions();
+		require DZE_DIR . 'admin/views/marketing-ai-panel.php';
 	}
 
 	// =========================================================================

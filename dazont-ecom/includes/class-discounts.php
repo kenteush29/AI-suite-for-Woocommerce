@@ -2,7 +2,11 @@
 defined( 'ABSPATH' ) || exit;
 
 /**
- * "Marketing & Discounts" module (original implementation).
+ * Rule storage and admin UI for both the "Marketing Events" page (sale type —
+ * recurring, date-bound promotions, with the AI calendar) and the "Discounts"
+ * page (cart_qty/cart_subtotal/bulk — evergreen rules, set up once). Same
+ * storage and save/delete/toggle handlers; the two admin pages differ only in
+ * which rule types they show and edit (see types_for_mode()).
  *
  * Rule types:
  *   - sale          : scheduled site-wide % sale (shown as a struck-through
@@ -24,8 +28,12 @@ defined( 'ABSPATH' ) || exit;
 final class DZE_Discounts {
 
 	public const OPTION    = 'dze_discount_rules';
-	public const MENU_SLUG = 'dazont-ecom-discounts';
+	public const MENU_SLUG        = 'dazont-ecom-discounts';       // Discounts page: cart_qty / cart_subtotal / bulk (set up once).
+	public const MENU_SLUG_EVENTS = 'dazont-ecom-marketing-events'; // Marketing Events page: sale type (recurring, date-bound), + AI calendar.
 	public const SAVE_NONCE = 'dze_discounts_save';
+
+	/** Rule types shown on the "Marketing Events" page. */
+	private const EVENT_TYPES = [ 'sale' ];
 
 	/** @var array<string,array>|null Cached active rules for this request. */
 	private ?array $active = null;
@@ -75,6 +83,20 @@ final class DZE_Discounts {
 			'cart_subtotal' => __( 'Cart subtotal discount', 'dazont-ecom' ),
 			'bulk'          => __( 'Bulk (same product, qty ≥ N)', 'dazont-ecom' ),
 		];
+	}
+
+	/**
+	 * Type labels for one admin page: 'events' (recurring, date-bound scheduled
+	 * sales — with the AI calendar) or 'discounts' (evergreen cart/bulk rules,
+	 * set up once). Restricts both the list and the Type dropdown on the edit
+	 * screen so each page only ever shows/creates its own kind of rule.
+	 */
+	public static function types_for_mode( string $mode ): array {
+		$all = self::type_labels();
+		if ( 'events' === $mode ) {
+			return array_intersect_key( $all, array_flip( self::EVENT_TYPES ) );
+		}
+		return array_diff_key( $all, array_flip( self::EVENT_TYPES ) );
 	}
 
 	/**
@@ -609,16 +631,24 @@ final class DZE_Discounts {
 	public function register_menu(): void {
 		add_submenu_page(
 			DZE_Restock::MENU_SLUG,
-			__( 'Marketing & Discounts', 'dazont-ecom' ),
-			__( 'Marketing & Discounts', 'dazont-ecom' ),
+			__( 'Marketing Events', 'dazont-ecom' ),
+			__( 'Marketing Events', 'dazont-ecom' ),
+			'manage_woocommerce',
+			self::MENU_SLUG_EVENTS,
+			[ $this, 'render_events_page' ]
+		);
+		add_submenu_page(
+			DZE_Restock::MENU_SLUG,
+			__( 'Discounts', 'dazont-ecom' ),
+			__( 'Discounts', 'dazont-ecom' ),
 			'manage_woocommerce',
 			self::MENU_SLUG,
-			[ $this, 'render_page' ]
+			[ $this, 'render_discounts_page' ]
 		);
 	}
 
 	public function enqueue_assets( string $hook ): void {
-		if ( strpos( $hook, self::MENU_SLUG ) === false ) {
+		if ( strpos( $hook, self::MENU_SLUG ) === false && strpos( $hook, self::MENU_SLUG_EVENTS ) === false ) {
 			return;
 		}
 		wp_enqueue_style( 'dze-admin', DZE_URL . 'admin/css/admin.css', [], DZE_VERSION );
@@ -626,13 +656,25 @@ final class DZE_Discounts {
 		wp_enqueue_script( 'dze-discounts', DZE_URL . 'admin/js/discounts.js', [ 'jquery' ], DZE_VERSION, true );
 	}
 
-	public function render_page(): void {
+	/** "Marketing Events" page: recurring, date-bound scheduled sales + the AI calendar. */
+	public function render_events_page(): void {
+		$this->render_page_for( 'events' );
+	}
+
+	/** "Discounts" page: evergreen cart/bulk rules, set up once. */
+	public function render_discounts_page(): void {
+		$this->render_page_for( 'discounts' );
+	}
+
+	private function render_page_for( string $mode ): void {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
 
-		$rules       = self::get_rules();
-		$type_labels = self::type_labels();
+		$menu_slug   = ( 'events' === $mode ) ? self::MENU_SLUG_EVENTS : self::MENU_SLUG;
+		$page_title  = ( 'events' === $mode ) ? __( 'Marketing Events', 'dazont-ecom' ) : __( 'Discounts', 'dazont-ecom' );
+		$type_labels = self::types_for_mode( $mode );
+		$rules       = array_filter( self::get_rules(), static fn( $r ) => array_key_exists( $r['type'] ?? '', $type_labels ) );
 		$languages   = DZE_Wpml::get_active_languages();
 
 		$edit_id = isset( $_GET['edit'] ) ? sanitize_text_field( wp_unslash( $_GET['edit'] ) ) : '';

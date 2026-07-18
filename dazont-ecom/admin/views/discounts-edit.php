@@ -1,7 +1,7 @@
 <?php
 defined( 'ABSPATH' ) || exit;
 /**
- * Create / edit screen for a promotion.
+ * Create / edit screen shared by "Marketing Events" and "Discounts" ($mode).
  *
  * @var array       $rules
  * @var array       $type_labels
@@ -9,16 +9,26 @@ defined( 'ABSPATH' ) || exit;
  * @var array|null  $editing
  * @var array       $categories
  * @var array       $product_positions
+ * @var string      $mode        'events' or 'discounts'
+ * @var string      $menu_slug
+ * @var string      $page_title
  */
 $admin_post = admin_url( 'admin-post.php' );
-$list_url   = add_query_arg( [ 'page' => DZE_Discounts::MENU_SLUG ], admin_url( 'admin.php' ) );
+$list_url   = add_query_arg( [ 'page' => $menu_slug ], admin_url( 'admin.php' ) );
+$is_events  = ( 'events' === $mode );
 $e = static function ( $key, $default = '' ) use ( $editing ) {
 	return ( is_array( $editing ) && isset( $editing[ $key ] ) ) ? $editing[ $key ] : $default;
 };
 $banner_location = (string) $e( 'banner_location', 'top' );
 ?>
 <div class="wrap dze-wrap">
-	<h1 class="wp-heading-inline"><?php echo $editing ? esc_html__( 'Edit promotion', 'dazont-ecom' ) : esc_html__( 'Add promotion', 'dazont-ecom' ); ?></h1>
+	<h1 class="wp-heading-inline"><?php
+		if ( $editing ) {
+			echo $is_events ? esc_html__( 'Edit event', 'dazont-ecom' ) : esc_html__( 'Edit discount', 'dazont-ecom' );
+		} else {
+			echo $is_events ? esc_html__( 'Add event', 'dazont-ecom' ) : esc_html__( 'Add discount', 'dazont-ecom' );
+		}
+	?></h1>
 	<a href="<?php echo esc_url( $list_url ); ?>" class="page-title-action"><?php esc_html_e( '← Back to list', 'dazont-ecom' ); ?></a>
 	<hr class="wp-header-end" />
 
@@ -51,6 +61,7 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				<td><input type="number" id="dze-percent" name="percent" min="0" max="100" step="0.01" class="small-text" value="<?php echo esc_attr( $e( 'percent', '10' ) ); ?>" /> %</td>
 			</tr>
 
+			<?php if ( ! $is_events ) : ?>
 			<tr class="dze-field-threshold">
 				<th scope="row"><label for="dze-threshold"><span class="dze-threshold-label"></span></label></th>
 				<td>
@@ -58,16 +69,19 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 					<p class="description dze-threshold-help"></p>
 				</td>
 			</tr>
+			<?php endif; ?>
 
+			<?php if ( $is_events ) : ?>
 			<tr class="dze-field-schedule">
 				<th scope="row"><?php esc_html_e( 'Schedule', 'dazont-ecom' ); ?></th>
 				<td>
 					<label><?php esc_html_e( 'Start', 'dazont-ecom' ); ?> <input type="date" name="start" value="<?php echo esc_attr( $e( 'start' ) ); ?>" /></label>
 					&nbsp;
 					<label><?php esc_html_e( 'End', 'dazont-ecom' ); ?> <input type="date" name="end" value="<?php echo esc_attr( $e( 'end' ) ); ?>" /></label>
-					<p class="description"><?php esc_html_e( 'Day-granular: the sale runs from the start date at 00:00 through the end date at 23:59 (site timezone). Leave blank for no limit. Only one promotion can run at a time.', 'dazont-ecom' ); ?></p>
+					<p class="description"><?php esc_html_e( 'Day-granular: the sale runs from the start date at 00:00 through the end date at 23:59 (site timezone). Leave blank for no limit. Only one event can run at a time.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
+			<?php endif; ?>
 		</table>
 
 		<?php if ( ! empty( $languages ) ) :
@@ -125,6 +139,7 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 			</tr>
 		</table>
 
+		<?php if ( $is_events ) : ?>
 		<div class="dze-field-banner">
 			<h3><?php esc_html_e( 'Promo banner', 'dazont-ecom' ); ?></h3>
 			<table class="form-table" role="presentation">
@@ -243,7 +258,10 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				</tr>
 			</table>
 		</div>
+		<?php endif; ?>
 
-		<?php submit_button( $editing ? __( 'Update promotion', 'dazont-ecom' ) : __( 'Create promotion', 'dazont-ecom' ) ); ?>
+		<?php submit_button( $editing
+			? ( $is_events ? __( 'Update event', 'dazont-ecom' ) : __( 'Update discount', 'dazont-ecom' ) )
+			: ( $is_events ? __( 'Create event', 'dazont-ecom' ) : __( 'Create discount', 'dazont-ecom' ) ) ); ?>
 	</form>
 </div>

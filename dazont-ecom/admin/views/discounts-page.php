@@ -1,23 +1,32 @@
 <?php
 defined( 'ABSPATH' ) || exit;
 /**
- * List screen for Marketing & Discounts.
+ * List screen shared by "Marketing Events" and "Discounts" (filtered by $mode).
  *
  * @var array       $rules
  * @var array       $type_labels
  * @var array       $languages
  * @var string|null $notice
+ * @var string      $mode        'events' or 'discounts'
+ * @var string      $menu_slug
+ * @var string      $page_title
  */
 $admin_post = admin_url( 'admin-post.php' );
-$new_url    = add_query_arg( [ 'page' => DZE_Discounts::MENU_SLUG, 'new' => 1 ], admin_url( 'admin.php' ) );
+$new_url    = add_query_arg( [ 'page' => $menu_slug, 'new' => 1 ], admin_url( 'admin.php' ) );
 $controller = DZE_Discounts::instance();
-$gmc        = class_exists( 'DZE_Gmc' ) ? DZE_Gmc::instance() : null;
+$is_events  = ( 'events' === $mode );
+$gmc        = ( $is_events && class_exists( 'DZE_Gmc' ) ) ? DZE_Gmc::instance() : null;
 $gmc_on     = $gmc && $gmc->is_configured();
 ?>
 <div class="wrap dze-wrap">
-	<h1 class="wp-heading-inline"><?php esc_html_e( 'Marketing & Discounts', 'dazont-ecom' ); ?></h1>
-	<a href="<?php echo esc_url( $new_url ); ?>" class="page-title-action"><?php esc_html_e( 'Add promotion', 'dazont-ecom' ); ?></a>
+	<h1 class="wp-heading-inline"><?php echo esc_html( $page_title ); ?></h1>
+	<a href="<?php echo esc_url( $new_url ); ?>" class="page-title-action"><?php echo esc_html( $is_events ? __( 'Add event', 'dazont-ecom' ) : __( 'Add discount', 'dazont-ecom' ) ); ?></a>
 	<hr class="wp-header-end" />
+
+	<?php if ( $is_events && class_exists( 'DZE_Marketing_Ai' ) ) : ?>
+		<?php DZE_Marketing_Ai::instance()->render_calendar_panel(); ?>
+		<hr style="margin:24px 0;" />
+	<?php endif; ?>
 
 	<?php if ( $gmc_on ) : ?>
 		<p>
@@ -55,7 +64,7 @@ $gmc_on     = $gmc && $gmc->is_configured();
 		<?php else : foreach ( $rules as $id => $r ) :
 			$toggle_url = wp_nonce_url( add_query_arg( [ 'action' => 'dze_discount_toggle', 'rule' => $id ], $admin_post ), 'dze_discount_toggle' );
 			$delete_url = wp_nonce_url( add_query_arg( [ 'action' => 'dze_discount_delete', 'rule' => $id ], $admin_post ), 'dze_discount_delete' );
-			$edit_url   = add_query_arg( [ 'page' => DZE_Discounts::MENU_SLUG, 'edit' => $id ], admin_url( 'admin.php' ) );
+			$edit_url   = add_query_arg( [ 'page' => $menu_slug, 'edit' => $id ], admin_url( 'admin.php' ) );
 			$enabled    = ! empty( $r['enabled'] );
 			$scope_txt  = ( $r['scope'] ?? 'all' ) === 'all' ? __( 'Whole store', 'dazont-ecom' ) : ( $r['scope'] === 'categories' ? __( 'Categories', 'dazont-ecom' ) : __( 'Products', 'dazont-ecom' ) );
 			$start_txt  = ! empty( $r['start'] ) ? esc_html( $r['start'] ) : '<span style="color:#999;">' . esc_html__( 'no start', 'dazont-ecom' ) . '</span>';
@@ -127,6 +136,8 @@ $gmc_on     = $gmc && $gmc->is_configured();
 	</table>
 
 	<p class="description" style="margin-top:12px;">
-		<?php esc_html_e( 'Only one promotion (scheduled sale) can be active at a time — overlapping ones are kept disabled.', 'dazont-ecom' ); ?>
+		<?php echo $is_events
+			? esc_html__( 'Only one marketing event can be active at a time — overlapping ones are kept disabled.', 'dazont-ecom' )
+			: esc_html__( 'Discounts are evergreen: enable a rule once and it keeps applying (no schedule).', 'dazont-ecom' ); ?>
 	</p>
 </div>
