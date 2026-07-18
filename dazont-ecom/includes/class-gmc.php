@@ -149,6 +149,11 @@ final class DZE_Gmc {
 	}
 
 	public static function get_oauth(): array {
+		// Force a fresh read from the DB: this option is written by a redirect
+		// (admin-post.php) and read moments later by an AJAX request, which can
+		// land on a different PHP process/server with a stale persistent object
+		// cache (Redis/Memcached) if one is active — bypass it defensively.
+		wp_cache_delete( self::OPT_OAUTH, 'options' );
 		$o = get_option( self::OPT_OAUTH, [] );
 		return is_array( $o ) ? $o : [];
 	}
@@ -357,7 +362,13 @@ final class DZE_Gmc {
 		// Fallback: service-account credentials (JWT).
 		$sa = $this->get_credentials();
 		if ( null === $sa ) {
-			throw new RuntimeException( __( 'No Google authentication configured. Connect your Google account above.', 'dazont-ecom' ) );
+			throw new RuntimeException( sprintf(
+				/* translators: internal diagnostic state, not translated */
+				__( 'No Google authentication configured. Connect your Google account above. (debug: oauth_refresh_token=%s, oauth_client=%s, service_account=%s)', 'dazont-ecom' ),
+				empty( $oauth['refresh_token'] ) ? 'missing' : 'present',
+				( ! empty( $oauth['client_id'] ) && ! empty( $oauth['client_secret'] ) ) ? 'present' : 'missing',
+				defined( 'DZE_GMC_SERVICE_ACCOUNT' ) ? 'constant' : ( get_option( self::OPT_CREDENTIALS, '' ) !== '' ? 'option-set-but-invalid' : 'none' )
+			) );
 		}
 
 		$cache_key = 'dze_gmc_token_' . md5( $sa['client_email'] );
