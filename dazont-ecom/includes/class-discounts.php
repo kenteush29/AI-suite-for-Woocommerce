@@ -315,11 +315,14 @@ final class DZE_Discounts {
 		}
 
 		if ( $has_bulk ) {
-			// Reduce the live line price so the mini-cart reflects it instantly.
-			add_action( 'woocommerce_before_calculate_totals', [ $this, 'apply_cart_item_discounts' ], 20, 1 );
-			// Show the original price struck through next to the discounted one,
-			// in the mini-cart and on the cart/checkout, like a real promo.
-			add_filter( 'woocommerce_cart_item_price', [ $this, 'cart_item_price_html' ], 20, 3 );
+			// Apply the two bulk discounts as auto virtual coupons, so each shows
+			// as a real "Coupon: Bundle / Wholesale" line in the cart and at
+			// checkout — a promo-code simulation, no code for the customer to type.
+			add_action( 'woocommerce_before_calculate_totals', [ $this, 'prepare_cart_coupons' ], 5, 1 );
+			add_filter( 'woocommerce_get_shop_coupon_data',     [ $this, 'virtual_coupon_data' ], 10, 2 );
+			add_filter( 'woocommerce_cart_totals_coupon_label', [ $this, 'coupon_label' ], 10, 2 );
+			add_filter( 'woocommerce_cart_totals_coupon_html',  [ $this, 'coupon_html' ], 10, 3 );
+			add_filter( 'woocommerce_coupon_message',           [ $this, 'silence_coupon_message' ], 10, 3 );
 		}
 	}
 
@@ -426,66 +429,129 @@ final class DZE_Discounts {
 	// Cart discounts
 	// =========================================================================
 
+	/** Auto virtual-coupon codes (lower-case; WooCommerce normalises codes). */
+	public const COUPON_BUNDLE    = 'dze_bundle';
+	public const COUPON_WHOLESALE = 'dze_wholesale';
+
+	/** @var array<string,float> Coupon code => discount amount, this request. */
+	private array $coupon_amounts = [];
+
 	/**
-	 * Reduces each cart line's live unit price by the discount that applies to
-	 * it, so the saving is reflected instantly everywhere — mini-cart, cart page
-	 * and checkout. Two discounts can stack on the same item:
-	 *   • Bundle   — per-item bulk offer (same product, qty ≥ threshold);
-	 *   • Wholesale — the winning bulk-order tier for the whole cart.
-	 * The original price is preserved for the struck-through display.
+	 * Computes the two bulk discounts for the current cart and applies each, when
+	 * positive, as an auto virtual coupon (Bundle = per-item offer, Wholesale =
+	 * whole-order tier). Runs on the first totals pass; the codes then persist in
+	 * the cart's applied_coupons for the rest of the request.
 	 */
-	public function apply_cart_item_discounts( $cart ): void {
+	public function prepare_cart_coupons( $cart ): void {
 		if ( ! $cart instanceof \WC_Cart || ( is_admin() && ! wp_doing_ajax() ) ) {
 			return;
 		}
-		// WooCommerce fires this hook several times per request and set_price()
-		// mutates the in-memory product, so only touch prices on the first pass
-		// to avoid compounding the discount.
 		if ( did_action( 'woocommerce_before_calculate_totals' ) >= 2 ) {
-			return;
+			return; // already computed + applied on the first pass this request.
 		}
-
 		$decimals = function_exists( 'wc_get_price_decimals' ) ? wc_get_price_decimals() : 2;
-		[ $wholesale_rule, $wholesale_pct ] = $this->winning_bulk_order( $cart );
 
-		foreach ( $cart->get_cart() as $key => $item ) {
+		// Bundle: per-item bulk offer (same product, qty ≥ threshold).
+		$bundle = 0.0;
+		foreach ( $cart->get_cart() as $item ) {
 			$product = $item['data'] ?? null;
 			if ( ! $product instanceof \WC_Product ) {
 				continue;
 			}
-			$base = (float) $product->get_price(); // already sale-adjusted if a sale event runs.
-			if ( $base <= 0 ) {
-				continue;
-			}
 			$qty = (int) $item['quantity'];
-
-			$pct = $this->bulk_percent_for( $product, $qty ); // Bundle (per item).
-			if ( $wholesale_rule && $this->product_in_scope( $wholesale_rule, $product->get_id(), $product->get_parent_id() ) ) {
-				$pct += $wholesale_pct; // Wholesale (whole order).
+			$pct = $this->bulk_percent_for( $product, $qty );
+			if ( $pct > 0 ) {
+				$bundle += ( (float) $product->get_price() * $qty ) * ( $pct / 100 );
 			}
-			if ( $pct <= 0 ) {
-				continue;
-			}
-			$pct = min( $pct, 100.0 );
+		}
 
-			$product->set_price( round( $base * ( 1 - $pct / 100 ), $decimals ) );
-			// Stashed for the struck-through price display (refreshed every pass).
-			$cart->cart_contents[ $key ]['dze_base_price'] = $base;
-			$cart->cart_contents[ $key ]['dze_disc_pct']   = $pct;
+		// Wholesale: winning bulk-order tier applied to its in-scope subtotal.
+		$wholesale = 0.0;
+		[ $wholesale_rule, $wholesale_pct ] = $this->winning_bulk_order( $cart );
+		if ( $wholesale_rule ) {
+			$subtotal = 0.0;
+			foreach ( $cart->get_cart() as $item ) {
+				$product = $item['data'] ?? null;
+				if ( ! $product instanceof \WC_Product ) {
+					continue;
+				}
+				if ( $this->product_in_scope( $wholesale_rule, $product->get_id(), $product->get_parent_id() ) ) {
+					$subtotal += (float) $product->get_price() * (int) $item['quantity'];
+				}
+			}
+			$wholesale = $subtotal * ( $wholesale_pct / 100 );
+		}
+
+		$this->coupon_amounts = [
+			self::COUPON_BUNDLE    => round( $bundle, $decimals ),
+			self::COUPON_WHOLESALE => round( $wholesale, $decimals ),
+		];
+
+		// Add/remove each code by manipulating the array directly (calling
+		// remove_coupon() here would recurse into calculate_totals()).
+		foreach ( $this->coupon_amounts as $code => $amount ) {
+			$has = in_array( $code, $cart->applied_coupons, true );
+			if ( $amount > 0 && ! $has ) {
+				$cart->applied_coupons[] = $code;
+			} elseif ( $amount <= 0 && $has ) {
+				$cart->applied_coupons = array_values( array_diff( $cart->applied_coupons, [ $code ] ) );
+			}
 		}
 	}
 
-	/**
-	 * Shows the original unit price struck through beside the discounted one,
-	 * wherever WooCommerce renders the cart-item price (mini-cart included).
-	 */
-	public function cart_item_price_html( $price_html, $item, $key ) {
-		if ( empty( $item['dze_disc_pct'] ) || ! isset( $item['dze_base_price'] ) ) {
-			return $price_html;
+	/** Supplies WooCommerce with on-the-fly data for our two virtual coupons. */
+	public function virtual_coupon_data( $data, $code ) {
+		$code = strtolower( (string) $code );
+		if ( empty( $this->coupon_amounts[ $code ] ) || $this->coupon_amounts[ $code ] <= 0 ) {
+			return $data;
 		}
-		$base = (float) $item['dze_base_price'];
-		$new  = $base * ( 1 - (float) $item['dze_disc_pct'] / 100 );
-		return '<del aria-hidden="true">' . wc_price( $base ) . '</del> <ins style="text-decoration:none;">' . wc_price( $new ) . '</ins>';
+		return [
+			'id'                         => -1,
+			'amount'                     => $this->coupon_amounts[ $code ],
+			'discount_type'              => 'fixed_cart',
+			'individual_use'             => false,
+			'usage_limit'                => '',
+			'usage_limit_per_user'       => '',
+			'limit_usage_to_x_items'     => '',
+			'usage_count'                => '',
+			'expiry_date'                => '',
+			'free_shipping'              => false,
+			'exclude_sale_items'         => false,
+			'minimum_amount'             => '',
+			'maximum_amount'             => '',
+			'product_ids'                => [],
+			'exclude_product_ids'        => [],
+			'product_categories'         => [],
+			'exclude_product_categories' => [],
+		];
+	}
+
+	/** Friendly label shown in the cart totals instead of the raw coupon code. */
+	public function coupon_label( $label, $coupon ) {
+		$code = $coupon instanceof \WC_Coupon ? $coupon->get_code() : '';
+		$map  = [
+			self::COUPON_BUNDLE    => __( 'Bundle', 'dazont-ecom' ),
+			self::COUPON_WHOLESALE => __( 'Wholesale', 'dazont-ecom' ),
+		];
+		return $map[ $code ] ?? $label;
+	}
+
+	/** Drops the "[Remove]" link for our auto coupons (the customer can't undo them). */
+	public function coupon_html( $coupon_html, $coupon, $discount_amount_html ) {
+		$code = $coupon instanceof \WC_Coupon ? $coupon->get_code() : '';
+		if ( in_array( $code, [ self::COUPON_BUNDLE, self::COUPON_WHOLESALE ], true ) ) {
+			return $discount_amount_html;
+		}
+		return $coupon_html;
+	}
+
+	/** Suppresses the "Coupon applied successfully" notice for our auto coupons. */
+	public function silence_coupon_message( $msg, $msg_code, $coupon ) {
+		$code = $coupon instanceof \WC_Coupon ? $coupon->get_code() : '';
+		if ( in_array( $code, [ self::COUPON_BUNDLE, self::COUPON_WHOLESALE ], true ) ) {
+			return '';
+		}
+		return $msg;
 	}
 
 	/**
