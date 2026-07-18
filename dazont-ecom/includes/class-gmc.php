@@ -2,12 +2,20 @@
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Google Merchant Center sync for promotions (Content API for Shopping v2.1).
+ * Google Merchant Center sync for promotions (Merchant API).
  *
  * One Merchant Center account per language: each scheduled-sale promotion is
  * pushed as a GMC "promotion" to the account mapped to the language it is
- * active in. Authentication uses a Google service account (JWT → OAuth2 access
- * token) — no bundled Google client library.
+ * active in, through the Merchant API promotions sub-API — the successor to
+ * the Content API for Shopping, which Google shuts down on 18 August 2026.
+ *
+ * A promotion must be inserted into a promotion *data source*; the plugin
+ * finds or creates one per target country/language automatically.
+ *
+ * Authentication uses either the connected Google account (OAuth) or a Google
+ * service account (JWT → OAuth2 access token) — no bundled Google client
+ * library. Both use the same 'content' scope the Merchant API requires, so the
+ * existing connection keeps working without re-consent.
  *
  * Credentials are read from the DZE_GMC_SERVICE_ACCOUNT constant (a file path
  * or the raw JSON) when defined, otherwise from a settings field. They are
@@ -20,10 +28,14 @@ final class DZE_Gmc {
 	public const CRON_HOOK   = 'dze_gmc_sync';
 	public const OPT_ACCOUNTS    = 'dze_gmc_accounts';
 	public const OPT_CREDENTIALS = 'dze_gmc_credentials';
-	public const OPT_OAUTH       = 'dze_gmc_oauth';       // OAuth client (id/secret) — form-managed.
-	public const OPT_CONNECTION  = 'dze_gmc_connection';  // Connected account (refresh token/email) — flow-managed only.
+	public const OPT_OAUTH       = 'dze_gmc_oauth';        // OAuth client (id/secret) — form-managed.
+	public const OPT_CONNECTION  = 'dze_gmc_connection';   // Connected account (refresh token/email) — flow-managed only.
+	public const OPT_DATASOURCES = 'dze_gmc_datasources';  // Resolved promotion data source names, keyed by account|country|lang.
 
-	private const API_BASE   = 'https://shoppingcontent.googleapis.com/content/v2.1';
+	// Merchant API (replaces Content API for Shopping v2.1).
+	private const MERCHANT_API  = 'https://merchantapi.googleapis.com';
+	private const PROMO_SUBAPI  = 'promotions/v1beta';
+	private const DS_SUBAPI     = 'datasources/v1beta';
 	private const SCOPE      = 'https://www.googleapis.com/auth/content';
 	private const OAUTH_SCOPE = 'https://www.googleapis.com/auth/content https://www.googleapis.com/auth/userinfo.email';
 	private const AUTH_URL    = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -505,10 +517,16 @@ final class DZE_Gmc {
 				continue;
 			}
 			try {
-				$token   = $this->get_access_token();
-				$payload = $this->build_payload( $rule, $key, $account );
-				$this->request( 'POST', $account['merchant_id'] . '/promotions', $token, $payload );
-				$statuses[ $key ] = [ 'status' => 'synced', 'message' => '', 'promotion_id' => $payload['promotionId'], 'time' => time() ];
+				$token = $this->get_access_token();
+				[ $promotion, $country, $language ] = $this->build_promotion( $rule, $key, $account );
+				$data_source = $this->resolve_data_source( $account['merchant_id'], $country, $language, $token );
+
+				$url = self::MERCHANT_API . '/' . self::PROMO_SUBAPI . '/accounts/' . $account['merchant_id'] . '/promotions:insert';
+				$this->request( 'POST', $url, $token, [
+					'promotion'  => $promotion,
+					'dataSource' => $data_source,
+				] );
+				$statuses[ $key ] = [ 'status' => 'synced', 'message' => '', 'promotion_id' => $promotion['promotionId'], 'time' => time() ];
 			} catch ( \Throwable $e ) {
 				$statuses[ $key ] = [ 'status' => 'error', 'message' => $e->getMessage(), 'time' => time() ];
 			}
@@ -529,13 +547,20 @@ final class DZE_Gmc {
 		return [ 'default' ];
 	}
 
-	private function build_payload( array $rule, string $key, array $account ): array {
+	/**
+	 * Builds a Merchant API Promotion resource for a rule/language.
+	 *
+	 * @return array{0:array,1:string,2:string} [ promotion, targetCountry, contentLanguage ]
+	 */
+	private function build_promotion( array $rule, string $key, array $account ): array {
 		[ $start_ts, $end_ts ] = DZE_Discounts::instance()->window_ts( $rule );
 		if ( $start_ts === PHP_INT_MIN || $end_ts === PHP_INT_MAX ) {
 			throw new RuntimeException( __( 'GMC promotions need both a start and an end date.', 'dazont-ecom' ) );
 		}
 
-		$content_language = ( $key !== 'default' ) ? $key : ( $account['language'] ?: substr( get_locale(), 0, 2 ) );
+		$language = ( $key !== 'default' ) ? $key : ( $account['language'] ?: get_locale() );
+		$language = strtolower( substr( (string) $language, 0, 2 ) );
+		$country  = strtoupper( substr( (string) $account['country'], 0, 2 ) );
 
 		// Long title: translated banner text if available, else the promo title.
 		$title = $rule['banner_text'] ?? '';
@@ -548,25 +573,77 @@ final class DZE_Gmc {
 		}
 		$title = mb_substr( wp_strip_all_tags( (string) $title ), 0, 60 );
 
-		return [
-			'promotionId'          => 'dze_' . preg_replace( '/[^A-Za-z0-9_]/', '', (string) $rule['id'] ),
-			'targetCountry'        => $account['country'],
-			'contentLanguage'      => $content_language,
-			'redemptionChannel'    => [ 'ONLINE' ],
-			'longTitle'            => $title,
-			'productApplicability' => 'ALL_PRODUCTS',
-			'offerType'            => 'NO_CODE',
-			'couponValueType'      => 'PERCENT_OFF',
-			'percentOff'           => (int) round( (float) ( $rule['percent'] ?? 0 ) ),
-			'promotionEffectiveTimePeriod' => [
-				'startTime' => gmdate( 'Y-m-d\TH:i:s\Z', $start_ts ),
-				'endTime'   => gmdate( 'Y-m-d\TH:i:s\Z', $end_ts ),
+		$promotion = [
+			'promotionId'       => 'dze_' . preg_replace( '/[^A-Za-z0-9_]/', '', (string) $rule['id'] ),
+			'targetCountry'     => $country,
+			'contentLanguage'   => $language,
+			'redemptionChannel' => [ 'ONLINE' ],
+			'attributes'        => [
+				'productApplicability'         => 'ALL_PRODUCTS',
+				'offerType'                    => 'NO_CODE',
+				'longTitle'                    => $title,
+				'couponValueType'              => 'PERCENT_OFF',
+				// Merchant API expects the percentage as a string (int64).
+				'percentOff'                   => (string) (int) round( (float) ( $rule['percent'] ?? 0 ) ),
+				'promotionEffectiveTimePeriod' => [
+					'startTime' => gmdate( 'Y-m-d\TH:i:s\Z', $start_ts ),
+					'endTime'   => gmdate( 'Y-m-d\TH:i:s\Z', $end_ts ),
+				],
+				'promotionDestinations'        => [ 'SHOPPING_ADS', 'FREE_LISTINGS' ],
 			],
 		];
+
+		return [ $promotion, $country, $language ];
 	}
 
-	private function request( string $method, string $path, string $token, ?array $body = null ): array {
-		$response = wp_remote_request( self::API_BASE . '/' . ltrim( $path, '/' ), [
+	/**
+	 * Returns the promotion data source resource name for an account/country/
+	 * language, creating one if none exists. Merchant API requires promotions
+	 * to be inserted into a data source; the result is cached so we hit the
+	 * list/create endpoints only once per target.
+	 */
+	private function resolve_data_source( string $merchant_id, string $country, string $language, string $token ): string {
+		$cache = get_option( self::OPT_DATASOURCES, [] );
+		$cache = is_array( $cache ) ? $cache : [];
+		$ck    = $merchant_id . '|' . strtoupper( $country ) . '|' . strtolower( $language );
+		if ( ! empty( $cache[ $ck ] ) ) {
+			return $cache[ $ck ];
+		}
+
+		$base = self::MERCHANT_API . '/' . self::DS_SUBAPI . '/accounts/' . $merchant_id . '/dataSources';
+
+		// Reuse an existing promotion data source for this country + language.
+		$list = $this->request( 'GET', $base . '?pageSize=200', $token );
+		foreach ( (array) ( $list['dataSources'] ?? [] ) as $ds ) {
+			$pds = $ds['promotionDataSource'] ?? null;
+			if ( is_array( $pds )
+				&& strtoupper( (string) ( $pds['targetCountry'] ?? '' ) ) === strtoupper( $country )
+				&& strtolower( (string) ( $pds['contentLanguage'] ?? '' ) ) === strtolower( $language )
+				&& ! empty( $ds['name'] ) ) {
+				$cache[ $ck ] = $ds['name'];
+				update_option( self::OPT_DATASOURCES, $cache, false );
+				return $ds['name'];
+			}
+		}
+
+		// None found — create one.
+		$created = $this->request( 'POST', $base, $token, [
+			'displayName'         => 'Dazont Ecom promotions ' . strtoupper( $country ) . '/' . strtolower( $language ),
+			'promotionDataSource' => [
+				'targetCountry'   => strtoupper( $country ),
+				'contentLanguage' => strtolower( $language ),
+			],
+		] );
+		if ( empty( $created['name'] ) ) {
+			throw new RuntimeException( __( 'Could not create a Google promotion data source.', 'dazont-ecom' ) );
+		}
+		$cache[ $ck ] = $created['name'];
+		update_option( self::OPT_DATASOURCES, $cache, false );
+		return $created['name'];
+	}
+
+	private function request( string $method, string $url, string $token, ?array $body = null ): array {
+		$response = wp_remote_request( $url, [
 			'method'  => $method,
 			'timeout' => 25,
 			'headers' => [
@@ -623,8 +700,26 @@ final class DZE_Gmc {
 			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
 		}
 		try {
-			$this->get_access_token();
-			wp_send_json_success( [ 'message' => __( 'Authenticated with Google successfully.', 'dazont-ecom' ) ] );
+			$token = $this->get_access_token();
+
+			// Go one step further than "got a token": hit the Merchant API for a
+			// configured account so the test also confirms the scope, account
+			// access and that the Merchant API is enabled — the things that
+			// actually make a promotion insert succeed.
+			foreach ( self::get_accounts() as $account ) {
+				if ( ! empty( $account['merchant_id'] ) ) {
+					$url = self::MERCHANT_API . '/' . self::DS_SUBAPI . '/accounts/' . $account['merchant_id'] . '/dataSources?pageSize=1';
+					$this->request( 'GET', $url, $token );
+					wp_send_json_success( [ 'message' => sprintf(
+						/* translators: %s: Merchant Center account ID */
+						__( 'Merchant API reachable for account %s.', 'dazont-ecom' ),
+						$account['merchant_id']
+					) ] );
+				}
+			}
+
+			// Authenticated, but no merchant account configured yet to test against.
+			wp_send_json_success( [ 'message' => __( 'Authenticated with Google. Add a Merchant ID to fully test the Merchant API.', 'dazont-ecom' ) ] );
 		} catch ( \Throwable $e ) {
 			wp_send_json_error( [ 'message' => $e->getMessage() ] );
 		}

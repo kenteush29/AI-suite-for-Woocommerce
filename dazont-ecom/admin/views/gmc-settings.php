@@ -75,7 +75,7 @@ foreach ( $languages as $l ) {
 			<div class="notice notice-info inline"><p><?php esc_html_e( 'Credentials are provided by the DZE_GMC_SERVICE_ACCOUNT constant (wp-config.php). This is the recommended, most secure option.', 'dazont-ecom' ); ?></p></div>
 		<?php else : ?>
 			<p class="description" style="max-width:820px;">
-				<?php esc_html_e( 'Paste the JSON key of a Google Cloud service account that has access to your Merchant Center (Content API for Shopping enabled). For maximum security you can instead define DZE_GMC_SERVICE_ACCOUNT in wp-config.php (a file path or the raw JSON) and leave this blank.', 'dazont-ecom' ); ?>
+				<?php esc_html_e( 'Paste the JSON key of a Google Cloud service account that has access to your Merchant Center (Merchant API enabled). For maximum security you can instead define DZE_GMC_SERVICE_ACCOUNT in wp-config.php (a file path or the raw JSON) and leave this blank.', 'dazont-ecom' ); ?>
 			</p>
 			<table class="form-table" role="presentation">
 				<tr>
