@@ -32,10 +32,12 @@ final class DZE_Gmc {
 	public const OPT_CONNECTION  = 'dze_gmc_connection';   // Connected account (refresh token/email) — flow-managed only.
 	public const OPT_DATASOURCES = 'dze_gmc_datasources';  // Resolved promotion data source names, keyed by account|country|lang.
 
-	// Merchant API (replaces Content API for Shopping v2.1).
-	private const MERCHANT_API  = 'https://merchantapi.googleapis.com';
-	private const PROMO_SUBAPI  = 'promotions/v1beta';
-	private const DS_SUBAPI     = 'datasources/v1beta';
+	// Merchant API (replaces Content API for Shopping v2.1). v1beta was
+	// discontinued on 28 Feb 2026, so all sub-APIs are pinned to v1.
+	private const MERCHANT_API    = 'https://merchantapi.googleapis.com';
+	private const PROMO_SUBAPI    = 'promotions/v1';
+	private const DS_SUBAPI       = 'datasources/v1';
+	private const ACCOUNTS_SUBAPI = 'accounts/v1';
 	private const SCOPE      = 'https://www.googleapis.com/auth/content';
 	private const OAUTH_SCOPE = 'https://www.googleapis.com/auth/content https://www.googleapis.com/auth/userinfo.email';
 	private const AUTH_URL    = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -63,6 +65,7 @@ final class DZE_Gmc {
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_ajax_dze_gmc_sync',      [ $this, 'ajax_sync' ] );
 		add_action( 'wp_ajax_dze_gmc_test',      [ $this, 'ajax_test' ] );
+		add_action( 'wp_ajax_dze_gmc_verify',    [ $this, 'ajax_verify' ] );
 		add_action( 'admin_post_dze_gmc_oauth',       [ $this, 'handle_oauth_callback' ] );
 		add_action( 'admin_post_dze_gmc_disconnect',  [ $this, 'handle_disconnect' ] );
 	}
@@ -84,6 +87,25 @@ final class DZE_Gmc {
 	public static function get_accounts(): array {
 		$a = get_option( self::OPT_ACCOUNTS, [] );
 		return is_array( $a ) ? $a : [];
+	}
+
+	/**
+	 * Uppercase 2-letter target countries configured for an account, supporting
+	 * both the new `countries` list and the legacy single `country` field.
+	 */
+	public static function account_countries( array $account ): array {
+		$raw = $account['countries'] ?? ( $account['country'] ?? [] );
+		if ( is_string( $raw ) ) {
+			$raw = preg_split( '/[\s,;]+/', $raw );
+		}
+		$out = [];
+		foreach ( (array) $raw as $c ) {
+			$c = strtoupper( preg_replace( '/[^A-Za-z]/', '', (string) $c ) );
+			if ( strlen( $c ) === 2 ) {
+				$out[ $c ] = $c;
+			}
+		}
+		return array_values( $out );
 	}
 
 	/** WPML active → language codes; otherwise a single 'default' account. */
@@ -371,7 +393,8 @@ final class DZE_Gmc {
 			$key = sanitize_key( $key );
 			$clean[ $key ] = [
 				'merchant_id' => preg_replace( '/[^0-9]/', '', (string) ( $acc['merchant_id'] ?? '' ) ),
-				'country'     => strtoupper( preg_replace( '/[^A-Za-z]/', '', (string) ( $acc['country'] ?? '' ) ) ),
+				// One or more target countries (comma/space separated in the form).
+				'countries'   => self::account_countries( [ 'countries' => $acc['countries'] ?? ( $acc['country'] ?? '' ) ] ),
 				'language'    => sanitize_key( $acc['language'] ?? $key ),
 			];
 		}
@@ -388,10 +411,11 @@ final class DZE_Gmc {
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'   => wp_create_nonce( self::NONCE ),
 			'i18n'    => [
-				'syncing' => __( 'Syncing…', 'dazont-ecom' ),
-				'testing' => __( 'Testing…', 'dazont-ecom' ),
-				'done'    => __( 'Done', 'dazont-ecom' ),
-				'error'   => __( 'Error', 'dazont-ecom' ),
+				'syncing'   => __( 'Syncing…', 'dazont-ecom' ),
+				'testing'   => __( 'Testing…', 'dazont-ecom' ),
+				'verifying' => __( 'Verifying…', 'dazont-ecom' ),
+				'done'      => __( 'Done', 'dazont-ecom' ),
+				'error'     => __( 'Error', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -493,9 +517,9 @@ final class DZE_Gmc {
 	// =========================================================================
 
 	/**
-	 * Pushes a sale rule to the Merchant Center account of each language it is
-	 * active in. Returns [ langKey => [status,message,...] ] and stores it on
-	 * the rule.
+	 * Pushes a sale rule as one Merchant Center promotion per configured target
+	 * country (a GMC promotion always targets a single country). Returns
+	 * [ "lang|COUNTRY" => [status,message,...] ] and stores it on the rule.
 	 */
 	public function sync_rule( string $rule_id ): array {
 		$rules = DZE_Discounts::get_rules();
@@ -507,28 +531,22 @@ final class DZE_Gmc {
 			return [];
 		}
 
-		$accounts = self::get_accounts();
 		$statuses = [];
-
-		foreach ( $this->target_language_keys( $rule ) as $key ) {
-			$account = $accounts[ $key ] ?? null;
-			if ( empty( $account['merchant_id'] ) || empty( $account['country'] ) ) {
-				$statuses[ $key ] = [ 'status' => 'error', 'message' => __( 'No merchant / country configured for this language.', 'dazont-ecom' ), 'time' => time() ];
-				continue;
-			}
+		foreach ( $this->sync_targets( $rule ) as $t ) {
+			$sk = $t['key'] . '|' . $t['country'];
 			try {
-				$token = $this->get_access_token();
-				[ $promotion, $country, $language ] = $this->build_promotion( $rule, $key, $account );
-				$data_source = $this->resolve_data_source( $account['merchant_id'], $country, $language, $token );
+				$token       = $this->get_access_token();
+				$promotion   = $this->build_promotion( $rule, $t['key'], $t['country'], $t['language'] );
+				$data_source = $this->resolve_data_source( $t['merchant_id'], $t['country'], $t['language'], $token );
 
-				$url = self::MERCHANT_API . '/' . self::PROMO_SUBAPI . '/accounts/' . $account['merchant_id'] . '/promotions:insert';
+				$url = self::MERCHANT_API . '/' . self::PROMO_SUBAPI . '/accounts/' . $t['merchant_id'] . '/promotions:insert';
 				$this->request( 'POST', $url, $token, [
 					'promotion'  => $promotion,
 					'dataSource' => $data_source,
 				] );
-				$statuses[ $key ] = [ 'status' => 'synced', 'message' => '', 'promotion_id' => $promotion['promotionId'], 'time' => time() ];
+				$statuses[ $sk ] = [ 'status' => 'synced', 'message' => '', 'promotion_id' => $promotion['promotionId'], 'time' => time() ];
 			} catch ( \Throwable $e ) {
-				$statuses[ $key ] = [ 'status' => 'error', 'message' => $e->getMessage(), 'time' => time() ];
+				$statuses[ $sk ] = [ 'status' => 'error', 'message' => $e->getMessage(), 'time' => time() ];
 			}
 		}
 
@@ -536,6 +554,36 @@ final class DZE_Gmc {
 		update_option( DZE_Discounts::OPTION, $rules, false );
 
 		return $statuses;
+	}
+
+	/**
+	 * The concrete sync targets for a rule: one entry per (language, country)
+	 * that has a configured merchant account. Countries without a configured
+	 * account are simply not offered — this is the single source of truth used
+	 * by both the sync and the badges in the promos list.
+	 *
+	 * @return array<int,array{key:string,country:string,language:string,merchant_id:string}>
+	 */
+	private function sync_targets( array $rule ): array {
+		$accounts = self::get_accounts();
+		$targets  = [];
+		foreach ( $this->target_language_keys( $rule ) as $key ) {
+			$acc = $accounts[ $key ] ?? null;
+			if ( empty( $acc['merchant_id'] ) ) {
+				continue;
+			}
+			$language = ( $key !== 'default' ) ? $key : ( $acc['language'] ?: get_locale() );
+			$language = strtolower( substr( (string) $language, 0, 2 ) );
+			foreach ( self::account_countries( $acc ) as $country ) {
+				$targets[] = [
+					'key'         => $key,
+					'country'     => $country,
+					'language'    => $language,
+					'merchant_id' => (string) $acc['merchant_id'],
+				];
+			}
+		}
+		return $targets;
 	}
 
 	/** Language keys the promo targets (effective WPML languages, or 'default'). */
@@ -547,20 +595,15 @@ final class DZE_Gmc {
 		return [ 'default' ];
 	}
 
-	/**
-	 * Builds a Merchant API Promotion resource for a rule/language.
-	 *
-	 * @return array{0:array,1:string,2:string} [ promotion, targetCountry, contentLanguage ]
-	 */
-	private function build_promotion( array $rule, string $key, array $account ): array {
+	/** Builds a Merchant API Promotion resource for a rule/language/country. */
+	private function build_promotion( array $rule, string $key, string $country, string $language ): array {
 		[ $start_ts, $end_ts ] = DZE_Discounts::instance()->window_ts( $rule );
 		if ( $start_ts === PHP_INT_MIN || $end_ts === PHP_INT_MAX ) {
 			throw new RuntimeException( __( 'GMC promotions need both a start and an end date.', 'dazont-ecom' ) );
 		}
 
-		$language = ( $key !== 'default' ) ? $key : ( $account['language'] ?: get_locale() );
-		$language = strtolower( substr( (string) $language, 0, 2 ) );
-		$country  = strtoupper( substr( (string) $account['country'], 0, 2 ) );
+		$language = strtolower( substr( $language, 0, 2 ) );
+		$country  = strtoupper( substr( $country, 0, 2 ) );
 
 		// Long title: translated banner text if available, else the promo title.
 		$title = $rule['banner_text'] ?? '';
@@ -593,7 +636,7 @@ final class DZE_Gmc {
 			],
 		];
 
-		return [ $promotion, $country, $language ];
+		return $promotion;
 	}
 
 	/**
@@ -729,25 +772,66 @@ final class DZE_Gmc {
 	// Display helpers (used by the Discounts list)
 	// =========================================================================
 
-	/** Small per-language sync badges for a rule, for the Discounts list. */
+	/**
+	 * Per-target (language + country) sync badges for a rule, for the Discounts
+	 * list. Only configured (account-backed) countries appear — countries
+	 * without a Merchant account are never offered.
+	 */
 	public function sync_badges_html( array $rule ): string {
-		$sync = (array) ( $rule['gmc_sync'] ?? [] );
-		$keys = $this->target_language_keys( $rule );
-		$out  = '';
-		foreach ( $keys as $key ) {
-			$state = $sync[ $key ]['status'] ?? 'pending';
-			$label = strtoupper( $key === 'default' ? '•' : $key );
+		$sync    = (array) ( $rule['gmc_sync'] ?? [] );
+		$targets = $this->sync_targets( $rule );
+		if ( empty( $targets ) ) {
+			return '<span style="color:#999;" title="' . esc_attr__( 'No Merchant Center account/country configured.', 'dazont-ecom' ) . '">—</span>';
+		}
+		$out = '';
+		foreach ( $targets as $t ) {
+			$sk    = $t['key'] . '|' . $t['country'];
+			$state = $sync[ $sk ]['status'] ?? 'pending';
+			$label = ( $t['key'] === 'default' ? '' : strtoupper( $t['key'] ) . ':' ) . $t['country'];
 			$color = $state === 'synced' ? '#0a7040' : ( $state === 'error' ? '#b32d2e' : '#999' );
-			$title = $state === 'error' ? ( $sync[ $key ]['message'] ?? 'error' ) : ucfirst( $state );
+			$title = $state === 'error' ? ( $sync[ $sk ]['message'] ?? 'error' ) : ucfirst( $state );
 			$dot   = $state === 'synced' ? '●' : ( $state === 'error' ? '✕' : '○' );
 			$out  .= sprintf(
 				'<span title="%s" style="color:%s;margin-right:6px;white-space:nowrap;">%s %s</span>',
-				esc_attr( $key . ': ' . $title ),
+				esc_attr( $label . ': ' . $title ),
 				esc_attr( $color ),
 				esc_html( $dot ),
 				esc_html( $label )
 			);
 		}
-		return $out !== '' ? $out : '<span style="color:#999;">—</span>';
+		return $out;
+	}
+
+	/**
+	 * Verifies that a Merchant Center account ID is reachable with the current
+	 * authentication (Merchant API enabled, account accessible). Returns the
+	 * account's display name on success; throws on failure.
+	 */
+	public function verify_account( string $merchant_id ): string {
+		$token = $this->get_access_token();
+		$url   = self::MERCHANT_API . '/' . self::ACCOUNTS_SUBAPI . '/accounts/' . $merchant_id;
+		$data  = $this->request( 'GET', $url, $token );
+		return (string) ( $data['accountName'] ?? $data['name'] ?? $merchant_id );
+	}
+
+	public function ajax_verify(): void {
+		check_ajax_referer( self::NONCE, 'nonce' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
+		}
+		$merchant_id = isset( $_POST['merchant_id'] ) ? preg_replace( '/[^0-9]/', '', (string) wp_unslash( $_POST['merchant_id'] ) ) : '';
+		if ( $merchant_id === '' ) {
+			wp_send_json_error( [ 'message' => __( 'Enter a Merchant ID first.', 'dazont-ecom' ) ] );
+		}
+		try {
+			$name = $this->verify_account( $merchant_id );
+			wp_send_json_success( [ 'message' => sprintf(
+				/* translators: %s: Merchant Center account name */
+				__( 'Reachable: %s', 'dazont-ecom' ),
+				$name
+			) ] );
+		} catch ( \Throwable $e ) {
+			wp_send_json_error( [ 'message' => $e->getMessage() ] );
+		}
 	}
 }

@@ -99,16 +99,19 @@ foreach ( $languages as $l ) {
 				$acc      = $accounts[ $key ] ?? [];
 				$is_lang  = $key !== 'default';
 				$label    = $is_lang ? ( $lang_names[ $key ] ?? strtoupper( $key ) ) : __( 'Default (no WPML)', 'dazont-ecom' );
+				$countries_val = implode( ', ', DZE_Gmc::account_countries( $acc ) );
 			?>
 			<tr>
 				<th scope="row"><?php echo esc_html( $label ); ?><?php echo $is_lang ? ' <code>' . esc_html( $key ) . '</code>' : ''; ?></th>
 				<td>
 					<label><?php esc_html_e( 'Merchant ID', 'dazont-ecom' ); ?>
-						<input type="text" name="<?php echo esc_attr( DZE_Gmc::OPT_ACCOUNTS . '[' . $key . '][merchant_id]' ); ?>" value="<?php echo esc_attr( $acc['merchant_id'] ?? '' ); ?>" class="regular-text" placeholder="e.g. 123456789" />
+						<input type="text" id="dze-mid-<?php echo esc_attr( $key ); ?>" name="<?php echo esc_attr( DZE_Gmc::OPT_ACCOUNTS . '[' . $key . '][merchant_id]' ); ?>" value="<?php echo esc_attr( $acc['merchant_id'] ?? '' ); ?>" class="regular-text" placeholder="e.g. 123456789" />
 					</label>
-					&nbsp;
-					<label><?php esc_html_e( 'Target country', 'dazont-ecom' ); ?>
-						<input type="text" name="<?php echo esc_attr( DZE_Gmc::OPT_ACCOUNTS . '[' . $key . '][country]' ); ?>" value="<?php echo esc_attr( $acc['country'] ?? '' ); ?>" size="4" maxlength="2" placeholder="US" />
+					<button type="button" class="button dze-gmc-verify" data-target="dze-mid-<?php echo esc_attr( $key ); ?>"><?php esc_html_e( 'Verify', 'dazont-ecom' ); ?></button>
+					<span class="dze-gmc-verify-status" style="font-size:13px;margin-left:4px;"></span>
+					<br style="line-height:2.4;">
+					<label><?php esc_html_e( 'Target countries', 'dazont-ecom' ); ?>
+						<input type="text" name="<?php echo esc_attr( DZE_Gmc::OPT_ACCOUNTS . '[' . $key . '][countries]' ); ?>" value="<?php echo esc_attr( $countries_val ); ?>" class="regular-text" placeholder="US, GB, CA, AU" />
 					</label>
 					<?php if ( ! $is_lang ) : ?>
 					&nbsp;
@@ -120,7 +123,10 @@ foreach ( $languages as $l ) {
 			</tr>
 			<?php endforeach; ?>
 		</table>
-		<p class="description"><?php esc_html_e( 'Target country = 2-letter ISO code (US, FR, DE…). It must match the Merchant Center account\'s target country.', 'dazont-ecom' ); ?></p>
+		<p class="description" style="max-width:820px;">
+			<?php esc_html_e( 'Target countries = one or more 2-letter ISO codes, comma-separated. A Google promotion always targets a single country, so the plugin creates one promotion per country listed here.', 'dazont-ecom' ); ?><br>
+			<?php esc_html_e( 'A language is not a country: for English, list every country you actually run promotions in (e.g. US, GB, CA, AU). Each country must be enabled in your Merchant Center Promotions program and the account must sell/ship there. Only the countries you list here are offered as sync targets in the promotions list.', 'dazont-ecom' ); ?>
+		</p>
 
 		<?php submit_button(); ?>
 	</form>
