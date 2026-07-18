@@ -119,12 +119,15 @@ final class DZE_Discounts {
 				if ( $now < $start || $now > $end ) {
 					continue;
 				}
-			}
-			// Per-language activation: the default language is always eligible;
-			// a non-default language is eligible only when the banner text is
-			// translated for it (see rule_effective_languages). WPML only.
-			if ( $current_lang !== '' && ! in_array( $current_lang, $this->rule_effective_languages( $rule ), true ) ) {
-				continue;
+				// Per-language activation applies to scheduled marketing events
+				// only: the default language is always eligible; a non-default
+				// language is eligible only when the banner text is translated
+				// for it (see rule_effective_languages). WPML only. Evergreen
+				// discounts (bulk / bulk_order) are store-wide and never gated
+				// by language.
+				if ( $current_lang !== '' && ! in_array( $current_lang, $this->rule_effective_languages( $rule ), true ) ) {
+					continue;
+				}
 			}
 			$active[ $id ] = $rule;
 		}

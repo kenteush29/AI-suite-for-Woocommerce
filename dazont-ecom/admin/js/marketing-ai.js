@@ -16,7 +16,14 @@
 		}
 		$btn.prop('disabled', true);
 		$status.css('color', '#666').text(i18n.generating);
-		$.post(cfg.ajaxUrl, { action: 'dze_mai_generate', nonce: cfg.nonce, start_date: start, end_date: end })
+		$.post(cfg.ajaxUrl, {
+			action: 'dze_mai_generate',
+			nonce: cfg.nonce,
+			start_date: start,
+			end_date: end,
+			lang: $('#dze-mai-lang').val() || '',
+			countries: $('#dze-mai-countries').val() || ''
+		})
 		.done(function (res) {
 			if (res.success) {
 				$status.css('color', '#0a7040').text('✓ ' + res.data.message);
@@ -50,8 +57,7 @@
 			start_date: $row.find('.dze-f-start').val(),
 			end_date: $row.find('.dze-f-end').val(),
 			languages: $row.find('.dze-f-langs').val(),
-			email_subject: $row.find('.dze-f-subject').val(),
-			klaviyo_email: $row.find('.dze-f-klaviyo').is(':checked') ? 1 : 0
+			email_subject: $row.find('.dze-f-subject').val()
 		})
 		.done(function (res) {
 			if (res.success) {

@@ -8,7 +8,6 @@ defined( 'ABSPATH' ) || exit;
 $sug = wp_parse_args( $sug, [
 	'id' => '', 'title' => '', 'percent' => 0, 'start_date' => '', 'end_date' => '',
 	'languages' => [], 'email_subject' => '', 'rationale' => '', 'countries' => [],
-	'klaviyo_email' => false,
 ] );
 $langs     = implode( ', ', (array) $sug['languages'] );
 $countries = implode( ', ', (array) $sug['countries'] );
@@ -31,7 +30,6 @@ $countries = implode( ', ', (array) $sug['countries'] );
 	<td><input type="date" class="dze-f-start" value="<?php echo esc_attr( $sug['start_date'] ); ?>" /></td>
 	<td><input type="date" class="dze-f-end" value="<?php echo esc_attr( $sug['end_date'] ); ?>" /></td>
 	<td><input type="text" class="dze-f-langs" style="width:90px;" value="<?php echo esc_attr( $langs ); ?>" /></td>
-	<td style="text-align:center;"><input type="checkbox" class="dze-f-klaviyo" <?php checked( ! empty( $sug['klaviyo_email'] ) ); ?> /></td>
 	<td>
 		<button type="button" class="button button-primary dze-mai-accept"><?php esc_html_e( 'Accept', 'dazont-ecom' ); ?></button>
 		<button type="button" class="button-link dze-mai-refuse" style="color:#b32d2e;"><?php esc_html_e( 'Discard', 'dazont-ecom' ); ?></button>

@@ -4,8 +4,10 @@ defined( 'ABSPATH' ) || exit;
  * AI calendar generator + suggestions review — embedded at the top of the
  * Marketing Events page.
  *
- * @var bool  $has_key
- * @var array $suggestions
+ * @var bool   $has_key
+ * @var array  $suggestions
+ * @var array  $languages   Active site languages ([code, native_name, flag]).
+ * @var string $primary     Primary language code (pre-selected).
  */
 $ai_settings_url = add_query_arg( [ 'page' => DZE_Settings::MENU_SLUG, 'tab' => 'ai' ], admin_url( 'admin.php' ) );
 ?>
@@ -19,6 +21,23 @@ $ai_settings_url = add_query_arg( [ 'page' => DZE_Settings::MENU_SLUG, 'tab' => 
 		</p>
 	<?php else : ?>
 		<p>
+			<label><?php esc_html_e( 'Language', 'dazont-ecom' ); ?>
+				<select id="dze-mai-lang">
+					<?php foreach ( $languages as $lng ) :
+						$code = (string) ( $lng['code'] ?? '' );
+						if ( $code === '' ) { continue; } ?>
+						<option value="<?php echo esc_attr( $code ); ?>" <?php selected( $code, $primary ); ?>>
+							<?php echo esc_html( ( $lng['native_name'] ?? strtoupper( $code ) ) . ' (' . strtoupper( $code ) . ')' ); ?>
+						</option>
+					<?php endforeach; ?>
+				</select>
+			</label>
+			&nbsp;
+			<label><?php esc_html_e( 'Countries', 'dazont-ecom' ); ?>
+				<input type="text" id="dze-mai-countries" placeholder="<?php esc_attr_e( 'optional — e.g. FR, BE, CH', 'dazont-ecom' ); ?>" style="width:180px;" />
+			</label>
+		</p>
+		<p>
 			<label><?php esc_html_e( 'From', 'dazont-ecom' ); ?> <input type="date" id="dze-mai-start" /></label>
 			&nbsp;
 			<label><?php esc_html_e( 'To', 'dazont-ecom' ); ?> <input type="date" id="dze-mai-end" /></label>
@@ -26,7 +45,7 @@ $ai_settings_url = add_query_arg( [ 'page' => DZE_Settings::MENU_SLUG, 'tab' => 
 			<button type="button" id="dze-mai-generate" class="button button-primary"><?php esc_html_e( 'Generate suggestions', 'dazont-ecom' ); ?></button>
 			<span id="dze-mai-gen-status" style="margin-left:8px;font-size:13px;"></span>
 		</p>
-		<p class="description"><?php esc_html_e( 'Suggestions are tied to real commercial moments for your languages/countries, using your shop\'s auto-detected profile.', 'dazont-ecom' ); ?> <a href="<?php echo esc_url( $ai_settings_url ); ?>"><?php esc_html_e( 'Adjust countries / see what the AI knows about your shop →', 'dazont-ecom' ); ?></a></p>
+		<p class="description"><?php esc_html_e( 'Suggestions are generated for the chosen language only. Leave Countries blank to use that language\'s default markets.', 'dazont-ecom' ); ?> <a href="<?php echo esc_url( $ai_settings_url ); ?>"><?php esc_html_e( 'Adjust country pools / see what the AI knows about your shop →', 'dazont-ecom' ); ?></a></p>
 	<?php endif; ?>
 
 	<?php if ( ! empty( $suggestions ) ) : ?>
@@ -40,7 +59,6 @@ $ai_settings_url = add_query_arg( [ 'page' => DZE_Settings::MENU_SLUG, 'tab' => 
 					<th style="width:150px;"><?php esc_html_e( 'Start', 'dazont-ecom' ); ?></th>
 					<th style="width:150px;"><?php esc_html_e( 'End', 'dazont-ecom' ); ?></th>
 					<th style="width:110px;"><?php esc_html_e( 'Languages', 'dazont-ecom' ); ?></th>
-					<th style="width:80px;"><?php esc_html_e( 'Klaviyo email', 'dazont-ecom' ); ?></th>
 					<th style="width:150px;"><?php esc_html_e( 'Actions', 'dazont-ecom' ); ?></th>
 				</tr>
 			</thead>

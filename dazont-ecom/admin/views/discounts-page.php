@@ -51,16 +51,16 @@ $gmc_on     = $gmc && $gmc->is_configured();
 			<th><?php esc_html_e( 'Type', 'dazont-ecom' ); ?></th>
 			<th><?php esc_html_e( 'Discount', 'dazont-ecom' ); ?></th>
 			<th><?php esc_html_e( 'Scope', 'dazont-ecom' ); ?></th>
-			<?php if ( ! empty( $languages ) ) : ?><th><?php esc_html_e( 'Languages', 'dazont-ecom' ); ?></th><?php endif; ?>
-			<th><?php esc_html_e( 'Dates', 'dazont-ecom' ); ?></th>
+			<?php if ( $is_events && ! empty( $languages ) ) : ?><th><?php esc_html_e( 'Languages', 'dazont-ecom' ); ?></th><?php endif; ?>
+			<?php if ( $is_events ) : ?><th><?php esc_html_e( 'Dates', 'dazont-ecom' ); ?></th><?php endif; ?>
 			<th><?php esc_html_e( 'Status', 'dazont-ecom' ); ?></th>
 			<?php if ( $gmc_on ) : ?><th><?php esc_html_e( 'GMC sync', 'dazont-ecom' ); ?></th><?php endif; ?>
 			<th></th>
 		</tr></thead>
 		<tbody>
 		<?php if ( empty( $rules ) ) :
-			$colspan = 7 + ( ! empty( $languages ) ? 1 : 0 ) + ( $gmc_on ? 1 : 0 ); ?>
-			<tr><td colspan="<?php echo (int) $colspan; ?>"><?php esc_html_e( 'No promotions yet. Click “Add promotion”.', 'dazont-ecom' ); ?></td></tr>
+			$colspan = 6 + ( $is_events && ! empty( $languages ) ? 1 : 0 ) + ( $is_events ? 1 : 0 ) + ( $gmc_on ? 1 : 0 ); ?>
+			<tr><td colspan="<?php echo (int) $colspan; ?>"><?php echo $is_events ? esc_html__( 'No events yet.', 'dazont-ecom' ) : esc_html__( 'No discounts yet.', 'dazont-ecom' ); ?></td></tr>
 		<?php else : foreach ( $rules as $id => $r ) :
 			$toggle_url = wp_nonce_url( add_query_arg( [ 'action' => 'dze_discount_toggle', 'rule' => $id ], $admin_post ), 'dze_discount_toggle' );
 			$delete_url = wp_nonce_url( add_query_arg( [ 'action' => 'dze_discount_delete', 'rule' => $id ], $admin_post ), 'dze_discount_delete' );
@@ -83,17 +83,18 @@ $gmc_on     = $gmc && $gmc->is_configured();
 				<td><strong><a href="<?php echo esc_url( $edit_url ); ?>"><?php echo esc_html( $r['title'] !== '' ? $r['title'] : '(untitled)' ); ?></a></strong></td>
 				<td><?php echo esc_html( $type_labels[ $r['type'] ] ?? $r['type'] ); ?></td>
 				<td><?php
+				$fmt_pct = static fn( $v ) => rtrim( rtrim( number_format( (float) $v, 2, '.', '' ), '0' ), '.' );
 				if ( ( $r['type'] ?? '' ) === 'bulk_order' ) {
 					$pcts = array_map( static fn( $t ) => (float) ( $t['percent'] ?? 0 ), (array) ( $r['tiers'] ?? [] ) );
 					echo $pcts
-						? esc_html( sprintf( __( 'up to %s%%', 'dazont-ecom' ), rtrim( rtrim( (string) max( $pcts ), '0' ), '.' ) ) )
+						? esc_html( sprintf( __( 'up to %s%%', 'dazont-ecom' ), $fmt_pct( max( $pcts ) ) ) )
 						: '<span style="color:#999;">—</span>';
 				} else {
-					echo esc_html( rtrim( rtrim( (string) ( $r['percent'] ?? 0 ), '0' ), '.' ) ) . '%';
+					echo esc_html( $fmt_pct( $r['percent'] ?? 0 ) ) . '%';
 				}
 				?></td>
 				<td><?php echo esc_html( $scope_txt ); ?></td>
-				<?php if ( ! empty( $languages ) ) : ?>
+				<?php if ( $is_events && ! empty( $languages ) ) : ?>
 				<td>
 					<?php
 					$flags = $controller->rule_language_flags( $r );
@@ -115,6 +116,7 @@ $gmc_on     = $gmc && $gmc->is_configured();
 					?>
 				</td>
 				<?php endif; ?>
+				<?php if ( $is_events ) : ?>
 				<td>
 					<?php if ( ( $r['type'] ?? '' ) === 'sale' ) : ?>
 						<?php echo wp_kses_post( $start_txt ); ?> → <?php echo wp_kses_post( $end_txt ); ?>
@@ -122,6 +124,7 @@ $gmc_on     = $gmc && $gmc->is_configured();
 						<span style="color:#999;">—</span>
 					<?php endif; ?>
 				</td>
+				<?php endif; ?>
 				<td><span style="color:<?php echo esc_attr( $st[0] ); ?>;font-weight:600;"><?php echo esc_html( $st[1] ); ?></span></td>
 				<?php if ( $gmc_on ) : ?>
 				<td>

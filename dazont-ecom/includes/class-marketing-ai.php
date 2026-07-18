@@ -29,6 +29,13 @@ final class DZE_Marketing_Ai {
 	private const API_URL       = 'https://api.anthropic.com/v1/messages';
 	private const API_VERSION   = '2023-06-01';
 	private const MODEL         = 'claude-opus-4-8';
+
+	/** Selectable Claude models (label shown in settings). */
+	public const MODELS = [
+		'claude-opus-4-8'  => 'Claude Opus 4.8 — best quality (default)',
+		'claude-sonnet-5'  => 'Claude Sonnet 5 — faster, cheaper',
+		'claude-haiku-4-5' => 'Claude Haiku 4.5 — fastest, cheapest',
+	];
 	private const SHORTCODE     = 'dze_marketing_calendar';
 	/** Internal safety cap on one generation call — not exposed as a setting. */
 	private const MAX_EVENTS = 20;
@@ -101,8 +108,29 @@ final class DZE_Marketing_Ai {
 		$s = is_array( $s ) ? $s : [];
 		return wp_parse_args( $s, [
 			'api_key'       => '',
+			'model'         => self::MODEL,
 			'country_pools' => [], // lang_code => [ ISO-3166 alpha-2, ... ]
 		] );
+	}
+
+	/** Model to call: wp-config constant overrides the settings choice. */
+	public static function chosen_model(): string {
+		if ( defined( 'DZE_ANTHROPIC_MODEL' ) && DZE_ANTHROPIC_MODEL ) {
+			return (string) DZE_ANTHROPIC_MODEL;
+		}
+		$m = (string) ( self::get_settings()['model'] ?? '' );
+		return array_key_exists( $m, self::MODELS ) ? $m : self::MODEL;
+	}
+
+	/** Primary site language code (WPML default, else the site locale). */
+	public static function primary_language(): string {
+		if ( class_exists( 'DZE_Wpml' ) && DZE_Wpml::is_active() ) {
+			$d = DZE_Wpml::default_language();
+			if ( $d ) {
+				return $d;
+			}
+		}
+		return strtolower( substr( get_locale(), 0, 2 ) );
 	}
 
 	private function api_key(): string {
@@ -150,8 +178,14 @@ final class DZE_Marketing_Ai {
 			}
 		}
 
+		$model = (string) ( $in['model'] ?? '' );
+		if ( ! array_key_exists( $model, self::MODELS ) ) {
+			$model = self::MODEL;
+		}
+
 		return [
 			'api_key'       => sanitize_text_field( $key ),
+			'model'         => $model,
 			'country_pools' => $pools,
 		];
 	}
@@ -384,6 +418,15 @@ final class DZE_Marketing_Ai {
 			wp_send_json_error( [ 'message' => __( 'The start date must be before the end date.', 'dazont-ecom' ) ] );
 		}
 
+		// One language per generation (keeps the calendar simple to read).
+		$lang  = sanitize_key( wp_unslash( $_POST['lang'] ?? '' ) );
+		$valid = array_map( static fn( $l ) => $l['code'], self::active_languages() );
+		if ( ! in_array( $lang, $valid, true ) ) {
+			$lang = self::primary_language();
+		}
+		// Optional country filter; empty = the language's configured pool (or worldwide).
+		$countries = $this->list_codes( explode( ',', (string) wp_unslash( $_POST['countries'] ?? '' ) ), 2 );
+
 		// The Claude call can take up to ~60s; give PHP room beyond typical
 		// 30s shared-host limits so it isn't killed mid-request.
 		if ( function_exists( 'set_time_limit' ) ) {
@@ -391,7 +434,7 @@ final class DZE_Marketing_Ai {
 		}
 
 		try {
-			$events = $this->generate_events( $start, $end );
+			$events = $this->generate_events( $start, $end, $lang, $countries );
 		} catch ( \Throwable $e ) {
 			wp_send_json_error( [ 'message' => $e->getMessage() ] );
 		}
@@ -400,8 +443,7 @@ final class DZE_Marketing_Ai {
 		$existing = self::get_suggestions();
 		foreach ( array_reverse( $events ) as $ev ) {
 			$id = 'sug_' . substr( md5( $ev['title'] . '|' . $ev['start_date'] . '|' . wp_json_encode( $ev['countries'] ) ), 0, 10 );
-			$ev['id']            = $id;
-			$ev['klaviyo_email'] = false;
+			$ev['id'] = $id;
 			$existing = [ $id => $ev ] + $existing;
 		}
 		self::save_suggestions( $existing );
@@ -413,31 +455,32 @@ final class DZE_Marketing_Ai {
 		] );
 	}
 
-	/** Builds the prompt, calls Claude, returns a validated list of events. */
-	private function generate_events( string $start_date, string $end_date ): array {
-		$languages = self::active_languages();
+	/**
+	 * Builds the prompt, calls Claude, returns a validated list of events — for
+	 * a single language, optionally restricted to given countries.
+	 */
+	private function generate_events( string $start_date, string $end_date, string $lang, array $countries ): array {
+		$native = strtoupper( $lang );
+		foreach ( self::active_languages() as $l ) {
+			if ( $l['code'] === $lang ) {
+				$native = $l['native_name'];
+				break;
+			}
+		}
+		if ( empty( $countries ) ) {
+			$countries = self::country_pool_for( $lang );
+		}
+		$country_line = $countries ? implode( ', ', $countries ) : 'all relevant markets worldwide for this language';
 
 		$system = 'You are an expert e-commerce marketing strategist. You design realistic, '
 			. 'high-impact promotional calendars tied to real commercial moments (seasonal sales, '
 			. 'public holidays, shopping events like Black Friday and Cyber Monday, back-to-school, '
-			. 'end-of-season clearances) appropriate to each target country. You reply with JSON only.';
+			. 'end-of-season clearances) appropriate to the target market. You reply with JSON only.';
 
 		$schema = '{"events":[{"title":string (<=60 chars),"type":"sale",'
 			. '"start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","percent":integer 5-70,'
-			. '"countries":[ISO 3166-1 alpha-2 codes],"languages":[ISO 639-1 codes],'
 			. '"email_subject":string (a marketing email subject line, <=80 chars),'
-			. '"rationale":string (one sentence: why this event, for this audience)}]}';
-
-		$lang_blocks = [];
-		foreach ( $languages as $lang ) {
-			$pool          = self::country_pool_for( $lang['code'] );
-			$lang_blocks[] = sprintf(
-				'- %s (%s): eligible countries = %s',
-				$lang['native_name'],
-				strtoupper( $lang['code'] ),
-				$pool ? implode( ', ', $pool ) : '(none configured — pick sensible ones for this language)'
-			);
-		}
+			. '"rationale":string (one short sentence: why this event)}]}';
 
 		$context = $this->shop_context_text();
 		if ( $context === '' ) {
@@ -446,18 +489,22 @@ final class DZE_Marketing_Ai {
 
 		$user = sprintf(
 			"Shop context (auto-detected from the website — trust it):\n%s\n\n"
-			. "Target languages and their eligible countries (only use countries from the "
-			. "matching language's list for that event):\n%s\n\n"
+			. "Write the whole calendar for ONE language only: %s (%s).\n"
+			. "Target market / countries: %s.\n"
+			. "All titles, email subjects and rationales must be written in %s.\n\n"
 			. "Plan promotional events strictly between %s and %s (inclusive) — every date must "
 			. "fall in this window. Propose up to %d distinct events.\n\n"
 			. "Rules:\n"
 			. "- Events must not overlap in time (each has a clear start and end date).\n"
-			. "- Tie each event to a real commercial moment relevant to its target countries.\n"
+			. "- Tie each event to a real commercial moment relevant to the target market.\n"
 			. "- Pick a realistic discount percentage for the occasion and this shop's positioning.\n"
 			. "- Order events chronologically by start_date.\n\n"
 			. "Respond with ONLY a JSON object of this exact shape, no markdown, no commentary:\n%s",
 			$context,
-			implode( "\n", $lang_blocks ),
+			$native,
+			strtoupper( $lang ),
+			$country_line,
+			$native,
 			$start_date,
 			$end_date,
 			self::MAX_EVENTS,
@@ -490,8 +537,8 @@ final class DZE_Marketing_Ai {
 				'start_date'    => $start,
 				'end_date'      => $end,
 				'percent'       => min( 90, max( 1, (int) round( (float) ( $ev['percent'] ?? 0 ) ) ) ),
-				'countries'     => $this->list_codes( $ev['countries'] ?? [], 2 ),
-				'languages'     => $this->list_codes( $ev['languages'] ?? [], 5 ),
+				'countries'     => $countries,   // as chosen at generate time
+				'languages'     => [ $lang ],    // one language per generation
 				'email_subject' => mb_substr( sanitize_text_field( (string) ( $ev['email_subject'] ?? '' ) ), 0, 120 ),
 				'rationale'     => mb_substr( sanitize_text_field( (string) ( $ev['rationale'] ?? '' ) ), 0, 240 ),
 			];
@@ -511,7 +558,7 @@ final class DZE_Marketing_Ai {
 				'content-type'      => 'application/json',
 			],
 			'body'    => wp_json_encode( [
-				'model'      => defined( 'DZE_ANTHROPIC_MODEL' ) ? DZE_ANTHROPIC_MODEL : self::MODEL,
+				'model'      => self::chosen_model(),
 				'max_tokens' => 8000,
 				'system'     => $system,
 				'messages'   => [ [ 'role' => 'user', 'content' => $user ] ],
@@ -608,7 +655,6 @@ final class DZE_Marketing_Ai {
 			'end_date'      => $this->clean_date( wp_unslash( $_POST['end_date'] ?? $src['end_date'] ) ),
 			'languages'     => $this->list_codes( explode( ',', (string) ( $_POST['languages'] ?? implode( ',', $src['languages'] ) ) ), 5 ),
 			'email_subject' => sanitize_text_field( wp_unslash( $_POST['email_subject'] ?? $src['email_subject'] ) ),
-			'klaviyo_email' => ! empty( $_POST['klaviyo_email'] ),
 		];
 		if ( $ev['start_date'] === '' || $ev['end_date'] === '' ) {
 			wp_send_json_error( [ 'message' => __( 'This event needs a valid start and end date.', 'dazont-ecom' ) ] );
@@ -641,7 +687,6 @@ final class DZE_Marketing_Ai {
 	 * Creates a scheduled-sale rule in the Discounts store (shown on the
 	 * Marketing Events page) from an accepted event. Saved DISABLED: only one
 	 * event can be active at a time, so the user reviews and enables it there.
-	 * Carries the `klaviyo_email` tracking flag.
 	 */
 	private function create_sale_rule( array $ev ): string {
 		if ( ! class_exists( 'DZE_Discounts' ) ) {
@@ -678,7 +723,6 @@ final class DZE_Marketing_Ai {
 			'hero_event_id'    => 0,
 			// Marketing-AI metadata (ignored by Discounts, used by the calendar).
 			'source'         => 'ai',
-			'klaviyo_email'  => (bool) $ev['klaviyo_email'],
 			'email_subject'  => $ev['email_subject'],
 		];
 		update_option( DZE_Discounts::OPTION, $rules, false );
@@ -711,6 +755,8 @@ final class DZE_Marketing_Ai {
 	public function render_calendar_panel(): void {
 		$has_key     = $this->api_key() !== '';
 		$suggestions = self::get_suggestions();
+		$languages   = self::active_languages();
+		$primary     = self::primary_language();
 		require DZE_DIR . 'admin/views/marketing-ai-panel.php';
 
 		echo '<h2 class="title" style="margin-top:24px;">' . esc_html__( 'Calendar', 'dazont-ecom' ) . '</h2>';
@@ -742,7 +788,6 @@ final class DZE_Marketing_Ai {
 				'title'   => (string) ( $rule['title'] ?? '' ),
 				'percent' => (int) round( (float) ( $rule['percent'] ?? 0 ) ),
 				'enabled' => ! empty( $rule['enabled'] ),
-				'klaviyo' => ! empty( $rule['klaviyo_email'] ),
 			];
 		}
 		return $events;
@@ -919,20 +964,18 @@ final class DZE_Marketing_Ai {
 		foreach ( $events as $rule ) {
 			$live    = ( $rule['start'] <= $today && $today <= $rule['end'] && ! empty( $rule['enabled'] ) );
 			$percent = (int) round( (float) ( $rule['percent'] ?? 0 ) );
-			$klaviyo = ! empty( $rule['klaviyo_email'] );
 			printf(
 				'<div class="dze-mktcal__item%s">'
 					. '<div class="dze-mktcal__dates">%s → %s</div>'
 					. '<div class="dze-mktcal__title">%s</div>'
-					. '<div class="dze-mktcal__meta"><span class="dze-mktcal__pct">-%d%%</span>%s%s</div>'
+					. '<div class="dze-mktcal__meta"><span class="dze-mktcal__pct">-%d%%</span>%s</div>'
 					. '</div>',
 				$live ? ' is-live' : '',
 				esc_html( $fmt( (string) $rule['start'] ) ),
 				esc_html( $fmt( (string) $rule['end'] ) ),
 				esc_html( (string) ( $rule['title'] ?? '' ) ),
 				$percent,
-				$live ? ' <span class="dze-mktcal__live">' . esc_html__( 'Live now', 'dazont-ecom' ) . '</span>' : '',
-				$klaviyo ? ' <span class="dze-mktcal__mail">' . esc_html__( '✉ Email', 'dazont-ecom' ) . '</span>' : ''
+				$live ? ' <span class="dze-mktcal__live">' . esc_html__( 'Live now', 'dazont-ecom' ) . '</span>' : ''
 			);
 		}
 		echo '</div>';
@@ -945,7 +988,6 @@ final class DZE_Marketing_Ai {
 			. '.dze-mktcal__meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}'
 			. '.dze-mktcal__pct{background:#111;color:#fff;border-radius:6px;padding:2px 8px;font-weight:700;font-size:13px;}'
 			. '.dze-mktcal__live{color:#0a7040;font-weight:600;font-size:12px;}'
-			. '.dze-mktcal__mail{color:#555;font-size:12px;}'
 			. '</style>';
 		return (string) ob_get_clean();
 	}

@@ -124,7 +124,7 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 			<?php endif; ?>
 		</table>
 
-		<?php if ( ! empty( $languages ) ) :
+		<?php if ( $is_events && ! empty( $languages ) ) :
 			$rule_langs = (array) ( $editing['languages'] ?? [] ); ?>
 		<h3><?php esc_html_e( 'Languages', 'dazont-ecom' ); ?></h3>
 		<table class="form-table" role="presentation">

@@ -38,6 +38,31 @@ defined( 'ABSPATH' ) || exit;
 		</tr>
 	</table>
 
+	<h2 class="title"><?php esc_html_e( 'Claude model', 'dazont-ecom' ); ?></h2>
+	<table class="form-table" role="presentation">
+		<tr>
+			<th scope="row"><label for="dze-mai-model"><?php esc_html_e( 'Model', 'dazont-ecom' ); ?></label></th>
+			<td>
+				<?php
+				$model_locked = defined( 'DZE_ANTHROPIC_MODEL' );
+				$current      = DZE_Marketing_Ai::chosen_model();
+				if ( $model_locked ) : ?>
+					<div class="notice notice-info inline"><p><?php
+						/* translators: %s: model identifier */
+						printf( esc_html__( 'Fixed by the DZE_ANTHROPIC_MODEL constant (%s).', 'dazont-ecom' ), '<code>' . esc_html( $current ) . '</code>' );
+					?></p></div>
+				<?php else : ?>
+					<select id="dze-mai-model" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[model]' ); ?>">
+						<?php foreach ( DZE_Marketing_Ai::MODELS as $id => $label ) : ?>
+							<option value="<?php echo esc_attr( $id ); ?>" <?php selected( $id, $current ); ?>><?php echo esc_html( $label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<p class="description"><?php esc_html_e( 'Used to generate marketing suggestions. Higher-quality models cost more per request.', 'dazont-ecom' ); ?></p>
+				<?php endif; ?>
+			</td>
+		</tr>
+	</table>
+
 	<h2 class="title"><?php esc_html_e( 'Languages detected', 'dazont-ecom' ); ?></h2>
 	<p class="description" style="max-width:820px;">
 		<?php echo class_exists( 'DZE_Wpml' ) && DZE_Wpml::is_active()
