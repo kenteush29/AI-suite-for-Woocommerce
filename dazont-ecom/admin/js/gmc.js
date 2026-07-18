@@ -69,13 +69,34 @@
 	});
 
 	// ---- Discounts list: sync one / sync selected ----
+	// Flattens the { ruleId: { "lang|COUNTRY": {status,message} } } response
+	// into a short, human-readable outcome so a sync is never silent.
+	function summarize(results) {
+		var parts = [], ok = 0, err = 0, total = 0;
+		Object.keys(results || {}).forEach(function (rid) {
+			var statuses = results[rid] || {};
+			Object.keys(statuses).forEach(function (sk) {
+				total++;
+				var s = statuses[sk] || {};
+				var country = sk.split('|').pop();
+				if (s.status === 'synced') { ok++; parts.push(country + ': ✓'); }
+				else { err++; parts.push(country + ': ' + (s.message || 'error')); }
+			});
+		});
+		if (total === 0) {
+			return { color: '#b32d2e', text: 'No sync target — check the promo has start+end dates and at least one target country configured.' };
+		}
+		return { color: err ? '#b32d2e' : '#0a7040', text: (err ? '✕ ' : '✓ ') + parts.join('  |  ') };
+	}
+
 	function sync(ids, $feedback) {
 		if (!ids.length) { return; }
 		if ($feedback) { $feedback.css('color', '#666').text(i18n.syncing); }
 		$.post(cfg.ajaxUrl, { action: 'dze_gmc_sync', nonce: cfg.nonce, ids: ids })
 		.done(function (res) {
 			if (res.success) {
-				window.location.reload();
+				var out = summarize(res.data && res.data.results);
+				if ($feedback) { $feedback.css('color', out.color).text(out.text); }
 			} else if ($feedback) {
 				$feedback.css('color', '#b32d2e').text((res.data && res.data.message) || i18n.error);
 			}
