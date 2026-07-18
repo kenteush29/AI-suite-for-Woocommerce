@@ -93,6 +93,23 @@ foreach ( $languages as $l ) {
 		<?php endif; ?>
 		</details>
 
+		<h2 class="title"><?php esc_html_e( 'Advanced (parent) account', 'dazont-ecom' ); ?></h2>
+		<table class="form-table" role="presentation">
+			<tr>
+				<th scope="row"><label for="dze-advanced-id"><?php esc_html_e( 'Advanced account ID', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<input type="text" id="dze-advanced-id" name="<?php echo esc_attr( DZE_Gmc::OPT_ADVANCED ); ?>" value="<?php echo esc_attr( $advanced ); ?>" class="regular-text" placeholder="e.g. 5581304506" />
+					<button type="button" class="button dze-gmc-register" data-target="dze-advanced-id"><?php esc_html_e( 'Register GCP', 'dazont-ecom' ); ?></button>
+					<button type="button" class="button dze-gmc-verify" data-target="dze-advanced-id"><?php esc_html_e( 'Verify', 'dazont-ecom' ); ?></button>
+					<span class="dze-gmc-verify-status" style="font-size:13px;margin-left:4px;"></span>
+					<p class="description" style="max-width:820px;">
+						<?php esc_html_e( 'If your Merchant Center is an advanced account with sub-accounts (one per domain/country, e.g. .fr, .de, .es, .com), enter the parent account ID here and click “Register GCP” once. Google requires the developer registration on the account where your user exists — the parent — not on each sub-account. After ~5 minutes, syncing to the sub-accounts below works.', 'dazont-ecom' ); ?><br>
+						<?php esc_html_e( 'Save this field first, then click Register GCP.', 'dazont-ecom' ); ?>
+					</p>
+				</td>
+			</tr>
+		</table>
+
 		<h2 class="title"><?php esc_html_e( 'Merchant accounts per language', 'dazont-ecom' ); ?></h2>
 		<table class="form-table" role="presentation">
 			<?php foreach ( $keys as $key ) :
@@ -108,7 +125,6 @@ foreach ( $languages as $l ) {
 						<input type="text" id="dze-mid-<?php echo esc_attr( $key ); ?>" name="<?php echo esc_attr( DZE_Gmc::OPT_ACCOUNTS . '[' . $key . '][merchant_id]' ); ?>" value="<?php echo esc_attr( $acc['merchant_id'] ?? '' ); ?>" class="regular-text" placeholder="e.g. 123456789" />
 					</label>
 					<button type="button" class="button dze-gmc-verify" data-target="dze-mid-<?php echo esc_attr( $key ); ?>"><?php esc_html_e( 'Verify', 'dazont-ecom' ); ?></button>
-					<button type="button" class="button dze-gmc-register" data-target="dze-mid-<?php echo esc_attr( $key ); ?>"><?php esc_html_e( 'Register GCP', 'dazont-ecom' ); ?></button>
 					<span class="dze-gmc-verify-status" style="font-size:13px;margin-left:4px;"></span>
 					<br style="line-height:2.4;">
 					<label><?php esc_html_e( 'Target countries', 'dazont-ecom' ); ?>
@@ -130,7 +146,7 @@ foreach ( $languages as $l ) {
 		</p>
 		<p class="description" style="max-width:820px;">
 			<strong><?php esc_html_e( 'First time?', 'dazont-ecom' ); ?></strong>
-			<?php esc_html_e( 'Click “Register GCP” once per account. This registers your Google Cloud project with the merchant account (required before the Merchant API accepts calls). After registering, wait about 5 minutes, then use Verify / Sync.', 'dazont-ecom' ); ?>
+			<?php esc_html_e( 'Register your Google Cloud project once, using the Advanced (parent) account above — or, for a standalone Merchant Center, using the single account ID. This is required before the Merchant API accepts calls. After registering, wait about 5 minutes, then use Verify / Sync.', 'dazont-ecom' ); ?>
 		</p>
 
 		<?php submit_button(); ?>

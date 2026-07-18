@@ -31,6 +31,7 @@ final class DZE_Gmc {
 	public const OPT_OAUTH       = 'dze_gmc_oauth';        // OAuth client (id/secret) — form-managed.
 	public const OPT_CONNECTION  = 'dze_gmc_connection';   // Connected account (refresh token/email) — flow-managed only.
 	public const OPT_DATASOURCES = 'dze_gmc_datasources';  // Resolved promotion data source names, keyed by account|country|lang.
+	public const OPT_ADVANCED    = 'dze_gmc_advanced';     // Advanced/parent (MCA) account ID — used for GCP developer registration.
 
 	// Merchant API (replaces Content API for Shopping v2.1). v1beta was
 	// discontinued on 28 Feb 2026, so all sub-APIs are pinned to v1.
@@ -167,6 +168,12 @@ final class DZE_Gmc {
 		register_setting( 'dze_gmc_options', self::OPT_CREDENTIALS, [ 'sanitize_callback' => [ $this, 'sanitize_credentials' ] ] );
 		register_setting( 'dze_gmc_options', self::OPT_ACCOUNTS, [ 'sanitize_callback' => [ $this, 'sanitize_accounts' ] ] );
 		register_setting( 'dze_gmc_options', self::OPT_OAUTH, [ 'sanitize_callback' => [ $this, 'sanitize_oauth' ], 'autoload' => false ] );
+		register_setting( 'dze_gmc_options', self::OPT_ADVANCED, [ 'sanitize_callback' => [ $this, 'sanitize_advanced' ], 'autoload' => false ] );
+	}
+
+	/** Advanced (parent/MCA) account ID used for GCP developer registration. */
+	public function sanitize_advanced( $value ): string {
+		return preg_replace( '/[^0-9]/', '', (string) $value );
 	}
 
 	/**
@@ -437,6 +444,7 @@ final class DZE_Gmc {
 		$oauth_ready   = ! empty( $oauth['client_id'] ) && ! empty( $oauth['client_secret'] );
 		$connected     = ! empty( $connection['refresh_token'] );
 		$authorize_url = $oauth_ready ? $this->oauth_authorize_url() : '';
+		$advanced      = (string) get_option( self::OPT_ADVANCED, '' );
 		require DZE_DIR . 'admin/views/gmc-settings.php';
 	}
 
