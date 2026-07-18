@@ -52,12 +52,16 @@ defined( 'ABSPATH' ) || exit;
 						printf( esc_html__( 'Fixed by the DZE_ANTHROPIC_MODEL constant (%s).', 'dazont-ecom' ), '<code>' . esc_html( $current ) . '</code>' );
 					?></p></div>
 				<?php else : ?>
+					<?php $models = DZE_Marketing_Ai::available_models();
+					if ( ! array_key_exists( $current, $models ) ) {
+						$models = [ $current => $current ] + $models; // keep a saved-but-unlisted id selectable.
+					} ?>
 					<select id="dze-mai-model" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[model]' ); ?>">
-						<?php foreach ( DZE_Marketing_Ai::MODELS as $id => $label ) : ?>
+						<?php foreach ( $models as $id => $label ) : ?>
 							<option value="<?php echo esc_attr( $id ); ?>" <?php selected( $id, $current ); ?>><?php echo esc_html( $label ); ?></option>
 						<?php endforeach; ?>
 					</select>
-					<p class="description"><?php esc_html_e( 'Used to generate marketing suggestions. Higher-quality models cost more per request.', 'dazont-ecom' ); ?></p>
+					<p class="description"><?php esc_html_e( 'Pulled live from your Anthropic account (refreshed every 12h), so new Claude models appear automatically. Higher-quality models cost more per request.', 'dazont-ecom' ); ?></p>
 				<?php endif; ?>
 			</td>
 		</tr>
@@ -114,6 +118,20 @@ defined( 'ABSPATH' ) || exit;
 				</td>
 			</tr>
 		<?php endforeach; ?>
+	</table>
+
+	<h2 class="title"><?php esc_html_e( 'Shop catalog context', 'dazont-ecom' ); ?></h2>
+	<table class="form-table" role="presentation">
+		<tr>
+			<th scope="row"><?php esc_html_e( 'Use catalog & sales data', 'dazont-ecom' ); ?></th>
+			<td>
+				<label>
+					<input type="checkbox" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[use_catalog]' ); ?>" value="1" <?php checked( ! empty( $settings['use_catalog'] ) ); ?> />
+					<?php esc_html_e( 'Include my product categories and best-sellers in the AI context', 'dazont-ecom' ); ?>
+				</label>
+				<p class="description" style="max-width:820px;"><?php esc_html_e( 'The marketing calendar is driven by real commercial moments (Black Friday, seasonal sales, holidays…), which rarely depend on your exact catalog. If suggestions feel off, turn this off so the AI focuses purely on the calendar and target market.', 'dazont-ecom' ); ?></p>
+			</td>
+		</tr>
 	</table>
 
 	<?php submit_button( __( 'Save configuration', 'dazont-ecom' ) ); ?>

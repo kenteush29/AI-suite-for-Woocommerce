@@ -266,10 +266,10 @@ final class DZE_Discounts {
 		}
 
 		$has_sale = ! empty( $this->rules_of_type( 'sale' ) );
-		// Both discount types show as a labelled negative line in the cart
-		// (like a promo code): "Bundle" (bulk offer per item) and "Wholesale"
-		// (bulk order tiers).
-		$has_fees = ! empty( $this->rules_of_type( 'bulk' ) ) || ! empty( $this->rules_of_type( 'bulk_order' ) );
+		// Both discount types reduce the live cart line price so the saving
+		// shows everywhere the customer looks — mini-cart, cart page and
+		// checkout (WooCommerce fee lines never reach the mini-cart).
+		$has_bulk = ! empty( $this->rules_of_type( 'bulk' ) ) || ! empty( $this->rules_of_type( 'bulk_order' ) );
 
 		if ( $has_sale ) {
 			add_filter( 'woocommerce_product_get_price',                 [ $this, 'filter_price' ], 20, 2 );
@@ -314,8 +314,12 @@ final class DZE_Discounts {
 			}
 		}
 
-		if ( $has_fees ) {
-			add_action( 'woocommerce_cart_calculate_fees', [ $this, 'apply_cart_fees' ], 20, 1 );
+		if ( $has_bulk ) {
+			// Reduce the live line price so the mini-cart reflects it instantly.
+			add_action( 'woocommerce_before_calculate_totals', [ $this, 'apply_cart_item_discounts' ], 20, 1 );
+			// Show the original price struck through next to the discounted one,
+			// in the mini-cart and on the cart/checkout, like a real promo.
+			add_filter( 'woocommerce_cart_item_price', [ $this, 'cart_item_price_html' ], 20, 3 );
 		}
 	}
 
@@ -423,50 +427,78 @@ final class DZE_Discounts {
 	// =========================================================================
 
 	/**
-	 * Both discounts show as a labelled negative line in the cart (like a promo
-	 * code): "Bundle" for the per-item bulk offer, "Wholesale" for the tiered
-	 * bulk order.
+	 * Reduces each cart line's live unit price by the discount that applies to
+	 * it, so the saving is reflected instantly everywhere — mini-cart, cart page
+	 * and checkout. Two discounts can stack on the same item:
+	 *   • Bundle   — per-item bulk offer (same product, qty ≥ threshold);
+	 *   • Wholesale — the winning bulk-order tier for the whole cart.
+	 * The original price is preserved for the struck-through display.
 	 */
-	public function apply_cart_fees( $cart ): void {
+	public function apply_cart_item_discounts( $cart ): void {
 		if ( ! $cart instanceof \WC_Cart || ( is_admin() && ! wp_doing_ajax() ) ) {
 			return;
 		}
-		$decimals = function_exists( 'wc_get_price_decimals' ) ? wc_get_price_decimals() : 2;
+		// WooCommerce fires this hook several times per request and set_price()
+		// mutates the in-memory product, so only touch prices on the first pass
+		// to avoid compounding the discount.
+		if ( did_action( 'woocommerce_before_calculate_totals' ) >= 2 ) {
+			return;
+		}
 
-		// --- Bundle: bulk offer per item (same product, qty ≥ threshold) ---
-		$bundle = 0.0;
-		foreach ( $cart->get_cart() as $item ) {
+		$decimals = function_exists( 'wc_get_price_decimals' ) ? wc_get_price_decimals() : 2;
+		[ $wholesale_rule, $wholesale_pct ] = $this->winning_bulk_order( $cart );
+
+		foreach ( $cart->get_cart() as $key => $item ) {
 			$product = $item['data'] ?? null;
 			if ( ! $product instanceof \WC_Product ) {
 				continue;
 			}
-			$qty     = (int) $item['quantity'];
-			$percent = $this->bulk_percent_for( $product, $qty );
-			if ( $percent <= 0 ) {
+			$base = (float) $product->get_price(); // already sale-adjusted if a sale event runs.
+			if ( $base <= 0 ) {
 				continue;
 			}
-			$bundle += ( (float) $product->get_price() * $qty ) * ( $percent / 100 );
-		}
-		if ( $bundle > 0 ) {
-			$cart->add_fee( __( 'Bundle', 'dazont-ecom' ), -1 * round( $bundle, $decimals ), false );
-		}
+			$qty = (int) $item['quantity'];
 
-		// --- Wholesale: bulk order (tiered, with optional min conditions) ---
-		$wholesale = $this->wholesale_discount( $cart );
-		if ( $wholesale > 0 ) {
-			$cart->add_fee( __( 'Wholesale', 'dazont-ecom' ), -1 * round( $wholesale, $decimals ), false );
+			$pct = $this->bulk_percent_for( $product, $qty ); // Bundle (per item).
+			if ( $wholesale_rule && $this->product_in_scope( $wholesale_rule, $product->get_id(), $product->get_parent_id() ) ) {
+				$pct += $wholesale_pct; // Wholesale (whole order).
+			}
+			if ( $pct <= 0 ) {
+				continue;
+			}
+			$pct = min( $pct, 100.0 );
+
+			$product->set_price( round( $base * ( 1 - $pct / 100 ), $decimals ) );
+			// Stashed for the struck-through price display (refreshed every pass).
+			$cart->cart_contents[ $key ]['dze_base_price'] = $base;
+			$cart->cart_contents[ $key ]['dze_disc_pct']   = $pct;
 		}
 	}
 
 	/**
-	 * Best bulk-order discount amount for the cart. Each rule gates on an
-	 * optional minimum subtotal and/or minimum total quantity (a 0 means "no
-	 * requirement"; any set requirement must be met — AND). Within a rule, the
-	 * highest matching quantity tier wins; across rules, the biggest discount
+	 * Shows the original unit price struck through beside the discounted one,
+	 * wherever WooCommerce renders the cart-item price (mini-cart included).
+	 */
+	public function cart_item_price_html( $price_html, $item, $key ) {
+		if ( empty( $item['dze_disc_pct'] ) || ! isset( $item['dze_base_price'] ) ) {
+			return $price_html;
+		}
+		$base = (float) $item['dze_base_price'];
+		$new  = $base * ( 1 - (float) $item['dze_disc_pct'] / 100 );
+		return '<del aria-hidden="true">' . wc_price( $base ) . '</del> <ins style="text-decoration:none;">' . wc_price( $new ) . '</ins>';
+	}
+
+	/**
+	 * Winning bulk-order rule for the cart, as [ rule|null, percent ]. Each rule
+	 * gates on an optional minimum subtotal and/or minimum total quantity (0 = no
+	 * requirement; any set requirement must be met — AND). Within a rule the
+	 * highest matching quantity tier wins; across rules the biggest total saving
 	 * wins — always in the customer's favour.
 	 */
-	private function wholesale_discount( \WC_Cart $cart ): float {
-		$best = 0.0;
+	private function winning_bulk_order( \WC_Cart $cart ): array {
+		$best_rule   = null;
+		$best_pct    = 0.0;
+		$best_amount = 0.0;
 		foreach ( $this->rules_of_type( 'bulk_order' ) as $rule ) {
 			$subtotal = 0.0;
 			$qty      = 0;
@@ -507,9 +539,14 @@ final class DZE_Discounts {
 				continue;
 			}
 
-			$best = max( $best, $subtotal * ( $percent / 100 ) );
+			$amount = $subtotal * ( $percent / 100 );
+			if ( $amount > $best_amount ) {
+				$best_amount = $amount;
+				$best_pct    = $percent;
+				$best_rule   = $rule;
+			}
 		}
-		return $best;
+		return [ $best_rule, $best_pct ];
 	}
 
 	// =========================================================================

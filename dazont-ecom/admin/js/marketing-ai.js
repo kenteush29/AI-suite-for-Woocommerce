@@ -27,8 +27,12 @@
 		.done(function (res) {
 			if (res.success) {
 				$status.css('color', '#0a7040').text('✓ ' + res.data.message);
-				// Reload to render the new suggestion rows server-side.
-				window.location.reload();
+				if (res.data.count > 0) {
+					// Reload to render the new suggestion rows server-side.
+					window.location.reload();
+				} else {
+					$btn.prop('disabled', false);
+				}
 			} else {
 				$status.css('color', '#b32d2e').text('✕ ' + ((res.data && res.data.message) || i18n.error));
 				$btn.prop('disabled', false);
@@ -41,14 +45,12 @@
 		});
 	});
 
-	// ---- Accept a suggestion (with inline edits) ----
-	$(document).on('click', '.dze-mai-accept', function () {
-		var $row    = $(this).closest('.dze-mai-row');
+	// ---- Accept one suggestion (with its inline edits). Returns a promise. ----
+	function acceptRow($row) {
 		var $status = $row.find('.dze-mai-row-status');
-		var $btn    = $(this);
-		$btn.prop('disabled', true);
+		$row.find('.dze-mai-accept').prop('disabled', true);
 		$status.css('color', '#666').text(i18n.accepting);
-		$.post(cfg.ajaxUrl, {
+		return $.post(cfg.ajaxUrl, {
 			action: 'dze_mai_accept',
 			nonce: cfg.nonce,
 			id: $row.data('id'),
@@ -64,21 +66,55 @@
 				$row.fadeOut(200, function () { $(this).remove(); });
 			} else {
 				$status.css('color', '#b32d2e').text((res.data && res.data.message) || i18n.error);
-				$btn.prop('disabled', false);
+				$row.find('.dze-mai-accept').prop('disabled', false);
 			}
 		})
 		.fail(function () {
 			$status.css('color', '#b32d2e').text(i18n.error);
-			$btn.prop('disabled', false);
+			$row.find('.dze-mai-accept').prop('disabled', false);
+		});
+	}
+
+	// ---- Discard one suggestion. Returns a promise. ----
+	function refuseRow($row) {
+		return $.post(cfg.ajaxUrl, { action: 'dze_mai_refuse', nonce: cfg.nonce, id: $row.data('id') })
+			.always(function () { $row.fadeOut(200, function () { $(this).remove(); }); });
+	}
+
+	$(document).on('click', '.dze-mai-accept', function () { acceptRow($(this).closest('.dze-mai-row')); });
+
+	$(document).on('click', '.dze-mai-refuse', function () {
+		if (!window.confirm(i18n.confirmRef)) { return; }
+		refuseRow($(this).closest('.dze-mai-row'));
+	});
+
+	// ---- Select all ----
+	$(document).on('change', '#dze-mai-check-all', function () {
+		$('#dze-mai-suggestions .dze-mai-cb').prop('checked', $(this).is(':checked'));
+	});
+
+	function selectedRows() {
+		return $('#dze-mai-suggestions .dze-mai-cb:checked').closest('.dze-mai-row');
+	}
+
+	// ---- Bulk accept ----
+	$(document).on('click', '.dze-mai-bulk-accept', function () {
+		var $rows = selectedRows();
+		if (!$rows.length) { return; }
+		var $status = $('#dze-mai-bulk-status');
+		$status.css('color', '#666').text(i18n.accepting + ' (' + $rows.length + ')');
+		var jobs = $rows.map(function () { return acceptRow($(this)); }).get();
+		$.when.apply($, jobs).always(function () {
+			$status.css('color', '#0a7040').text('✓');
 		});
 	});
 
-	// ---- Discard a suggestion ----
-	$(document).on('click', '.dze-mai-refuse', function () {
-		if (!window.confirm(i18n.confirmRef)) { return; }
-		var $row = $(this).closest('.dze-mai-row');
-		$.post(cfg.ajaxUrl, { action: 'dze_mai_refuse', nonce: cfg.nonce, id: $row.data('id') })
-		.always(function () { $row.fadeOut(200, function () { $(this).remove(); }); });
+	// ---- Bulk discard ----
+	$(document).on('click', '.dze-mai-bulk-refuse', function () {
+		var $rows = selectedRows();
+		if (!$rows.length) { return; }
+		if (!window.confirm(i18n.confirmRefBulk)) { return; }
+		$rows.each(function () { refuseRow($(this)); });
 	});
 
 }(jQuery));

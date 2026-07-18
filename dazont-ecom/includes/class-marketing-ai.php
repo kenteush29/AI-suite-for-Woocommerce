@@ -91,6 +91,7 @@ final class DZE_Marketing_Ai {
 		add_action( 'admin_init',            [ $this, 'register_settings' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_dashboard_setup',    [ $this, 'register_dashboard_widget' ] );
+		add_action( 'admin_footer-index.php', [ $this, 'dashboard_fullwidth_script' ] );
 		add_action( 'wp_ajax_dze_mai_generate', [ $this, 'ajax_generate' ] );
 		add_action( 'wp_ajax_dze_mai_accept',   [ $this, 'ajax_accept' ] );
 		add_action( 'wp_ajax_dze_mai_refuse',   [ $this, 'ajax_refuse' ] );
@@ -109,6 +110,7 @@ final class DZE_Marketing_Ai {
 		return wp_parse_args( $s, [
 			'api_key'       => '',
 			'model'         => self::MODEL,
+			'use_catalog'   => true, // feed shop categories/best-sellers to the AI.
 			'country_pools' => [], // lang_code => [ ISO-3166 alpha-2, ... ]
 		] );
 	}
@@ -119,7 +121,47 @@ final class DZE_Marketing_Ai {
 			return (string) DZE_ANTHROPIC_MODEL;
 		}
 		$m = (string) ( self::get_settings()['model'] ?? '' );
-		return array_key_exists( $m, self::MODELS ) ? $m : self::MODEL;
+		return ( $m !== '' && strpos( $m, 'claude' ) === 0 ) ? $m : self::MODEL;
+	}
+
+	/**
+	 * Selectable Claude models, id => label. Pulled live from the Anthropic API
+	 * (cached 12h) so the list stays current; falls back to the built-in set
+	 * when no key is set or the request fails.
+	 */
+	public static function available_models(): array {
+		$key = self::api_key();
+		if ( $key === '' ) {
+			return self::MODELS;
+		}
+		$cached = get_transient( 'dze_mai_models' );
+		if ( is_array( $cached ) && ! empty( $cached ) ) {
+			return $cached;
+		}
+		$resp = wp_remote_get( 'https://api.anthropic.com/v1/models?limit=100', [
+			'timeout' => 15,
+			'headers' => [
+				'x-api-key'         => $key,
+				'anthropic-version' => self::API_VERSION,
+			],
+		] );
+		if ( is_wp_error( $resp ) || (int) wp_remote_retrieve_response_code( $resp ) !== 200 ) {
+			return self::MODELS;
+		}
+		$body = json_decode( (string) wp_remote_retrieve_body( $resp ), true );
+		$out  = [];
+		foreach ( (array) ( $body['data'] ?? [] ) as $m ) {
+			$id = (string) ( $m['id'] ?? '' );
+			if ( $id === '' || strpos( $id, 'claude' ) !== 0 ) {
+				continue;
+			}
+			$out[ $id ] = (string) ( $m['display_name'] ?? $id ); // API lists newest first.
+		}
+		if ( empty( $out ) ) {
+			return self::MODELS;
+		}
+		set_transient( 'dze_mai_models', $out, 12 * HOUR_IN_SECONDS );
+		return $out;
 	}
 
 	/** Primary site language code (WPML default, else the site locale). */
@@ -133,7 +175,7 @@ final class DZE_Marketing_Ai {
 		return strtolower( substr( get_locale(), 0, 2 ) );
 	}
 
-	private function api_key(): string {
+	public static function api_key(): string {
 		if ( defined( 'DZE_ANTHROPIC_API_KEY' ) && DZE_ANTHROPIC_API_KEY ) {
 			return (string) DZE_ANTHROPIC_API_KEY;
 		}
@@ -179,13 +221,19 @@ final class DZE_Marketing_Ai {
 		}
 
 		$model = (string) ( $in['model'] ?? '' );
-		if ( ! array_key_exists( $model, self::MODELS ) ) {
+		if ( $model === '' || strpos( $model, 'claude' ) !== 0 ) {
 			$model = self::MODEL;
+		}
+
+		// A new key may unlock a different model list — refresh it next read.
+		if ( $key !== (string) $existing['api_key'] ) {
+			delete_transient( 'dze_mai_models' );
 		}
 
 		return [
 			'api_key'       => sanitize_text_field( $key ),
 			'model'         => $model,
+			'use_catalog'   => ! empty( $in['use_catalog'] ),
 			'country_pools' => $pools,
 		];
 	}
@@ -387,11 +435,15 @@ final class DZE_Marketing_Ai {
 		if ( null !== $c['price_min'] ) {
 			$lines[] = sprintf( 'Typical price range: %s–%s %s', $c['price_min'], $c['price_max'], $c['currency'] );
 		}
-		if ( ! empty( $c['categories'] ) ) {
-			$lines[] = sprintf( 'Top categories by sales volume (highest first): %s', implode( ', ', $c['categories'] ) );
-		}
-		if ( ! empty( $c['products'] ) ) {
-			$lines[] = sprintf( 'Best-selling products (highest first): %s', implode( ', ', $c['products'] ) );
+		// Catalog / sales signals are optional — some shops find them noise for a
+		// calendar driven by well-known commercial moments.
+		if ( ! empty( self::get_settings()['use_catalog'] ) ) {
+			if ( ! empty( $c['categories'] ) ) {
+				$lines[] = sprintf( 'Product categories (best-selling first): %s', implode( ', ', $c['categories'] ) );
+			}
+			if ( ! empty( $c['products'] ) ) {
+				$lines[] = sprintf( 'Best-selling products (highest first): %s', implode( ', ', $c['products'] ) );
+			}
 		}
 		return implode( "\n", $lines );
 	}
@@ -448,10 +500,13 @@ final class DZE_Marketing_Ai {
 		}
 		self::save_suggestions( $existing );
 
+		$count = count( $events );
 		wp_send_json_success( [
-			'count'   => count( $events ),
-			/* translators: %d: number of generated marketing events */
-			'message' => sprintf( __( '%d suggestions generated.', 'dazont-ecom' ), count( $events ) ),
+			'count'   => $count,
+			'message' => $count === 0
+				? __( 'No notable commercial moment found in this window — nothing to suggest. Try a longer or different date range.', 'dazont-ecom' )
+				/* translators: %d: number of generated marketing events */
+				: sprintf( _n( '%d suggestion generated.', '%d suggestions generated.', $count, 'dazont-ecom' ), $count ),
 		] );
 	}
 
@@ -472,15 +527,20 @@ final class DZE_Marketing_Ai {
 		}
 		$country_line = $countries ? implode( ', ', $countries ) : 'all relevant markets worldwide for this language';
 
-		$system = 'You are an expert e-commerce marketing strategist. You design realistic, '
-			. 'high-impact promotional calendars tied to real commercial moments (seasonal sales, '
-			. 'public holidays, shopping events like Black Friday and Cyber Monday, back-to-school, '
-			. 'end-of-season clearances) appropriate to the target market. You reply with JSON only.';
+		$system = 'You are an expert e-commerce marketing strategist. You build promotional '
+			. 'calendars strictly around genuine, widely-recognised commercial moments for the '
+			. 'target market — nationally observed sales seasons (e.g. les soldes in France), major '
+			. 'public/retail holidays, and global shopping events like Black Friday, Cyber Monday, '
+			. 'back-to-school, Valentine\'s Day, Mother\'s/Father\'s Day, and end-of-season clearances. '
+			. 'You are conservative: you NEVER invent generic filler promotions ("mid-summer sale", '
+			. '"weekend flash deal") just to fill the calendar. If a period genuinely has no notable '
+			. 'commercial moment, you return few events — or none at all. Quality over quantity. '
+			. 'You reply with JSON only.';
 
 		$schema = '{"events":[{"title":string (<=60 chars),"type":"sale",'
 			. '"start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","percent":integer 5-70,'
 			. '"email_subject":string (a marketing email subject line, <=80 chars),'
-			. '"rationale":string (one short sentence: why this event)}]}';
+			. '"rationale":string (one short sentence naming the real occasion it maps to)}]}';
 
 		$context = $this->shop_context_text();
 		if ( $context === '' ) {
@@ -489,16 +549,20 @@ final class DZE_Marketing_Ai {
 
 		$user = sprintf(
 			"Shop context (auto-detected from the website — trust it):\n%s\n\n"
-			. "Write the whole calendar for ONE language only: %s (%s).\n"
+			. "Write the calendar for ONE language only: %s (%s).\n"
 			. "Target market / countries: %s.\n"
 			. "All titles, email subjects and rationales must be written in %s.\n\n"
 			. "Plan promotional events strictly between %s and %s (inclusive) — every date must "
-			. "fall in this window. Propose up to %d distinct events.\n\n"
+			. "fall in this window.\n\n"
 			. "Rules:\n"
+			. "- Only propose events anchored to a REAL, well-known commercial moment for this "
+			. "market and this date window. Name that occasion in the rationale.\n"
+			. "- Do NOT pad the calendar. If the window holds only one or two real moments, return "
+			. "only those. If it holds none, return an empty events array.\n"
+			. "- Never invent vague or generic promotions to reach a quota.\n"
 			. "- Events must not overlap in time (each has a clear start and end date).\n"
-			. "- Tie each event to a real commercial moment relevant to the target market.\n"
 			. "- Pick a realistic discount percentage for the occasion and this shop's positioning.\n"
-			. "- Order events chronologically by start_date.\n\n"
+			. "- Order events chronologically by start_date. Hard maximum: %d events.\n\n"
 			. "Respond with ONLY a JSON object of this exact shape, no markdown, no commentary:\n%s",
 			$context,
 			$native,
@@ -513,8 +577,13 @@ final class DZE_Marketing_Ai {
 
 		$raw    = $this->call_claude( $system, $user );
 		$parsed = $this->parse_json( $raw );
-		if ( ! is_array( $parsed ) || empty( $parsed['events'] ) || ! is_array( $parsed['events'] ) ) {
+		if ( ! is_array( $parsed ) || ! isset( $parsed['events'] ) || ! is_array( $parsed['events'] ) ) {
 			throw new RuntimeException( __( 'The AI response could not be understood. Please try again.', 'dazont-ecom' ) );
+		}
+		// An empty list is a legitimate answer: no notable commercial moment in
+		// this window. Let the caller report it plainly instead of erroring.
+		if ( empty( $parsed['events'] ) ) {
+			return [];
 		}
 
 		$clean = [];
@@ -745,8 +814,9 @@ final class DZE_Marketing_Ai {
 				'generating' => __( 'Generating…', 'dazont-ecom' ),
 				'accepting'  => __( 'Adding…', 'dazont-ecom' ),
 				'error'      => __( 'Error', 'dazont-ecom' ),
-				'confirmRef' => __( 'Discard this suggestion?', 'dazont-ecom' ),
-				'needDates'  => __( 'Pick a start and end date first.', 'dazont-ecom' ),
+				'confirmRef'     => __( 'Discard this suggestion?', 'dazont-ecom' ),
+				'confirmRefBulk' => __( 'Discard the selected suggestions?', 'dazont-ecom' ),
+				'needDates'      => __( 'Pick a start and end date first.', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -908,11 +978,43 @@ final class DZE_Marketing_Ai {
 	}
 
 	public function dashboard_widget(): void {
-		echo $this->calendar_grid_html( 2 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built with per-value escaping internally.
+		echo $this->calendar_grid_html( 3 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built with per-value escaping internally.
 		if ( class_exists( 'DZE_Discounts' ) ) {
 			$url = add_query_arg( [ 'page' => DZE_Discounts::MENU_SLUG_EVENTS ], admin_url( 'admin.php' ) );
 			echo '<p style="margin:10px 0 0;"><a href="' . esc_url( $url ) . '">' . esc_html__( 'Open Marketing Events →', 'dazont-ecom' ) . '</a></p>';
 		}
+	}
+
+	/**
+	 * Promotes the calendar widget to a full-width row above the dashboard
+	 * columns, so the month grids have room to breathe. Best-effort: if the
+	 * dashboard markup changes, the widget simply stays in its column.
+	 */
+	public function dashboard_fullwidth_script(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			return;
+		}
+		?>
+		<style>#dze_marketing_calendar_widget{width:100%;box-sizing:border-box;}#dze-cal-fullrow{clear:both;margin:0 0 16px;}</style>
+		<script>
+		(function () {
+			function move() {
+				var w = document.getElementById('dze_marketing_calendar_widget');
+				var host = document.getElementById('dashboard-widgets');
+				if ( ! w || ! host || ! host.parentNode ) { return; }
+				var row = document.getElementById('dze-cal-fullrow');
+				if ( ! row ) {
+					row = document.createElement('div');
+					row.id = 'dze-cal-fullrow';
+					host.parentNode.insertBefore(row, host);
+				}
+				row.appendChild(w);
+			}
+			if ( document.readyState !== 'loading' ) { move(); }
+			else { document.addEventListener('DOMContentLoaded', move); }
+		}());
+		</script>
+		<?php
 	}
 
 	// =========================================================================

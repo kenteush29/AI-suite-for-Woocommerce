@@ -49,16 +49,21 @@ $ai_settings_url = add_query_arg( [ 'page' => DZE_Settings::MENU_SLUG, 'tab' => 
 	<?php endif; ?>
 
 	<?php if ( ! empty( $suggestions ) ) : ?>
-		<h3><?php esc_html_e( 'Suggested events — review before adding', 'dazont-ecom' ); ?></h3>
-		<p class="description"><?php esc_html_e( 'Edit any field inline, then Accept to add it to your calendar below (as a disabled event), or Discard it.', 'dazont-ecom' ); ?></p>
+		<h3 style="margin-bottom:4px;"><?php esc_html_e( 'Suggested events — review before adding', 'dazont-ecom' ); ?></h3>
+		<p class="description" style="margin-top:0;"><?php esc_html_e( 'Tick rows and use the bulk buttons, or Accept/Discard one at a time. Accepted events are added to the calendar below as disabled — enable the ones you want.', 'dazont-ecom' ); ?></p>
+		<p>
+			<button type="button" class="button dze-mai-bulk-accept"><?php esc_html_e( 'Accept selected', 'dazont-ecom' ); ?></button>
+			<button type="button" class="button dze-mai-bulk-refuse"><?php esc_html_e( 'Discard selected', 'dazont-ecom' ); ?></button>
+			<span id="dze-mai-bulk-status" style="margin-left:8px;font-size:13px;color:#666;"></span>
+		</p>
 		<table class="widefat striped" id="dze-mai-suggestions">
 			<thead>
 				<tr>
+					<th style="width:28px;text-align:center;"><input type="checkbox" id="dze-mai-check-all" /></th>
 					<th><?php esc_html_e( 'Event', 'dazont-ecom' ); ?></th>
-					<th style="width:90px;"><?php esc_html_e( 'Discount', 'dazont-ecom' ); ?></th>
-					<th style="width:150px;"><?php esc_html_e( 'Start', 'dazont-ecom' ); ?></th>
-					<th style="width:150px;"><?php esc_html_e( 'End', 'dazont-ecom' ); ?></th>
-					<th style="width:110px;"><?php esc_html_e( 'Languages', 'dazont-ecom' ); ?></th>
+					<th style="width:72px;"><?php esc_html_e( 'Discount', 'dazont-ecom' ); ?></th>
+					<th style="width:300px;"><?php esc_html_e( 'Dates', 'dazont-ecom' ); ?></th>
+					<th style="width:84px;"><?php esc_html_e( 'Languages', 'dazont-ecom' ); ?></th>
 					<th style="width:150px;"><?php esc_html_e( 'Actions', 'dazont-ecom' ); ?></th>
 				</tr>
 			</thead>

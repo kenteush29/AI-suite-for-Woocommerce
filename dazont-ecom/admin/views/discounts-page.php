@@ -151,7 +151,7 @@ $gmc_on     = $gmc && $gmc->is_configured();
 		<?php if ( $is_events ) : ?>
 			<?php esc_html_e( 'Only one marketing event can be active at a time — overlapping ones are kept disabled.', 'dazont-ecom' ); ?>
 		<?php else : ?>
-			<?php esc_html_e( 'Discounts are evergreen: enable a rule once and it keeps applying (no schedule). They appear in the cart as a promo-code line — “Bundle” for a Bulk offer per item, “Wholesale” for a Bulk order.', 'dazont-ecom' ); ?>
+			<?php esc_html_e( 'Discounts are evergreen: enable a rule once and it keeps applying (no schedule). The reduced price shows live everywhere — mini-cart, cart page and checkout — with the original price struck through.', 'dazont-ecom' ); ?>
 		<?php endif; ?>
 	</p>
 </div>
