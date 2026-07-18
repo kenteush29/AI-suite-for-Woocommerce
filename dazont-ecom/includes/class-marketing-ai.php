@@ -83,6 +83,7 @@ final class DZE_Marketing_Ai {
 		}
 		add_action( 'admin_init',            [ $this, 'register_settings' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
+		add_action( 'wp_dashboard_setup',    [ $this, 'register_dashboard_widget' ] );
 		add_action( 'wp_ajax_dze_mai_generate', [ $this, 'ajax_generate' ] );
 		add_action( 'wp_ajax_dze_mai_accept',   [ $this, 'ajax_accept' ] );
 		add_action( 'wp_ajax_dze_mai_refuse',   [ $this, 'ajax_refuse' ] );
@@ -181,6 +182,10 @@ final class DZE_Marketing_Ai {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
+		// Manual refresh of the auto-detected shop context.
+		if ( isset( $_GET['dze_mai_refresh'] ) ) {
+			delete_transient( self::CTX_TRANSIENT );
+		}
 		$settings   = self::get_settings();
 		$key_locked = defined( 'DZE_ANTHROPIC_API_KEY' );
 		$has_key    = $this->api_key() !== '';
@@ -193,48 +198,28 @@ final class DZE_Marketing_Ai {
 	// Shop context auto-detection
 	// =========================================================================
 
-	/** Structured, auto-detected facts about the shop (nothing manually typed). */
+	public const CTX_TRANSIENT = 'dze_mai_shop_context';
+
+	/**
+	 * Structured, auto-detected facts about the shop. Categories and products
+	 * are ranked by real sales volume (WooCommerce Analytics lookup table),
+	 * descending, with graceful fallbacks when analytics hasn't synced. Cached
+	 * for an hour; cleared on demand from the settings tab.
+	 */
 	private function shop_context(): array {
-		$name    = get_bloginfo( 'name' );
-		$tagline = get_bloginfo( 'description' );
-
-		$categories = [];
-		if ( function_exists( 'get_terms' ) ) {
-			$terms = get_terms( [
-				'taxonomy'   => 'product_cat',
-				'hide_empty' => true,
-				'number'     => 12,
-				'orderby'    => 'count',
-				'order'      => 'DESC',
-			] );
-			if ( ! is_wp_error( $terms ) ) {
-				foreach ( $terms as $t ) {
-					if ( $t->slug !== 'uncategorized' ) {
-						$categories[] = $t->name;
-					}
-				}
-			}
+		$cached = get_transient( self::CTX_TRANSIENT );
+		if ( is_array( $cached ) ) {
+			return $cached;
 		}
 
-		$products = [];
-		if ( function_exists( 'wc_get_products' ) ) {
-			foreach ( wc_get_products( [ 'limit' => 8, 'status' => 'publish', 'orderby' => 'date', 'order' => 'DESC' ] ) as $p ) {
-				$products[] = $p->get_name();
-			}
-		}
+		$categories = $this->top_categories_by_sales( 15 ) ?: $this->fallback_categories( 15 );
+		$products   = $this->top_products_by_sales( 12 ) ?: $this->fallback_products( 12 );
+		[ $price_min, $price_max ] = $this->price_range();
 
-		global $wpdb;
-		$price_min = null;
-		$price_max = null;
-		$row = $wpdb->get_row(
-			"SELECT MIN(CAST(pm.meta_value AS DECIMAL(10,2))) AS min_p, MAX(CAST(pm.meta_value AS DECIMAL(10,2))) AS max_p
-			 FROM {$wpdb->postmeta} pm
-			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-			 WHERE pm.meta_key = '_price' AND pm.meta_value != '' AND p.post_status = 'publish' AND p.post_type = 'product'"
-		);
-		if ( $row && $row->min_p !== null ) {
-			$price_min = round( (float) $row->min_p, 2 );
-			$price_max = round( (float) $row->max_p, 2 );
+		$product_count = 0;
+		$counts = wp_count_posts( 'product' );
+		if ( $counts && isset( $counts->publish ) ) {
+			$product_count = (int) $counts->publish;
 		}
 
 		$currency = function_exists( 'get_woocommerce_currency' ) ? get_woocommerce_currency() : '';
@@ -244,16 +229,109 @@ final class DZE_Marketing_Ai {
 			$country = (string) ( $loc['country'] ?? '' );
 		}
 
-		return [
-			'name'       => $name,
-			'tagline'    => $tagline,
-			'categories' => $categories,
-			'products'   => $products,
-			'price_min'  => $price_min,
-			'price_max'  => $price_max,
-			'currency'   => $currency,
-			'country'    => $country,
+		$context = [
+			'name'          => get_bloginfo( 'name' ),
+			'tagline'       => get_bloginfo( 'description' ),
+			'categories'    => $categories, // best-selling first
+			'products'      => $products,   // best-selling first
+			'product_count' => $product_count,
+			'price_min'     => $price_min,
+			'price_max'     => $price_max,
+			'currency'      => $currency,
+			'country'       => $country,
 		];
+		set_transient( self::CTX_TRANSIENT, $context, HOUR_IN_SECONDS );
+		return $context;
+	}
+
+	/** WooCommerce Analytics product-lookup table name, or null if unavailable. */
+	private function analytics_table(): ?string {
+		global $wpdb;
+		$table = $wpdb->prefix . 'wc_order_product_lookup';
+		return ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table ) ? $table : null;
+	}
+
+	/** Product categories ranked by units sold (all-time), descending. */
+	private function top_categories_by_sales( int $limit ): array {
+		$table = $this->analytics_table();
+		if ( ! $table ) {
+			return [];
+		}
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is derived from $wpdb->prefix.
+		$rows = $wpdb->get_col( $wpdb->prepare(
+			"SELECT t.name
+			 FROM {$table} l
+			 INNER JOIN {$wpdb->term_relationships} tr ON tr.object_id = l.product_id
+			 INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id AND tt.taxonomy = 'product_cat'
+			 INNER JOIN {$wpdb->terms} t ON t.term_id = tt.term_id
+			 WHERE t.slug != 'uncategorized'
+			 GROUP BY t.term_id
+			 ORDER BY SUM(l.product_qty) DESC
+			 LIMIT %d",
+			$limit
+		) );
+		return array_values( array_filter( array_map( 'trim', (array) $rows ) ) );
+	}
+
+	/** Products ranked by units sold (all-time), descending. */
+	private function top_products_by_sales( int $limit ): array {
+		$table = $this->analytics_table();
+		if ( ! $table ) {
+			return [];
+		}
+		global $wpdb;
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is derived from $wpdb->prefix.
+		$rows = $wpdb->get_col( $wpdb->prepare(
+			"SELECT p.post_title
+			 FROM {$table} l
+			 INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
+			 WHERE p.post_status = 'publish' AND p.post_type = 'product'
+			 GROUP BY l.product_id
+			 ORDER BY SUM(l.product_qty) DESC
+			 LIMIT %d",
+			$limit
+		) );
+		return array_values( array_filter( array_map( 'trim', (array) $rows ) ) );
+	}
+
+	private function fallback_categories( int $limit ): array {
+		$out   = [];
+		$terms = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => true, 'number' => $limit, 'orderby' => 'count', 'order' => 'DESC' ] );
+		if ( ! is_wp_error( $terms ) ) {
+			foreach ( $terms as $t ) {
+				if ( $t->slug !== 'uncategorized' ) {
+					$out[] = $t->name;
+				}
+			}
+		}
+		return $out;
+	}
+
+	private function fallback_products( int $limit ): array {
+		$out = [];
+		if ( function_exists( 'wc_get_products' ) ) {
+			foreach ( wc_get_products( [ 'limit' => $limit, 'status' => 'publish', 'orderby' => 'popularity', 'order' => 'DESC' ] ) as $p ) {
+				$out[] = $p->get_name();
+			}
+		}
+		return $out;
+	}
+
+	/** Min/max published product price, ignoring free (0) items. */
+	private function price_range(): array {
+		global $wpdb;
+		$row = $wpdb->get_row(
+			"SELECT MIN(CAST(pm.meta_value AS DECIMAL(10,2))) AS min_p, MAX(CAST(pm.meta_value AS DECIMAL(10,2))) AS max_p
+			 FROM {$wpdb->postmeta} pm
+			 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+			 WHERE pm.meta_key = '_price' AND pm.meta_value != '' AND CAST(pm.meta_value AS DECIMAL(10,2)) > 0
+			   AND p.post_status = 'publish' AND p.post_type = 'product'"
+		);
+		if ( $row && $row->min_p !== null ) {
+			return [ round( (float) $row->min_p, 2 ), round( (float) $row->max_p, 2 ) ];
+		}
+		return [ null, null ];
 	}
 
 	/** Human-readable version of shop_context(), sent to Claude and shown as a preview. */
@@ -266,17 +344,20 @@ final class DZE_Marketing_Ai {
 		if ( $c['tagline'] !== '' ) {
 			$lines[] = sprintf( 'Tagline: %s', $c['tagline'] );
 		}
-		if ( ! empty( $c['categories'] ) ) {
-			$lines[] = sprintf( 'Product categories: %s', implode( ', ', $c['categories'] ) );
+		if ( $c['country'] !== '' ) {
+			$lines[] = sprintf( 'Store based in: %s', $c['country'] );
 		}
-		if ( ! empty( $c['products'] ) ) {
-			$lines[] = sprintf( 'Example products: %s', implode( ', ', $c['products'] ) );
+		if ( $c['product_count'] > 0 ) {
+			$lines[] = sprintf( 'Catalog size: %d published products', $c['product_count'] );
 		}
 		if ( null !== $c['price_min'] ) {
 			$lines[] = sprintf( 'Typical price range: %s–%s %s', $c['price_min'], $c['price_max'], $c['currency'] );
 		}
-		if ( $c['country'] !== '' ) {
-			$lines[] = sprintf( 'Store based in: %s', $c['country'] );
+		if ( ! empty( $c['categories'] ) ) {
+			$lines[] = sprintf( 'Top categories by sales volume (highest first): %s', implode( ', ', $c['categories'] ) );
+		}
+		if ( ! empty( $c['products'] ) ) {
+			$lines[] = sprintf( 'Best-selling products (highest first): %s', implode( ', ', $c['products'] ) );
 		}
 		return implode( "\n", $lines );
 	}
@@ -301,6 +382,12 @@ final class DZE_Marketing_Ai {
 		}
 		if ( $start > $end ) {
 			wp_send_json_error( [ 'message' => __( 'The start date must be before the end date.', 'dazont-ecom' ) ] );
+		}
+
+		// The Claude call can take up to ~60s; give PHP room beyond typical
+		// 30s shared-host limits so it isn't killed mid-request.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 120 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 		}
 
 		try {
@@ -620,11 +707,167 @@ final class DZE_Marketing_Ai {
 		] );
 	}
 
-	/** Generate button + date range + suggestions review table. */
+	/** Generate button + date range + suggestions review table + calendar view. */
 	public function render_calendar_panel(): void {
 		$has_key     = $this->api_key() !== '';
 		$suggestions = self::get_suggestions();
 		require DZE_DIR . 'admin/views/marketing-ai-panel.php';
+
+		echo '<h2 class="title" style="margin-top:24px;">' . esc_html__( 'Calendar', 'dazont-ecom' ) . '</h2>';
+		echo $this->calendar_grid_html( 4 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built with per-value escaping internally.
+	}
+
+	// =========================================================================
+	// Calendar grid (shared by the Marketing Events page and the Dashboard widget)
+	// =========================================================================
+
+	/** Scheduled sale rules flattened into calendar events. */
+	private function sale_events(): array {
+		$events = [];
+		if ( ! class_exists( 'DZE_Discounts' ) ) {
+			return $events;
+		}
+		foreach ( DZE_Discounts::get_rules() as $rule ) {
+			if ( ( $rule['type'] ?? '' ) !== 'sale' ) {
+				continue;
+			}
+			$s = (string) ( $rule['start'] ?? '' );
+			$e = (string) ( $rule['end'] ?? '' );
+			if ( $s === '' || $e === '' ) {
+				continue;
+			}
+			$events[] = [
+				'start'   => $s,
+				'end'     => $e,
+				'title'   => (string) ( $rule['title'] ?? '' ),
+				'percent' => (int) round( (float) ( $rule['percent'] ?? 0 ) ),
+				'enabled' => ! empty( $rule['enabled'] ),
+				'klaviyo' => ! empty( $rule['klaviyo_email'] ),
+			];
+		}
+		return $events;
+	}
+
+	/**
+	 * Renders `$months` consecutive month grids (starting from the current
+	 * month) with scheduled events drawn as colored chips on the days they run.
+	 */
+	public function calendar_grid_html( int $months = 3 ): string {
+		$events = $this->sale_events();
+		if ( empty( $events ) ) {
+			return '<p class="description">' . esc_html__( 'No scheduled events yet — accept an AI suggestion or add an event.', 'dazont-ecom' ) . '</p>';
+		}
+
+		$palette = [ '#2563eb', '#0a7040', '#b26a00', '#7c3aed', '#b32d2e', '#0e7490', '#be185d', '#4d7c0f' ];
+		usort( $events, static fn( $a, $b ) => strcmp( $a['start'], $b['start'] ) );
+		foreach ( $events as $i => &$ev ) {
+			$ev['color'] = $palette[ $i % count( $palette ) ];
+		}
+		unset( $ev );
+
+		$tz          = wp_timezone();
+		$now         = new DateTimeImmutable( 'now', $tz );
+		$today       = $now->format( 'Y-m-d' );
+		$month_start = new DateTimeImmutable( $now->format( 'Y-m-01' ), $tz );
+		$sow         = (int) get_option( 'start_of_week', 1 );
+
+		global $wp_locale;
+		$weekdays = [];
+		for ( $d = 0; $d < 7; $d++ ) {
+			$idx        = ( $sow + $d ) % 7;
+			$weekdays[] = $wp_locale ? $wp_locale->get_weekday_abbrev( $wp_locale->get_weekday( $idx ) ) : (string) $idx;
+		}
+
+		ob_start();
+		echo '<div class="dze-cal">';
+		for ( $m = 0; $m < max( 1, $months ); $m++ ) {
+			$ms        = $month_start->modify( "+{$m} months" );
+			$year      = (int) $ms->format( 'Y' );
+			$month     = (int) $ms->format( 'n' );
+			$days      = (int) $ms->format( 't' );
+			$first_dow = (int) $ms->format( 'w' );
+			$lead      = ( $first_dow - $sow + 7 ) % 7;
+
+			echo '<div class="dze-cal__month">';
+			echo '<div class="dze-cal__mname">' . esc_html( wp_date( 'F Y', $ms->getTimestamp() ) ) . '</div>';
+			echo '<table class="dze-cal__grid"><thead><tr>';
+			foreach ( $weekdays as $wd ) {
+				echo '<th>' . esc_html( $wd ) . '</th>';
+			}
+			echo '</tr></thead><tbody><tr>';
+
+			$col = 0;
+			for ( $b = 0; $b < $lead; $b++ ) {
+				echo '<td class="dze-cal__empty"></td>';
+				$col++;
+			}
+			for ( $day = 1; $day <= $days; $day++ ) {
+				if ( 7 === $col ) {
+					echo '</tr><tr>';
+					$col = 0;
+				}
+				$ymd = sprintf( '%04d-%02d-%02d', $year, $month, $day );
+				echo '<td class="dze-cal__day' . ( $ymd === $today ? ' is-today' : '' ) . '">';
+				echo '<span class="dze-cal__num">' . (int) $day . '</span>';
+				foreach ( $events as $ev ) {
+					if ( $ev['start'] <= $ymd && $ymd <= $ev['end'] ) {
+						$tip = $ev['title'] . ' (-' . $ev['percent'] . '%)' . ( $ev['enabled'] ? '' : ' — ' . __( 'disabled', 'dazont-ecom' ) );
+						printf(
+							'<span class="dze-cal__chip%s" style="background:%s" title="%s">%s</span>',
+							$ev['enabled'] ? '' : ' is-off',
+							esc_attr( $ev['color'] ),
+							esc_attr( $tip ),
+							esc_html( $ev['title'] )
+						);
+					}
+				}
+				echo '</td>';
+				$col++;
+			}
+			while ( $col < 7 ) {
+				echo '<td class="dze-cal__empty"></td>';
+				$col++;
+			}
+			echo '</tr></tbody></table></div>';
+		}
+		echo '</div>';
+		echo '<style>'
+			. '.dze-cal{display:flex;flex-wrap:wrap;gap:18px;}'
+			. '.dze-cal__month{min-width:250px;flex:1 1 250px;}'
+			. '.dze-cal__mname{font-weight:600;margin-bottom:6px;}'
+			. '.dze-cal__grid{width:100%;border-collapse:collapse;table-layout:fixed;}'
+			. '.dze-cal__grid th{font-size:11px;color:#888;font-weight:600;padding:2px;text-align:center;}'
+			. '.dze-cal__grid td{border:1px solid #eee;height:52px;vertical-align:top;padding:2px;overflow:hidden;}'
+			. '.dze-cal__day.is-today{background:#fff8e1;}'
+			. '.dze-cal__empty{background:#fafafa;}'
+			. '.dze-cal__num{color:#777;font-size:11px;}'
+			. '.dze-cal__chip{display:block;color:#fff;border-radius:3px;padding:1px 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px;line-height:1.5;}'
+			. '.dze-cal__chip.is-off{opacity:.5;}'
+			. '</style>';
+		return (string) ob_get_clean();
+	}
+
+	// =========================================================================
+	// Dashboard widget (WordPress admin home)
+	// =========================================================================
+
+	public function register_dashboard_widget(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			return;
+		}
+		wp_add_dashboard_widget(
+			'dze_marketing_calendar_widget',
+			__( 'Marketing calendar', 'dazont-ecom' ),
+			[ $this, 'dashboard_widget' ]
+		);
+	}
+
+	public function dashboard_widget(): void {
+		echo $this->calendar_grid_html( 2 ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built with per-value escaping internally.
+		if ( class_exists( 'DZE_Discounts' ) ) {
+			$url = add_query_arg( [ 'page' => DZE_Discounts::MENU_SLUG_EVENTS ], admin_url( 'admin.php' ) );
+			echo '<p style="margin:10px 0 0;"><a href="' . esc_url( $url ) . '">' . esc_html__( 'Open Marketing Events →', 'dazont-ecom' ) . '</a></p>';
+		}
 	}
 
 	// =========================================================================

@@ -27,8 +27,9 @@
 				$btn.prop('disabled', false);
 			}
 		})
-		.fail(function () {
-			$status.css('color', '#b32d2e').text(i18n.error);
+		.fail(function (xhr) {
+			var extra = xhr && xhr.status ? ' (HTTP ' + xhr.status + ')' : '';
+			$status.css('color', '#b32d2e').text(i18n.error + extra + '. ' + (xhr && xhr.status === 0 ? 'Timed out or blocked.' : ''));
 			$btn.prop('disabled', false);
 		});
 	});
