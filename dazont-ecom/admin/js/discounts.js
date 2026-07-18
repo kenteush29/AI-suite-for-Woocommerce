@@ -14,12 +14,13 @@
 		var isSale = (type === 'sale');
 		var isBulk = (type === 'bulk');
 		var isBulkOrder = (type === 'bulk_order');
+		var isAutoBest = (type === 'autobest');
 
 		// Marketing Events only.
 		$('.dze-field-schedule').toggle(isSale);
 		$('.dze-field-banner').toggle(isSale);
 
-		// Percent is used by sale + bulk; bulk_order uses per-tier percents.
+		// Percent is used by sale + bulk + best-seller boost; bulk_order uses per-tier percents.
 		$('.dze-field-percent').toggle(!isBulkOrder);
 
 		// Bulk offer per item.
@@ -31,6 +32,11 @@
 
 		// Bulk order (tiered).
 		$('.dze-field-min-subtotal, .dze-field-min-qty, .dze-field-tiers').toggle(isBulkOrder);
+
+		// Best-seller boost (auto): its own params, and no manual scope (products
+		// are auto-selected from live sales).
+		$('.dze-field-top-n, .dze-field-lookback').toggle(isAutoBest);
+		$('.dze-field-scope').toggle(!isAutoBest);
 	}
 
 	function refreshScope() {

@@ -109,6 +109,22 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 					<p class="description"><?php esc_html_e( 'The highest tier reached applies (strongest discount, in the customer\'s favour). Set a percent to 0 to disable a tier.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
+
+			<?php // Best-seller boost (auto) fields. ?>
+			<tr class="dze-field-top-n">
+				<th scope="row"><label for="dze-top-n"><?php esc_html_e( 'How many top sellers', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<input type="number" id="dze-top-n" name="top_n" min="1" max="200" step="1" class="small-text" value="<?php echo esc_attr( $e( 'top_n', '20' ) ); ?>" />
+					<p class="description"><?php esc_html_e( 'The plugin automatically discounts this many best-selling products.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
+			<tr class="dze-field-lookback">
+				<th scope="row"><label for="dze-lookback"><?php esc_html_e( 'Sales window (days)', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<input type="number" id="dze-lookback" name="lookback_days" min="1" max="365" step="1" class="small-text" value="<?php echo esc_attr( $e( 'lookback_days', '30' ) ); ?>" />
+					<p class="description"><?php esc_html_e( 'Rank best-sellers over the last N days. The list refreshes automatically (twice a day) so the boost always follows what is actually selling.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
 			<?php endif; ?>
 
 			<?php if ( $is_events ) : ?>
@@ -144,6 +160,7 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 		</table>
 		<?php endif; ?>
 
+		<div class="dze-field-scope">
 		<h3><?php esc_html_e( 'Scope', 'dazont-ecom' ); ?></h3>
 		<table class="form-table" role="presentation">
 			<tr>
@@ -178,6 +195,7 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				</td>
 			</tr>
 		</table>
+		</div><?php // .dze-field-scope ?>
 
 		<?php if ( $is_events ) : ?>
 		<div class="dze-field-banner">

@@ -40,6 +40,24 @@ final class DZE_Marketing_Ai {
 	/** Internal safety cap on one generation call — not exposed as a setting. */
 	private const MAX_EVENTS = 20;
 
+	/**
+	 * Default, editable strategy guidance for the calendar generator. The plugin
+	 * always appends the shop context, chosen language, date window and the JSON
+	 * schema around this text, so users can rewrite the strategy without breaking
+	 * the machinery.
+	 */
+	public const DEFAULT_EVENTS_PROMPT =
+		"You are an expert e-commerce marketing strategist. Build a well-paced promotional calendar "
+		. "for the shop, anchored to genuine, widely-recognised commercial moments for the target market:\n"
+		. "- Major public and retail holidays, and nationally-observed sale seasons (for example: les soldes "
+		. "in France, Black Friday, Cyber Monday, Christmas, Boxing Day, Valentine's Day, Mother's/Father's Day, Halloween).\n"
+		. "- Established seasonal sales that retailers run every year: Spring Sale, Summer Sale, Back-to-School, "
+		. "Autumn/Fall Sale, End-of-Season Clearance, Winter Sale.\n\n"
+		. "Pace the calendar so there are no long empty gaps: when two holidays are far apart, a well-known seasonal "
+		. "sale in between is welcome and encouraged. Never invent vague, meaningless promotions (a 'random weekend "
+		. "flash deal') just to reach a number — every event must map to a real occasion, which you name in its rationale. "
+		. "Favour realism and good spacing over sheer quantity.";
+
 	/** Default target-country pool per language, seeded on first use. */
 	public const LANGUAGE_COUNTRY_POOLS = [
 		'en' => [ 'US', 'GB', 'CA', 'IE', 'AU', 'NZ' ],
@@ -111,6 +129,8 @@ final class DZE_Marketing_Ai {
 			'api_key'       => '',
 			'model'         => self::MODEL,
 			'use_catalog'   => true, // feed shop categories/best-sellers to the AI.
+			'tone'          => '',   // brand voice, reused by future content tools.
+			'events_prompt' => '',   // custom calendar guidance; empty = DEFAULT_EVENTS_PROMPT.
 			'country_pools' => [], // lang_code => [ ISO-3166 alpha-2, ... ]
 		] );
 	}
@@ -230,12 +250,27 @@ final class DZE_Marketing_Ai {
 			delete_transient( 'dze_mai_models' );
 		}
 
+		// A rewritten prompt that matches the default is stored empty, so future
+		// tweaks to the default keep flowing through.
+		$events_prompt = trim( (string) ( $in['events_prompt'] ?? '' ) );
+		if ( $events_prompt === self::DEFAULT_EVENTS_PROMPT ) {
+			$events_prompt = '';
+		}
+
 		return [
 			'api_key'       => sanitize_text_field( $key ),
 			'model'         => $model,
 			'use_catalog'   => ! empty( $in['use_catalog'] ),
+			'tone'          => sanitize_textarea_field( (string) ( $in['tone'] ?? '' ) ),
+			'events_prompt' => sanitize_textarea_field( $events_prompt ),
 			'country_pools' => $pools,
 		];
+	}
+
+	/** The effective calendar guidance: the user's custom text, or the default. */
+	public static function events_prompt(): string {
+		$p = trim( (string) ( self::get_settings()['events_prompt'] ?? '' ) );
+		return $p !== '' ? $p : self::DEFAULT_EVENTS_PROMPT;
 	}
 
 	/** Active site languages: WPML's list if active, else the single site locale. */
@@ -416,7 +451,13 @@ final class DZE_Marketing_Ai {
 		return [ null, null ];
 	}
 
-	/** Human-readable version of shop_context(), sent to Claude and shown as a preview. */
+	/**
+	 * Human-readable version of shop_context(), sent to Claude and shown as a
+	 * preview. Deliberately lean: the store name, its tagline, plus (optionally)
+	 * the product categories/best-sellers. Legal address, catalog size and price
+	 * range are intentionally left out — they don't help a calendar built around
+	 * commercial moments and often mislead.
+	 */
 	private function shop_context_text(): string {
 		$c     = $this->shop_context();
 		$lines = [];
@@ -424,16 +465,11 @@ final class DZE_Marketing_Ai {
 			$lines[] = sprintf( 'Store name: %s', $c['name'] );
 		}
 		if ( $c['tagline'] !== '' ) {
-			$lines[] = sprintf( 'Tagline: %s', $c['tagline'] );
+			$lines[] = sprintf( 'What the store sells (tagline): %s', $c['tagline'] );
 		}
-		if ( $c['country'] !== '' ) {
-			$lines[] = sprintf( 'Store based in: %s', $c['country'] );
-		}
-		if ( $c['product_count'] > 0 ) {
-			$lines[] = sprintf( 'Catalog size: %d published products', $c['product_count'] );
-		}
-		if ( null !== $c['price_min'] ) {
-			$lines[] = sprintf( 'Typical price range: %s–%s %s', $c['price_min'], $c['price_max'], $c['currency'] );
+		$tone = trim( (string) ( self::get_settings()['tone'] ?? '' ) );
+		if ( $tone !== '' ) {
+			$lines[] = sprintf( 'Brand tone / voice: %s', $tone );
 		}
 		// Catalog / sales signals are optional — some shops find them noise for a
 		// calendar driven by well-known commercial moments.
@@ -527,15 +563,7 @@ final class DZE_Marketing_Ai {
 		}
 		$country_line = $countries ? implode( ', ', $countries ) : 'all relevant markets worldwide for this language';
 
-		$system = 'You are an expert e-commerce marketing strategist. You build promotional '
-			. 'calendars strictly around genuine, widely-recognised commercial moments for the '
-			. 'target market — nationally observed sales seasons (e.g. les soldes in France), major '
-			. 'public/retail holidays, and global shopping events like Black Friday, Cyber Monday, '
-			. 'back-to-school, Valentine\'s Day, Mother\'s/Father\'s Day, and end-of-season clearances. '
-			. 'You are conservative: you NEVER invent generic filler promotions ("mid-summer sale", '
-			. '"weekend flash deal") just to fill the calendar. If a period genuinely has no notable '
-			. 'commercial moment, you return few events — or none at all. Quality over quantity. '
-			. 'You reply with JSON only.';
+		$system = self::events_prompt() . "\n\nYou reply with JSON only.";
 
 		$schema = '{"events":[{"title":string (<=60 chars),"type":"sale",'
 			. '"start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","percent":integer 5-70,'
@@ -555,11 +583,10 @@ final class DZE_Marketing_Ai {
 			. "Plan promotional events strictly between %s and %s (inclusive) — every date must "
 			. "fall in this window.\n\n"
 			. "Rules:\n"
-			. "- Only propose events anchored to a REAL, well-known commercial moment for this "
-			. "market and this date window. Name that occasion in the rationale.\n"
-			. "- Do NOT pad the calendar. If the window holds only one or two real moments, return "
-			. "only those. If it holds none, return an empty events array.\n"
-			. "- Never invent vague or generic promotions to reach a quota.\n"
+			. "- Follow the strategy above. Every event must map to a real occasion (holiday or "
+			. "well-known seasonal sale) named in its rationale.\n"
+			. "- Space events out across the window — avoid long empty stretches when an obvious "
+			. "seasonal sale could sit between two holidays.\n"
 			. "- Events must not overlap in time (each has a clear start and end date).\n"
 			. "- Pick a realistic discount percentage for the occasion and this shop's positioning.\n"
 			. "- Order events chronologically by start_date. Hard maximum: %d events.\n\n"
@@ -864,101 +891,149 @@ final class DZE_Marketing_Ai {
 	}
 
 	/**
-	 * Renders `$months` consecutive month grids (starting from the current
-	 * month) with scheduled events drawn as colored chips on the days they run.
+	 * Renders a single-month calendar (the current month) with Prev/Next buttons
+	 * to page through months client-side. Scheduled events are drawn as coloured
+	 * chips on the days they run. Self-contained: markup + data + a scoped inline
+	 * script, so it works in the dashboard widget, the Marketing Events page and
+	 * the front-end shortcode alike. The `$months` argument is ignored (kept for
+	 * backward compatibility with earlier callers).
 	 */
-	public function calendar_grid_html( int $months = 3 ): string {
+	public function calendar_grid_html( int $months = 1 ): string {
 		$events = $this->sale_events();
-		if ( empty( $events ) ) {
-			return '<p class="description">' . esc_html__( 'No scheduled events yet — accept an AI suggestion or add an event.', 'dazont-ecom' ) . '</p>';
-		}
 
 		$palette = [ '#2563eb', '#0a7040', '#b26a00', '#7c3aed', '#b32d2e', '#0e7490', '#be185d', '#4d7c0f' ];
 		usort( $events, static fn( $a, $b ) => strcmp( $a['start'], $b['start'] ) );
-		foreach ( $events as $i => &$ev ) {
-			$ev['color'] = $palette[ $i % count( $palette ) ];
+		$data_events = [];
+		foreach ( $events as $i => $ev ) {
+			$data_events[] = [
+				'start'   => (string) $ev['start'],
+				'end'     => (string) $ev['end'],
+				'title'   => (string) $ev['title'],
+				'percent' => (int) $ev['percent'],
+				'enabled' => ! empty( $ev['enabled'] ),
+				'color'   => $palette[ $i % count( $palette ) ],
+			];
 		}
-		unset( $ev );
 
-		$tz          = wp_timezone();
-		$now         = new DateTimeImmutable( 'now', $tz );
-		$today       = $now->format( 'Y-m-d' );
-		$month_start = new DateTimeImmutable( $now->format( 'Y-m-01' ), $tz );
-		$sow         = (int) get_option( 'start_of_week', 1 );
+		$tz  = wp_timezone();
+		$now = new DateTimeImmutable( 'now', $tz );
+		$sow = (int) get_option( 'start_of_week', 1 );
 
 		global $wp_locale;
 		$weekdays = [];
+		$months_n = [];
 		for ( $d = 0; $d < 7; $d++ ) {
 			$idx        = ( $sow + $d ) % 7;
 			$weekdays[] = $wp_locale ? $wp_locale->get_weekday_abbrev( $wp_locale->get_weekday( $idx ) ) : (string) $idx;
 		}
+		for ( $mo = 1; $mo <= 12; $mo++ ) {
+			$months_n[] = $wp_locale ? $wp_locale->get_month( $mo ) : (string) $mo;
+		}
+
+		$uid  = 'dze-cal-' . wp_rand( 1000, 9999 ) . '-' . substr( (string) time(), -4 );
+		$data = [
+			'events'   => $data_events,
+			'sow'      => $sow,
+			'weekdays' => $weekdays,
+			'months'   => $months_n,
+			'today'    => $now->format( 'Y-m-d' ),
+			'year'     => (int) $now->format( 'Y' ),
+			'month'    => (int) $now->format( 'n' ),
+			'i18n'     => [
+				'off'   => __( 'disabled', 'dazont-ecom' ),
+				'empty' => __( 'No scheduled events yet — accept an AI suggestion or add an event.', 'dazont-ecom' ),
+				'today' => __( 'Today', 'dazont-ecom' ),
+			],
+		];
 
 		ob_start();
-		echo '<div class="dze-cal">';
-		for ( $m = 0; $m < max( 1, $months ); $m++ ) {
-			$ms        = $month_start->modify( "+{$m} months" );
-			$year      = (int) $ms->format( 'Y' );
-			$month     = (int) $ms->format( 'n' );
-			$days      = (int) $ms->format( 't' );
-			$first_dow = (int) $ms->format( 'w' );
-			$lead      = ( $first_dow - $sow + 7 ) % 7;
+		?>
+		<div class="dze-cal" id="<?php echo esc_attr( $uid ); ?>">
+			<div class="dze-cal__head">
+				<button type="button" class="button dze-cal__nav" data-dir="-1" aria-label="Previous month">‹</button>
+				<strong class="dze-cal__label"></strong>
+				<button type="button" class="button dze-cal__nav" data-dir="1" aria-label="Next month">›</button>
+				<button type="button" class="button dze-cal__today"><?php esc_html_e( 'Today', 'dazont-ecom' ); ?></button>
+			</div>
+			<div class="dze-cal__body"></div>
+		</div>
+		<style>
+			.dze-cal__head{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+			.dze-cal__label{font-size:15px;min-width:150px;text-align:center;}
+			.dze-cal__nav{font-weight:700;line-height:1;}
+			.dze-cal__today{margin-left:auto;}
+			.dze-cal__grid{width:100%;border-collapse:collapse;table-layout:fixed;}
+			.dze-cal__grid th{font-size:11px;color:#888;font-weight:600;padding:4px 2px;text-align:center;}
+			.dze-cal__grid td{border:1px solid #eee;height:74px;vertical-align:top;padding:3px;overflow:hidden;}
+			.dze-cal__day.is-today{background:#fff8e1;}
+			.dze-cal__empty{background:#fafafa;}
+			.dze-cal__num{color:#777;font-size:11px;}
+			.dze-cal__chip{display:block;color:#fff;border-radius:3px;padding:1px 5px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;line-height:1.6;}
+			.dze-cal__chip.is-off{opacity:.5;}
+			.dze-cal__none{color:#777;}
+		</style>
+		<script>
+		(function () {
+			var D = <?php echo wp_json_encode( $data ); ?>;
+			var root = document.getElementById(<?php echo wp_json_encode( $uid ); ?>);
+			if ( ! root ) { return; }
+			var body = root.querySelector('.dze-cal__body');
+			var label = root.querySelector('.dze-cal__label');
+			var y = D.year, m = D.month; // m is 1-12
 
-			echo '<div class="dze-cal__month">';
-			echo '<div class="dze-cal__mname">' . esc_html( wp_date( 'F Y', $ms->getTimestamp() ) ) . '</div>';
-			echo '<table class="dze-cal__grid"><thead><tr>';
-			foreach ( $weekdays as $wd ) {
-				echo '<th>' . esc_html( $wd ) . '</th>';
-			}
-			echo '</tr></thead><tbody><tr>';
+			function pad(n){ return (n < 10 ? '0' : '') + n; }
 
-			$col = 0;
-			for ( $b = 0; $b < $lead; $b++ ) {
-				echo '<td class="dze-cal__empty"></td>';
-				$col++;
-			}
-			for ( $day = 1; $day <= $days; $day++ ) {
-				if ( 7 === $col ) {
-					echo '</tr><tr>';
-					$col = 0;
+			function render() {
+				label.textContent = D.months[m - 1] + ' ' + y;
+				if ( ! D.events.length ) {
+					body.innerHTML = '<p class="dze-cal__none">' + D.i18n.empty + '</p>';
+					return;
 				}
-				$ymd = sprintf( '%04d-%02d-%02d', $year, $month, $day );
-				echo '<td class="dze-cal__day' . ( $ymd === $today ? ' is-today' : '' ) . '">';
-				echo '<span class="dze-cal__num">' . (int) $day . '</span>';
-				foreach ( $events as $ev ) {
-					if ( $ev['start'] <= $ymd && $ymd <= $ev['end'] ) {
-						$tip = $ev['title'] . ' (-' . $ev['percent'] . '%)' . ( $ev['enabled'] ? '' : ' — ' . __( 'disabled', 'dazont-ecom' ) );
-						printf(
-							'<span class="dze-cal__chip%s" style="background:%s" title="%s">%s</span>',
-							$ev['enabled'] ? '' : ' is-off',
-							esc_attr( $ev['color'] ),
-							esc_attr( $tip ),
-							esc_html( $ev['title'] )
-						);
+				var first = new Date(y, m - 1, 1);
+				var daysInMonth = new Date(y, m, 0).getDate();
+				var firstDow = first.getDay(); // 0=Sun
+				var lead = (firstDow - D.sow + 7) % 7;
+
+				var html = '<table class="dze-cal__grid"><thead><tr>';
+				for (var w = 0; w < 7; w++) { html += '<th>' + D.weekdays[w] + '</th>'; }
+				html += '</tr></thead><tbody><tr>';
+
+				var col = 0, b;
+				for (b = 0; b < lead; b++) { html += '<td class="dze-cal__empty"></td>'; col++; }
+				for (var day = 1; day <= daysInMonth; day++) {
+					if (col === 7) { html += '</tr><tr>'; col = 0; }
+					var ymd = y + '-' + pad(m) + '-' + pad(day);
+					html += '<td class="dze-cal__day' + (ymd === D.today ? ' is-today' : '') + '">';
+					html += '<span class="dze-cal__num">' + day + '</span>';
+					for (var i = 0; i < D.events.length; i++) {
+						var ev = D.events[i];
+						if (ev.start <= ymd && ymd <= ev.end) {
+							var tip = ev.title + ' (-' + ev.percent + '%)' + (ev.enabled ? '' : ' — ' + D.i18n.off);
+							html += '<span class="dze-cal__chip' + (ev.enabled ? '' : ' is-off') + '" style="background:' + ev.color + '" title="' + tip.replace(/"/g, '&quot;') + '">' + ev.title.replace(/</g, '&lt;') + '</span>';
+						}
 					}
+					html += '</td>'; col++;
 				}
-				echo '</td>';
-				$col++;
+				while (col < 7) { html += '<td class="dze-cal__empty"></td>'; col++; }
+				html += '</tr></tbody></table>';
+				body.innerHTML = html;
 			}
-			while ( $col < 7 ) {
-				echo '<td class="dze-cal__empty"></td>';
-				$col++;
-			}
-			echo '</tr></tbody></table></div>';
-		}
-		echo '</div>';
-		echo '<style>'
-			. '.dze-cal{display:flex;flex-wrap:wrap;gap:18px;}'
-			. '.dze-cal__month{min-width:250px;flex:1 1 250px;}'
-			. '.dze-cal__mname{font-weight:600;margin-bottom:6px;}'
-			. '.dze-cal__grid{width:100%;border-collapse:collapse;table-layout:fixed;}'
-			. '.dze-cal__grid th{font-size:11px;color:#888;font-weight:600;padding:2px;text-align:center;}'
-			. '.dze-cal__grid td{border:1px solid #eee;height:52px;vertical-align:top;padding:2px;overflow:hidden;}'
-			. '.dze-cal__day.is-today{background:#fff8e1;}'
-			. '.dze-cal__empty{background:#fafafa;}'
-			. '.dze-cal__num{color:#777;font-size:11px;}'
-			. '.dze-cal__chip{display:block;color:#fff;border-radius:3px;padding:1px 4px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px;line-height:1.5;}'
-			. '.dze-cal__chip.is-off{opacity:.5;}'
-			. '</style>';
+
+			root.querySelectorAll('.dze-cal__nav').forEach(function (btn) {
+				btn.addEventListener('click', function () {
+					m += parseInt(btn.getAttribute('data-dir'), 10);
+					if (m < 1) { m = 12; y--; }
+					if (m > 12) { m = 1; y++; }
+					render();
+				});
+			});
+			root.querySelector('.dze-cal__today').addEventListener('click', function () {
+				y = D.year; m = D.month; render();
+			});
+			render();
+		}());
+		</script>
+		<?php
 		return (string) ob_get_clean();
 	}
 
@@ -1022,15 +1097,24 @@ final class DZE_Marketing_Ai {
 	// =========================================================================
 
 	/**
-	 * [dze_marketing_calendar] — renders upcoming scheduled sales as a marketing
-	 * calendar. Attributes: limit (default 12), past (include finished events:
-	 * "0"/"1", default 0).
+	 * [dze_marketing_calendar] — renders the scheduled sales as a marketing
+	 * calendar. Attributes:
+	 *   view  "calendar" (default) — the single-month grid with Prev/Next;
+	 *         "list" — the older card list of upcoming events.
+	 *   limit (list view only) max cards, default 12.
+	 *   past  (list view only) include finished events, "0"/"1", default 0.
 	 */
 	public function render_calendar_shortcode( $atts ): string {
 		if ( ! class_exists( 'DZE_Discounts' ) ) {
 			return '';
 		}
-		$atts = shortcode_atts( [ 'limit' => 12, 'past' => 0 ], $atts, self::SHORTCODE );
+		$atts = shortcode_atts( [ 'view' => 'calendar', 'limit' => 12, 'past' => 0 ], $atts, self::SHORTCODE );
+
+		// Default: the same single-month calendar used in the admin, month switcher included.
+		if ( 'list' !== $atts['view'] ) {
+			return '<div class="dze-mktcal-wrap" style="max-width:920px;">' . $this->calendar_grid_html( 1 ) . '</div>';
+		}
+
 		$limit    = max( 1, (int) $atts['limit'] );
 		$show_past = ! empty( $atts['past'] );
 		$today    = current_time( 'Y-m-d' );

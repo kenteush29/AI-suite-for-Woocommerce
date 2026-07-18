@@ -37,7 +37,7 @@ final class DZE_Discounts {
 	/** Rule types shown on the "Marketing Events" page. */
 	private const EVENT_TYPES = [ 'sale' ];
 	/** Rule types shown on the "Discounts" page (cart-level, evergreen). */
-	private const DISCOUNT_TYPES = [ 'bulk', 'bulk_order' ];
+	private const DISCOUNT_TYPES = [ 'bulk', 'bulk_order', 'autobest' ];
 
 	/** @var array<string,array>|null Cached active rules for this request. */
 	private ?array $active = null;
@@ -85,6 +85,7 @@ final class DZE_Discounts {
 			'sale'       => __( 'Scheduled sale (site-wide %)', 'dazont-ecom' ),
 			'bulk'       => __( 'Bulk offer per item', 'dazont-ecom' ),
 			'bulk_order' => __( 'Bulk order', 'dazont-ecom' ),
+			'autobest'   => __( 'Best-seller boost (auto)', 'dazont-ecom' ),
 		];
 	}
 
@@ -266,12 +267,15 @@ final class DZE_Discounts {
 		}
 
 		$has_sale = ! empty( $this->rules_of_type( 'sale' ) );
-		// Both discount types reduce the live cart line price so the saving
-		// shows everywhere the customer looks — mini-cart, cart page and
-		// checkout (WooCommerce fee lines never reach the mini-cart).
+		// Best-seller boost: an automatic % sale on the current top sellers.
+		$has_autobest = ! empty( $this->rules_of_type( 'autobest' ) );
+		// Both bulk discount types apply as auto virtual coupons (see below), so
+		// the saving shows as a real promo-code line in the cart and checkout.
 		$has_bulk = ! empty( $this->rules_of_type( 'bulk' ) ) || ! empty( $this->rules_of_type( 'bulk_order' ) );
 
-		if ( $has_sale ) {
+		// Catalog price filters power both scheduled sales and the best-seller
+		// boost — a struck-through price on the affected products.
+		if ( $has_sale || $has_autobest ) {
 			add_filter( 'woocommerce_product_get_price',                 [ $this, 'filter_price' ], 20, 2 );
 			add_filter( 'woocommerce_product_get_sale_price',            [ $this, 'filter_price' ], 20, 2 );
 			add_filter( 'woocommerce_product_variation_get_price',       [ $this, 'filter_price' ], 20, 2 );
@@ -283,6 +287,9 @@ final class DZE_Discounts {
 			// Coupons: make our dynamic sale honour the coupon "Exclude sale
 			// items" setting (WooCommerce otherwise only knows native sales).
 			add_filter( 'woocommerce_coupon_is_valid_for_product', [ $this, 'coupon_exclude_sale' ], 20, 4 );
+		}
+
+		if ( $has_sale ) {
 
 			// Homepage / hero image swap for big events (auto-reverts after).
 			if ( $this->build_hero_map() ) {
@@ -367,6 +374,82 @@ final class DZE_Discounts {
 		return $best;
 	}
 
+	/** Catalog discount % for a product: the strongest of any sale or best-seller boost. */
+	private function catalog_percent_for( \WC_Product $product ): float {
+		return max( $this->sale_percent_for( $product ), $this->autobest_percent_for( $product ) );
+	}
+
+	/** @var array<int,float>|null product_id => best-seller-boost %, this request. */
+	private ?array $autobest_map = null;
+
+	/** Best-seller-boost % for a product (0 if it isn't a currently-boosted top seller). */
+	private function autobest_percent_for( \WC_Product $product ): float {
+		$map  = $this->autobest_map();
+		if ( empty( $map ) ) {
+			return 0.0;
+		}
+		$best = 0.0;
+		foreach ( [ $product->get_id(), $product->get_parent_id() ] as $id ) {
+			if ( $id && isset( $map[ $id ] ) ) {
+				$best = max( $best, $map[ $id ] );
+			}
+		}
+		return $best;
+	}
+
+	/**
+	 * Builds (and caches for the request) a map of product_id => discount % for
+	 * every active "Best-seller boost" rule. Each rule's top-seller list is itself
+	 * cached for 12h so the ranking query runs at most twice a day per rule.
+	 */
+	private function autobest_map(): array {
+		if ( null !== $this->autobest_map ) {
+			return $this->autobest_map;
+		}
+		$map = [];
+		foreach ( $this->rules_of_type( 'autobest' ) as $id => $rule ) {
+			$percent = (float) ( $rule['percent'] ?? 0 );
+			if ( $percent <= 0 ) {
+				continue;
+			}
+			$top_n    = max( 1, (int) ( $rule['top_n'] ?? 20 ) );
+			$lookback = max( 1, (int) ( $rule['lookback_days'] ?? 30 ) );
+			$key      = 'dze_autobest_' . md5( $id . '|' . $top_n . '|' . $lookback );
+			$ids      = get_transient( $key );
+			if ( ! is_array( $ids ) ) {
+				$ids = $this->best_seller_ids( $top_n, $lookback );
+				set_transient( $key, $ids, 12 * HOUR_IN_SECONDS );
+			}
+			foreach ( $ids as $pid ) {
+				$map[ $pid ] = max( $map[ $pid ] ?? 0.0, $percent );
+			}
+		}
+		return $this->autobest_map = $map;
+	}
+
+	/** Top-selling published product IDs over the last $lookback_days (WooCommerce Analytics). */
+	private function best_seller_ids( int $top_n, int $lookback_days ): array {
+		global $wpdb;
+		$table = $wpdb->prefix . 'wc_order_product_lookup';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return [];
+		}
+		$since = gmdate( 'Y-m-d H:i:s', time() - $lookback_days * DAY_IN_SECONDS );
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table derives from $wpdb->prefix.
+		$ids = $wpdb->get_col( $wpdb->prepare(
+			"SELECT l.product_id
+			 FROM {$table} l
+			 INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
+			 WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s
+			 GROUP BY l.product_id
+			 ORDER BY SUM(l.product_qty) DESC
+			 LIMIT %d",
+			$since,
+			$top_n
+		) );
+		return array_map( 'intval', (array) $ids );
+	}
+
 	private function bulk_percent_for( \WC_Product $product, int $qty ): float {
 		$pid    = $product->get_id();
 		$parent = $product->get_parent_id();
@@ -388,7 +471,7 @@ final class DZE_Discounts {
 		if ( ! $product instanceof \WC_Product ) {
 			return $price;
 		}
-		$percent = $this->sale_percent_for( $product );
+		$percent = $this->catalog_percent_for( $product );
 		if ( $percent <= 0 ) {
 			return $price;
 		}
@@ -403,7 +486,7 @@ final class DZE_Discounts {
 		if ( ! $variation instanceof \WC_Product ) {
 			return $price;
 		}
-		$percent = $this->sale_percent_for( $variation );
+		$percent = $this->catalog_percent_for( $variation );
 		if ( $percent <= 0 ) {
 			return $price;
 		}
@@ -418,6 +501,9 @@ final class DZE_Discounts {
 		$sig = [];
 		foreach ( $this->rules_of_type( 'sale' ) as $id => $rule ) {
 			$sig[] = $id . ':' . ( $rule['percent'] ?? 0 );
+		}
+		foreach ( $this->rules_of_type( 'autobest' ) as $id => $rule ) {
+			$sig[] = 'ab' . $id . ':' . ( $rule['percent'] ?? 0 );
 		}
 		if ( $sig ) {
 			$hash['dze_sale'] = md5( implode( '|', $sig ) );
@@ -874,6 +960,9 @@ final class DZE_Discounts {
 			'min_subtotal'  => max( 0, (float) ( $in['min_subtotal'] ?? 0 ) ),
 			'min_qty'       => max( 0, (int) ( $in['min_qty'] ?? 0 ) ),
 			'tiers'         => $this->sanitize_tiers( $in['tiers'] ?? [] ),
+			// Best-seller boost (auto) fields.
+			'top_n'         => min( 200, max( 1, (int) ( $in['top_n'] ?? 20 ) ) ),
+			'lookback_days' => min( 365, max( 1, (int) ( $in['lookback_days'] ?? 30 ) ) ),
 			'banner_enabled'   => ! empty( $in['banner_enabled'] ),
 			'banner_text'      => sanitize_text_field( $in['banner_text'] ?? '' ),
 			'banner_bg'        => $this->sanitize_hex( $in['banner_bg'] ?? '#111111' ),

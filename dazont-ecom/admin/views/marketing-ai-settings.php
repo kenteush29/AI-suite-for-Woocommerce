@@ -132,7 +132,36 @@ defined( 'ABSPATH' ) || exit;
 				<p class="description" style="max-width:820px;"><?php esc_html_e( 'The marketing calendar is driven by real commercial moments (Black Friday, seasonal sales, holidays…), which rarely depend on your exact catalog. If suggestions feel off, turn this off so the AI focuses purely on the calendar and target market.', 'dazont-ecom' ); ?></p>
 			</td>
 		</tr>
+		<tr>
+			<th scope="row"><label for="dze-mai-tone"><?php esc_html_e( 'Brand tone / voice', 'dazont-ecom' ); ?></label></th>
+			<td>
+				<input type="text" id="dze-mai-tone" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[tone]' ); ?>" value="<?php echo esc_attr( $settings['tone'] ?? '' ); ?>" class="regular-text" placeholder="<?php esc_attr_e( 'e.g. bold, tactical, no-nonsense', 'dazont-ecom' ); ?>" />
+				<p class="description" style="max-width:820px;"><?php esc_html_e( 'How your brand speaks. Used lightly for the calendar today, and reused by the upcoming content tools (product descriptions, etc.).', 'dazont-ecom' ); ?></p>
+			</td>
+		</tr>
 	</table>
+
+	<h2 class="title"><?php esc_html_e( 'Marketing calendar prompt', 'dazont-ecom' ); ?></h2>
+	<p class="description" style="max-width:820px;">
+		<?php esc_html_e( 'The strategy the AI follows when building your calendar. Edit it to steer what kinds of events it proposes. The shop context, chosen language, date range and output format are always added automatically — you only write the strategy.', 'dazont-ecom' ); ?>
+	</p>
+	<?php
+	$prompt_value   = trim( (string) ( $settings['events_prompt'] ?? '' ) );
+	$prompt_display = $prompt_value !== '' ? $prompt_value : DZE_Marketing_Ai::DEFAULT_EVENTS_PROMPT;
+	?>
+	<textarea id="dze-mai-prompt" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[events_prompt]' ); ?>" rows="10" class="large-text code" style="max-width:820px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;"><?php echo esc_textarea( $prompt_display ); ?></textarea>
+	<p>
+		<button type="button" class="button" id="dze-mai-prompt-reset"><?php esc_html_e( '↺ Reset to default', 'dazont-ecom' ); ?></button>
+		<span class="description"><?php echo $prompt_value !== '' ? esc_html__( 'Customised.', 'dazont-ecom' ) : esc_html__( 'Using the default strategy.', 'dazont-ecom' ); ?></span>
+	</p>
+	<script>
+	(function () {
+		var def = <?php echo wp_json_encode( DZE_Marketing_Ai::DEFAULT_EVENTS_PROMPT ); ?>;
+		var btn = document.getElementById('dze-mai-prompt-reset');
+		var ta  = document.getElementById('dze-mai-prompt');
+		if ( btn && ta ) { btn.addEventListener('click', function () { ta.value = def; ta.focus(); }); }
+	}());
+	</script>
 
 	<?php submit_button( __( 'Save configuration', 'dazont-ecom' ) ); ?>
 </form>
@@ -140,14 +169,23 @@ defined( 'ABSPATH' ) || exit;
 <hr />
 <h2 class="title"><?php esc_html_e( 'What the AI sees about your shop', 'dazont-ecom' ); ?></h2>
 <p class="description" style="max-width:820px;">
-	<?php esc_html_e( 'Auto-detected from your store — categories and products are ranked by real sales volume (WooCommerce Analytics), highest first. Nothing to fill in.', 'dazont-ecom' ); ?>
+	<?php esc_html_e( 'The exact text sent to the AI as context. Kept deliberately short.', 'dazont-ecom' ); ?>
 	<a href="<?php echo esc_url( add_query_arg( [ 'page' => DZE_Settings::MENU_SLUG, 'tab' => 'ai', 'dze_mai_refresh' => 1 ] , admin_url( 'admin.php' ) ) ); ?>">↻ <?php esc_html_e( 'Refresh', 'dazont-ecom' ); ?></a>
 </p>
 <?php if ( $context !== '' ) : ?>
 	<pre style="background:#f6f7f7;border:1px solid #dcdcde;border-radius:4px;padding:12px 16px;max-width:820px;white-space:pre-wrap;font-size:13px;"><?php echo esc_html( $context ); ?></pre>
 <?php else : ?>
-	<p class="description"><?php esc_html_e( 'Nothing detected yet — add a site tagline and a few products/categories for better suggestions.', 'dazont-ecom' ); ?></p>
+	<p class="description"><?php esc_html_e( 'Nothing detected yet — set a site tagline for better suggestions.', 'dazont-ecom' ); ?></p>
 <?php endif; ?>
+<p class="description" style="max-width:820px;">
+	<?php
+	printf(
+		/* translators: %s: link to the WordPress General Settings screen */
+		esc_html__( 'The tagline comes from your WordPress site tagline. %s', 'dazont-ecom' ),
+		'<a href="' . esc_url( admin_url( 'options-general.php' ) ) . '">' . esc_html__( 'Edit it in Settings → General ↗', 'dazont-ecom' ) . '</a>'
+	);
+	?>
+</p>
 
 <hr />
 <p class="description" style="max-width:820px;">
