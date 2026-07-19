@@ -25,6 +25,7 @@ final class DZE_Marketing_Ai {
 	public const NONCE           = 'dze_mai';
 	public const OPT_SETTINGS    = 'dze_mai_settings';
 	public const OPT_SUGGESTIONS = 'dze_mai_suggestions';
+	public const MENU_SLUG       = 'dazont-ecom-ai';
 
 	private const API_URL       = 'https://api.anthropic.com/v1/messages';
 	private const API_VERSION   = '2023-06-01';
@@ -107,14 +108,14 @@ final class DZE_Marketing_Ai {
 			return;
 		}
 		add_action( 'admin_init',            [ $this, 'register_settings' ] );
+		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_dashboard_setup',    [ $this, 'register_dashboard_widget' ] );
-		add_action( 'admin_footer-index.php', [ $this, 'dashboard_fullwidth_script' ] );
 		add_action( 'wp_ajax_dze_mai_generate', [ $this, 'ajax_generate' ] );
 		add_action( 'wp_ajax_dze_mai_accept',   [ $this, 'ajax_accept' ] );
 		add_action( 'wp_ajax_dze_mai_refuse',   [ $this, 'ajax_refuse' ] );
-		// No own admin menu: settings render inside DZE_Settings (tab=ai) via
-		// render_settings_section(); the generate/review UI renders inside the
+		// Settings live on the "AI Assistant" submenu (register_menu →
+		// render_settings_page); the generate/review UI renders inside the
 		// Marketing Events page via render_calendar_panel().
 	}
 
@@ -292,8 +293,27 @@ final class DZE_Marketing_Ai {
 	}
 
 	// =========================================================================
-	// Settings tab (rendered inside DZE_Settings)
+	// AI Assistant admin page (own submenu under the Dazont Ecom menu)
 	// =========================================================================
+
+	public function register_menu(): void {
+		add_submenu_page(
+			DZE_Restock::MENU_SLUG,
+			__( 'AI Assistant', 'dazont-ecom' ),
+			__( 'AI Assistant', 'dazont-ecom' ),
+			'manage_woocommerce',
+			self::MENU_SLUG,
+			[ $this, 'render_settings_page' ]
+		);
+	}
+
+	/** Full-page wrapper for the AI Assistant configuration. */
+	public function render_settings_page(): void {
+		echo '<div class="wrap dze-wrap">';
+		echo '<h1>' . esc_html__( 'AI Marketing Assistant', 'dazont-ecom' ) . '</h1>';
+		$this->render_settings_section();
+		echo '</div>';
+	}
 
 	public function render_settings_section(): void {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
@@ -1058,38 +1078,6 @@ final class DZE_Marketing_Ai {
 			$url = add_query_arg( [ 'page' => DZE_Discounts::MENU_SLUG_EVENTS ], admin_url( 'admin.php' ) );
 			echo '<p style="margin:10px 0 0;"><a href="' . esc_url( $url ) . '">' . esc_html__( 'Open Marketing Events →', 'dazont-ecom' ) . '</a></p>';
 		}
-	}
-
-	/**
-	 * Promotes the calendar widget to a full-width row above the dashboard
-	 * columns, so the month grids have room to breathe. Best-effort: if the
-	 * dashboard markup changes, the widget simply stays in its column.
-	 */
-	public function dashboard_fullwidth_script(): void {
-		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			return;
-		}
-		?>
-		<style>#dze_marketing_calendar_widget{width:100%;box-sizing:border-box;}#dze-cal-fullrow{clear:both;margin:0 0 16px;}</style>
-		<script>
-		(function () {
-			function move() {
-				var w = document.getElementById('dze_marketing_calendar_widget');
-				var host = document.getElementById('dashboard-widgets');
-				if ( ! w || ! host || ! host.parentNode ) { return; }
-				var row = document.getElementById('dze-cal-fullrow');
-				if ( ! row ) {
-					row = document.createElement('div');
-					row.id = 'dze-cal-fullrow';
-					host.parentNode.insertBefore(row, host);
-				}
-				row.appendChild(w);
-			}
-			if ( document.readyState !== 'loading' ) { move(); }
-			else { document.addEventListener('DOMContentLoaded', move); }
-		}());
-		</script>
-		<?php
 	}
 
 	// =========================================================================

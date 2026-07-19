@@ -66,7 +66,6 @@ final class DZE_Plugin {
 		DZE_Discounts::instance();
 		DZE_Gmc::instance();
 		DZE_Marketing_Ai::instance();
-		DZE_Settings::instance();
 	}
 
 	public static function activate(): void {

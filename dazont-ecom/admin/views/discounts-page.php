@@ -23,6 +23,12 @@ $gmc_on     = $gmc && $gmc->is_configured();
 	<a href="<?php echo esc_url( $new_url ); ?>" class="page-title-action"><?php echo esc_html( $is_events ? __( 'Add event', 'dazont-ecom' ) : __( 'Add discount', 'dazont-ecom' ) ); ?></a>
 	<hr class="wp-header-end" />
 
+	<?php
+	if ( ! empty( $events_tabs ) ) {
+		echo $events_tabs; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from esc_* internally.
+	}
+	?>
+
 	<?php if ( $is_events && class_exists( 'DZE_Marketing_Ai' ) ) : ?>
 		<?php DZE_Marketing_Ai::instance()->render_calendar_panel(); ?>
 		<hr style="margin:24px 0;" />
@@ -67,9 +73,18 @@ $gmc_on     = $gmc && $gmc->is_configured();
 			$edit_url   = add_query_arg( [ 'page' => $menu_slug, 'edit' => $id ], admin_url( 'admin.php' ) );
 			$enabled    = ! empty( $r['enabled'] );
 			if ( ( $r['type'] ?? '' ) === 'autobest' ) {
+				$strat_labels = DZE_Discounts::auto_strategies();
+				$strat_short  = [
+					'newest'      => __( 'New arrivals', 'dazont-ecom' ),
+					'slow'        => __( 'Slow movers', 'dazont-ecom' ),
+					'bestsellers' => __( 'Best-sellers', 'dazont-ecom' ),
+					'trending'    => __( 'Trending', 'dazont-ecom' ),
+				];
+				$strat = $strat_short[ $r['strategy'] ?? 'bestsellers' ] ?? __( 'Best-sellers', 'dazont-ecom' );
 				$scope_txt = sprintf(
-					/* translators: 1: number of products, 2: number of days */
-					__( 'Top %1$d sellers · last %2$d days', 'dazont-ecom' ),
+					/* translators: 1: strategy name, 2: number of products, 3: number of days */
+					__( '%1$s · up to %2$d · %3$d-day window', 'dazont-ecom' ),
+					$strat,
 					(int) ( $r['top_n'] ?? 20 ),
 					(int) ( $r['lookback_days'] ?? 30 )
 				);
@@ -165,7 +180,19 @@ $gmc_on     = $gmc && $gmc->is_configured();
 		<?php if ( $is_events ) : ?>
 			<?php esc_html_e( 'Only one marketing event can be active at a time — overlapping ones are kept disabled.', 'dazont-ecom' ); ?>
 		<?php else : ?>
-			<?php esc_html_e( 'Discounts are evergreen: enable a rule once and it keeps applying (no schedule). They show up automatically in the cart and at checkout as a promo-code line — “Bundle” for a Bulk offer per item, “Wholesale” for a Bulk order — with no code for the customer to type.', 'dazont-ecom' ); ?>
+			<?php esc_html_e( 'Discounts are evergreen: enable a rule once and it keeps applying (no schedule). Bulk offers show in the cart and at checkout as a promo-code line — “Bundle” (Bulk offer per item) and “Wholesale” (Bulk order) — with no code to type. An Automatic product discount instead shows a struck-through price directly on the chosen products.', 'dazont-ecom' ); ?>
 		<?php endif; ?>
 	</p>
+
+	<?php if ( ! $is_events ) : ?>
+	<div class="notice notice-info inline" style="max-width:900px;margin-top:16px;">
+		<p style="margin:.6em 0;"><strong><?php esc_html_e( 'How these stack with your other promotions', 'dazont-ecom' ); ?></strong></p>
+		<ul style="list-style:disc;margin:0 0 .6em 18px;">
+			<li><?php esc_html_e( 'Only one Marketing Event (scheduled sale) runs at a time.', 'dazont-ecom' ); ?></li>
+			<li><?php esc_html_e( 'A scheduled sale and an Automatic product discount never stack on the same product — the marketing event always wins for the products it covers.', 'dazont-ecom' ); ?></li>
+			<li><?php esc_html_e( 'Bulk coupons (Bundle / Wholesale) are calculated on the already-discounted price and add on top, like a wholesale incentive over a sale price.', 'dazont-ecom' ); ?></li>
+			<li><?php esc_html_e( 'Classic coupons your customers type keep working alongside these. To stop a coupon from stacking on discounted products, tick “Exclude sale items” on that coupon.', 'dazont-ecom' ); ?></li>
+		</ul>
+	</div>
+	<?php endif; ?>
 </div>

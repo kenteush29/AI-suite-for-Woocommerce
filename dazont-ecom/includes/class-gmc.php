@@ -152,7 +152,8 @@ final class DZE_Gmc {
 		return null;
 	}
 
-	// No own submenu: rendered as a tab inside DZE_Settings (see render_settings_page()).
+	// No own submenu: rendered as the "Google Merchant Center" tab inside the
+	// Marketing Events page (see DZE_Discounts::render_events_page()).
 
 	public function register_settings(): void {
 		register_setting( 'dze_gmc_options', self::OPT_CREDENTIALS, [ 'sanitize_callback' => [ $this, 'sanitize_credentials' ] ] );
@@ -247,7 +248,7 @@ final class DZE_Gmc {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
-		$settings_url = admin_url( 'admin.php?page=' . DZE_Settings::MENU_SLUG . '&tab=gmc' );
+		$settings_url = admin_url( 'admin.php?page=' . DZE_Discounts::MENU_SLUG_EVENTS . '&tab=gmc' );
 
 		$state = isset( $_GET['state'] ) ? sanitize_text_field( wp_unslash( $_GET['state'] ) ) : '';
 		if ( ! wp_verify_nonce( $state, 'dze_gmc_oauth' ) ) {
@@ -338,7 +339,7 @@ final class DZE_Gmc {
 		}
 		update_option( self::OPT_CONNECTION, [ 'refresh_token' => '', 'email' => '' ], false );
 		delete_transient( 'dze_gmc_oauth_token' );
-		wp_safe_redirect( admin_url( 'admin.php?page=' . DZE_Settings::MENU_SLUG . '&tab=gmc' ) );
+		wp_safe_redirect( admin_url( 'admin.php?page=' . DZE_Discounts::MENU_SLUG_EVENTS . '&tab=gmc' ) );
 		exit;
 	}
 
@@ -401,7 +402,7 @@ final class DZE_Gmc {
 
 	public function enqueue_assets( string $hook ): void {
 		// Load on the Settings page (GMC tab) and on the Marketing Events list (sync buttons).
-		if ( strpos( $hook, DZE_Settings::MENU_SLUG ) === false && strpos( $hook, DZE_Discounts::MENU_SLUG_EVENTS ) === false ) {
+		if ( strpos( $hook, DZE_Discounts::MENU_SLUG_EVENTS ) === false ) {
 			return;
 		}
 		wp_enqueue_script( 'dze-gmc', DZE_URL . 'admin/js/gmc.js', [ 'jquery' ], DZE_VERSION, true );

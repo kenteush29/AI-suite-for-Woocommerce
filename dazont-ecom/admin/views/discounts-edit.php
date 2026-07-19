@@ -110,19 +110,31 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				</td>
 			</tr>
 
-			<?php // Best-seller boost (auto) fields. ?>
+			<?php // Automatic product discount fields. ?>
+			<tr class="dze-field-strategy">
+				<th scope="row"><label for="dze-strategy"><?php esc_html_e( 'Strategy', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<select id="dze-strategy" name="strategy">
+						<?php $cur_strategy = (string) $e( 'strategy', 'newest' );
+						foreach ( DZE_Discounts::auto_strategies() as $key => $label ) : ?>
+							<option value="<?php echo esc_attr( $key ); ?>" <?php selected( $cur_strategy, $key ); ?>><?php echo esc_html( $label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<p class="description"><?php esc_html_e( 'Which products the plugin auto-selects. New arrivals & slow movers stimulate products that need a push; best-sellers & trending reward momentum (they give up margin on products already selling).', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
 			<tr class="dze-field-top-n">
-				<th scope="row"><label for="dze-top-n"><?php esc_html_e( 'How many top sellers', 'dazont-ecom' ); ?></label></th>
+				<th scope="row"><label for="dze-top-n"><?php esc_html_e( 'How many products', 'dazont-ecom' ); ?></label></th>
 				<td>
 					<input type="number" id="dze-top-n" name="top_n" min="1" max="200" step="1" class="small-text" value="<?php echo esc_attr( $e( 'top_n', '20' ) ); ?>" />
-					<p class="description"><?php esc_html_e( 'The plugin automatically discounts this many best-selling products.', 'dazont-ecom' ); ?></p>
+					<p class="description"><?php esc_html_e( 'Maximum number of products discounted at once by this rule.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
 			<tr class="dze-field-lookback">
-				<th scope="row"><label for="dze-lookback"><?php esc_html_e( 'Sales window (days)', 'dazont-ecom' ); ?></label></th>
+				<th scope="row"><label for="dze-lookback"><?php esc_html_e( 'Time window (days)', 'dazont-ecom' ); ?></label></th>
 				<td>
 					<input type="number" id="dze-lookback" name="lookback_days" min="1" max="365" step="1" class="small-text" value="<?php echo esc_attr( $e( 'lookback_days', '30' ) ); ?>" />
-					<p class="description"><?php esc_html_e( 'Rank best-sellers over the last N days. The list refreshes automatically (twice a day) so the boost always follows what is actually selling.', 'dazont-ecom' ); ?></p>
+					<p class="description"><?php esc_html_e( 'The window used by the strategy (recent sales, or how far back "new arrivals" reaches). The product list refreshes automatically, twice a day.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
 			<?php endif; ?>

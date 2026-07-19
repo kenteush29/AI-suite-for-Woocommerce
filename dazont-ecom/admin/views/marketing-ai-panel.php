@@ -9,7 +9,7 @@ defined( 'ABSPATH' ) || exit;
  * @var array  $languages   Active site languages ([code, native_name, flag]).
  * @var string $primary     Primary language code (pre-selected).
  */
-$ai_settings_url = add_query_arg( [ 'page' => DZE_Settings::MENU_SLUG, 'tab' => 'ai' ], admin_url( 'admin.php' ) );
+$ai_settings_url = add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG ], admin_url( 'admin.php' ) );
 ?>
 <div class="dze-mai-block" style="background:#f6f7f7;border:1px solid #dcdcde;border-radius:6px;padding:16px 18px;margin-bottom:20px;">
 	<h2 class="title" style="margin-top:0;"><?php esc_html_e( 'AI Marketing Assistant — generate a calendar', 'dazont-ecom' ); ?></h2>

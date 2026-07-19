@@ -17,15 +17,47 @@ defined( 'ABSPATH' ) || exit;
  *                  Shown in the cart as a "Bundle" fee line.
  *   - bulk_order : "Bulk order" — tiered % off the in-scope cart, gated on an
  *                  optional minimum subtotal and/or minimum total quantity; the
- *                  highest reached quantity tier wins. Shown as a "Wholesale"
- *                  fee line.
+ *                  highest reached quantity tier wins. Applied as the auto
+ *                  "Wholesale" coupon.
+ *   - autobest   : "Automatic product discount" — a % sale applied automatically
+ *                  to a set of products chosen by a strategy (new arrivals, slow
+ *                  movers, best-sellers or trending), refreshed twice a day.
  *
- * Scope for every rule: whole store, specific categories, or specific products.
- * Discounts are percentage-only by design.
+ * Scope for every rule: whole store, specific categories, or specific products
+ * (autobest picks its products automatically instead). Percentage-only.
  *
  * Front-end footprint: the pricing/cart/banner hooks are registered ONLY when
  * at least one rule is currently active (a single autoloaded option read).
  * Nothing is wired on the front end while no promotion is running.
+ *
+ * ---------------------------------------------------------------------------
+ * DISCOUNT COMPATIBILITY RULES (how everything stacks — keep in sync with the
+ * admin note on the Discounts page):
+ *
+ *  1. One marketing event at a time. Two scheduled sales may never overlap in
+ *     time (enforced on save/enable).
+ *
+ *  2. Catalog discounts do not stack with each other. A product touched by both
+ *     a scheduled sale AND an automatic discount gets the STRONGER of the two,
+ *     never the sum (catalog_percent_for() = max). In practice the automatic
+ *     discount also steps aside for any product already in the active event's
+ *     scope, so the marketing event always wins (in_active_event_scope()).
+ *
+ *  3. Cart bulk coupons (Bundle / Wholesale) are computed AFTER catalog
+ *     discounts, from the already-reduced price, and applied as auto coupons.
+ *     They are the only intentional stacking: a wholesale/bundle incentive on
+ *     top of a sale price. A line can never go below zero.
+ *
+ *  4. Classic (customer-typed) WooCommerce coupons keep working normally and
+ *     coexist with our auto coupons (individual_use = false on ours). Our
+ *     sale/automatic products register as "on sale", so a classic coupon set to
+ *     "Exclude sale items" will correctly skip them — that is the lever to stop
+ *     a customer coupon stacking on already-discounted products.
+ *
+ *  5. If a classic coupon is marked "Individual use only", WooCommerce removes
+ *     all other coupons (including ours) while it is applied — standard Woo
+ *     behaviour, left untouched.
+ * ---------------------------------------------------------------------------
  */
 final class DZE_Discounts {
 
@@ -85,7 +117,17 @@ final class DZE_Discounts {
 			'sale'       => __( 'Scheduled sale (site-wide %)', 'dazont-ecom' ),
 			'bulk'       => __( 'Bulk offer per item', 'dazont-ecom' ),
 			'bulk_order' => __( 'Bulk order', 'dazont-ecom' ),
-			'autobest'   => __( 'Best-seller boost (auto)', 'dazont-ecom' ),
+			'autobest'   => __( 'Automatic product discount', 'dazont-ecom' ),
+		];
+	}
+
+	/** Selectable strategies for the "Automatic product discount" type. */
+	public static function auto_strategies(): array {
+		return [
+			'newest'      => __( 'New arrivals — recently published products', 'dazont-ecom' ),
+			'slow'        => __( 'Slow movers — little or no recent sales', 'dazont-ecom' ),
+			'bestsellers' => __( 'Best-sellers — current top sellers', 'dazont-ecom' ),
+			'trending'    => __( 'Trending — sales accelerating lately', 'dazont-ecom' ),
 		];
 	}
 
@@ -399,8 +441,13 @@ final class DZE_Discounts {
 
 	/**
 	 * Builds (and caches for the request) a map of product_id => discount % for
-	 * every active "Best-seller boost" rule. Each rule's top-seller list is itself
-	 * cached for 12h so the ranking query runs at most twice a day per rule.
+	 * every active "Automatic product discount" rule. Each rule's product list is
+	 * cached 12h so the ranking query runs at most twice a day per rule.
+	 *
+	 * Compatibility rule (see the class docblock): products already covered by
+	 * the active marketing event (scheduled sale) are removed here, so an event
+	 * always takes priority over an automatic discount — they never fight over
+	 * the same product.
 	 */
 	private function autobest_map(): array {
 		if ( null !== $this->autobest_map ) {
@@ -412,29 +459,113 @@ final class DZE_Discounts {
 			if ( $percent <= 0 ) {
 				continue;
 			}
+			$strategy = in_array( $rule['strategy'] ?? '', array_keys( self::auto_strategies() ), true ) ? $rule['strategy'] : 'bestsellers';
 			$top_n    = max( 1, (int) ( $rule['top_n'] ?? 20 ) );
 			$lookback = max( 1, (int) ( $rule['lookback_days'] ?? 30 ) );
-			$key      = 'dze_autobest_' . md5( $id . '|' . $top_n . '|' . $lookback );
+			$key      = 'dze_auto_' . md5( $id . '|' . $strategy . '|' . $top_n . '|' . $lookback );
 			$ids      = get_transient( $key );
 			if ( ! is_array( $ids ) ) {
-				$ids = $this->best_seller_ids( $top_n, $lookback );
+				$ids = $this->auto_product_ids( $strategy, $top_n, $lookback );
 				set_transient( $key, $ids, 12 * HOUR_IN_SECONDS );
 			}
 			foreach ( $ids as $pid ) {
+				if ( $this->in_active_event_scope( (int) $pid ) ) {
+					continue; // event wins.
+				}
 				$map[ $pid ] = max( $map[ $pid ] ?? 0.0, $percent );
 			}
 		}
 		return $this->autobest_map = $map;
 	}
 
-	/** Top-selling published product IDs over the last $lookback_days (WooCommerce Analytics). */
-	private function best_seller_ids( int $top_n, int $lookback_days ): array {
+	/** True when an active scheduled-sale event already covers this product. */
+	private function in_active_event_scope( int $product_id ): bool {
+		if ( $product_id <= 0 ) {
+			return false;
+		}
+		$parent = (int) wp_get_post_parent_id( $product_id );
+		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
+			if ( $this->product_in_scope( $rule, $product_id, $parent ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Published product IDs for one automatic-discount strategy, over the last
+	 * $lookback_days, capped to $top_n. All strategies read WooCommerce Analytics
+	 * (the product-lookup table); if it is unavailable they return nothing.
+	 */
+	private function auto_product_ids( string $strategy, int $top_n, int $lookback_days ): array {
 		global $wpdb;
+
+		// "New arrivals" needs no analytics — it's just recently published products.
+		if ( 'newest' === $strategy ) {
+			$since = gmdate( 'Y-m-d H:i:s', time() - $lookback_days * DAY_IN_SECONDS );
+			$ids   = $wpdb->get_col( $wpdb->prepare(
+				"SELECT ID FROM {$wpdb->posts}
+				 WHERE post_type = 'product' AND post_status = 'publish' AND post_date_gmt >= %s
+				 ORDER BY post_date_gmt DESC
+				 LIMIT %d",
+				$since,
+				$top_n
+			) );
+			return array_map( 'intval', (array) $ids );
+		}
+
 		$table = $wpdb->prefix . 'wc_order_product_lookup';
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
 			return [];
 		}
 		$since = gmdate( 'Y-m-d H:i:s', time() - $lookback_days * DAY_IN_SECONDS );
+
+		if ( 'slow' === $strategy ) {
+			// Published products with NO recorded sales inside the window — the
+			// long tail we want to stimulate. Most-recent first, capped.
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table derives from $wpdb->prefix.
+			$ids = $wpdb->get_col( $wpdb->prepare(
+				"SELECT p.ID
+				 FROM {$wpdb->posts} p
+				 WHERE p.post_type = 'product' AND p.post_status = 'publish'
+				   AND p.ID NOT IN (
+				       SELECT DISTINCT l.product_id FROM {$table} l WHERE l.date_created >= %s
+				   )
+				 ORDER BY p.post_date_gmt DESC
+				 LIMIT %d",
+				$since,
+				$top_n
+			) );
+			return array_map( 'intval', (array) $ids );
+		}
+
+		if ( 'trending' === $strategy ) {
+			// Biggest sales acceleration: units in the recent half of the window
+			// minus units in the earlier half, positive deltas first.
+			$mid = gmdate( 'Y-m-d H:i:s', time() - (int) ceil( $lookback_days / 2 ) * DAY_IN_SECONDS );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table derives from $wpdb->prefix.
+			$ids = $wpdb->get_col( $wpdb->prepare(
+				"SELECT l.product_id
+				 FROM {$table} l
+				 INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
+				 WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s
+				 GROUP BY l.product_id
+				 HAVING SUM(CASE WHEN l.date_created >= %s THEN l.product_qty ELSE 0 END)
+				      - SUM(CASE WHEN l.date_created <  %s THEN l.product_qty ELSE 0 END) > 0
+				 ORDER BY SUM(CASE WHEN l.date_created >= %s THEN l.product_qty ELSE 0 END)
+				        - SUM(CASE WHEN l.date_created <  %s THEN l.product_qty ELSE 0 END) DESC
+				 LIMIT %d",
+				$since,
+				$mid,
+				$mid,
+				$mid,
+				$mid,
+				$top_n
+			) );
+			return array_map( 'intval', (array) $ids );
+		}
+
+		// Default: best-sellers — most units sold in the window.
 		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table derives from $wpdb->prefix.
 		$ids = $wpdb->get_col( $wpdb->prepare(
 			"SELECT l.product_id
@@ -868,9 +999,42 @@ final class DZE_Discounts {
 		wp_enqueue_script( 'dze-discounts', DZE_URL . 'admin/js/discounts.js', [ 'jquery' ], DZE_VERSION, true );
 	}
 
-	/** "Marketing Events" page: recurring, date-bound scheduled sales + the AI calendar. */
+	/**
+	 * "Marketing Events" page. Two tabs: the events/calendar workspace (default)
+	 * and the Google Merchant Center connection (promotions sync lives with the
+	 * promotions themselves).
+	 */
 	public function render_events_page(): void {
+		$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'events';
+		if ( 'gmc' === $tab && class_exists( 'DZE_Gmc' ) ) {
+			if ( ! current_user_can( 'manage_woocommerce' ) ) {
+				wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
+			}
+			echo '<div class="wrap dze-wrap">';
+			echo '<h1 class="wp-heading-inline">' . esc_html__( 'Marketing Events', 'dazont-ecom' ) . '</h1><hr class="wp-header-end" />';
+			echo $this->events_tabs_html( 'gmc' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built from esc_* internally.
+			DZE_Gmc::instance()->render_settings_page();
+			echo '</div>';
+			return;
+		}
 		$this->render_page_for( 'events' );
+	}
+
+	/** Tab nav for the Marketing Events page (Events | Google Merchant Center). */
+	public function events_tabs_html( string $active ): string {
+		if ( ! class_exists( 'DZE_Gmc' ) ) {
+			return '';
+		}
+		$events_url = add_query_arg( [ 'page' => self::MENU_SLUG_EVENTS ], admin_url( 'admin.php' ) );
+		$gmc_url    = add_query_arg( [ 'page' => self::MENU_SLUG_EVENTS, 'tab' => 'gmc' ], admin_url( 'admin.php' ) );
+		ob_start();
+		?>
+		<h2 class="nav-tab-wrapper" style="margin-bottom:16px;">
+			<a href="<?php echo esc_url( $events_url ); ?>" class="nav-tab<?php echo 'gmc' !== $active ? ' nav-tab-active' : ''; ?>"><?php esc_html_e( 'Events & calendar', 'dazont-ecom' ); ?></a>
+			<a href="<?php echo esc_url( $gmc_url ); ?>" class="nav-tab<?php echo 'gmc' === $active ? ' nav-tab-active' : ''; ?>"><?php esc_html_e( 'Google Merchant Center', 'dazont-ecom' ); ?></a>
+		</h2>
+		<?php
+		return (string) ob_get_clean();
 	}
 
 	/** "Discounts" page: evergreen cart/bulk rules, set up once. */
@@ -905,6 +1069,7 @@ final class DZE_Discounts {
 		if ( $notice ) {
 			delete_transient( 'dze_discount_notice' );
 		}
+		$events_tabs = ( 'events' === $mode ) ? $this->events_tabs_html( 'events' ) : '';
 		require DZE_DIR . 'admin/views/discounts-page.php';
 	}
 
@@ -960,7 +1125,8 @@ final class DZE_Discounts {
 			'min_subtotal'  => max( 0, (float) ( $in['min_subtotal'] ?? 0 ) ),
 			'min_qty'       => max( 0, (int) ( $in['min_qty'] ?? 0 ) ),
 			'tiers'         => $this->sanitize_tiers( $in['tiers'] ?? [] ),
-			// Best-seller boost (auto) fields.
+			// Automatic product discount fields.
+			'strategy'      => in_array( $in['strategy'] ?? '', array_keys( self::auto_strategies() ), true ) ? $in['strategy'] : 'bestsellers',
 			'top_n'         => min( 200, max( 1, (int) ( $in['top_n'] ?? 20 ) ) ),
 			'lookback_days' => min( 365, max( 1, (int) ( $in['lookback_days'] ?? 30 ) ) ),
 			'banner_enabled'   => ! empty( $in['banner_enabled'] ),

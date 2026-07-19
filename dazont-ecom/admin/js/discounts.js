@@ -33,9 +33,9 @@
 		// Bulk order (tiered).
 		$('.dze-field-min-subtotal, .dze-field-min-qty, .dze-field-tiers').toggle(isBulkOrder);
 
-		// Best-seller boost (auto): its own params, and no manual scope (products
-		// are auto-selected from live sales).
-		$('.dze-field-top-n, .dze-field-lookback').toggle(isAutoBest);
+		// Automatic product discount: its own params, and no manual scope
+		// (products are auto-selected by the chosen strategy).
+		$('.dze-field-strategy, .dze-field-top-n, .dze-field-lookback').toggle(isAutoBest);
 		$('.dze-field-scope').toggle(!isAutoBest);
 	}
 

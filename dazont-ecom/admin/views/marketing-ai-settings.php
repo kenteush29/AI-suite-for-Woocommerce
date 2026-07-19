@@ -170,7 +170,7 @@ defined( 'ABSPATH' ) || exit;
 <h2 class="title"><?php esc_html_e( 'What the AI sees about your shop', 'dazont-ecom' ); ?></h2>
 <p class="description" style="max-width:820px;">
 	<?php esc_html_e( 'The exact text sent to the AI as context. Kept deliberately short.', 'dazont-ecom' ); ?>
-	<a href="<?php echo esc_url( add_query_arg( [ 'page' => DZE_Settings::MENU_SLUG, 'tab' => 'ai', 'dze_mai_refresh' => 1 ] , admin_url( 'admin.php' ) ) ); ?>">↻ <?php esc_html_e( 'Refresh', 'dazont-ecom' ); ?></a>
+	<a href="<?php echo esc_url( add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG, 'dze_mai_refresh' => 1 ] , admin_url( 'admin.php' ) ) ); ?>">↻ <?php esc_html_e( 'Refresh', 'dazont-ecom' ); ?></a>
 </p>
 <?php if ( $context !== '' ) : ?>
 	<pre style="background:#f6f7f7;border:1px solid #dcdcde;border-radius:4px;padding:12px 16px;max-width:820px;white-space:pre-wrap;font-size:13px;"><?php echo esc_html( $context ); ?></pre>
