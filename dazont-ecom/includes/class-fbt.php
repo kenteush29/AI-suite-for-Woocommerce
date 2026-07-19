@@ -167,12 +167,15 @@ final class DZE_Fbt {
 		if ( is_wp_error( $terms ) || empty( $terms ) ) {
 			return [];
 		}
+		// Cheapest possible ordering (indexed post_date) — never ORDER BY RAND(),
+		// which forces a full sort of the category and would hurt big catalogues.
 		$q = new WP_Query( [
 			'post_type'           => 'product',
 			'post_status'         => 'publish',
 			'posts_per_page'      => $limit,
 			'post__not_in'        => [ $product_id ],
-			'orderby'             => 'rand',
+			'orderby'             => 'date',
+			'order'               => 'DESC',
 			'fields'              => 'ids',
 			'no_found_rows'       => true,
 			'ignore_sticky_posts' => true,
