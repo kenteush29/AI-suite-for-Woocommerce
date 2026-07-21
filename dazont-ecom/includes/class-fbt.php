@@ -242,6 +242,11 @@ final class DZE_Fbt {
 
 		$found   = [];
 		$exclude = [ $product_id ];
+		// Respect the global "never discount" product list — don't recommend those
+		// (e.g. a "Priority processing" upsell).
+		if ( class_exists( 'DZE_Discounts' ) ) {
+			$exclude = array_merge( $exclude, DZE_Discounts::get_exclusions()['products'] );
+		}
 
 		$collect = function ( array $tax_query ) use ( &$found, &$exclude, $limit ) {
 			if ( count( $found ) >= $limit ) {

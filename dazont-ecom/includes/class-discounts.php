@@ -71,8 +71,13 @@ final class DZE_Discounts {
 	/** Rule types shown on the "Discounts" page (cart-level, evergreen). */
 	private const DISCOUNT_TYPES = [ 'bulk', 'bulk_order', 'autobest' ];
 
+	/** Global "never discount" list, applied to EVERY promotion. */
+	public const OPT_EXCLUSIONS = 'dze_discount_exclusions';
+
 	/** @var array<string,array>|null Cached active rules for this request. */
 	private ?array $active = null;
+	/** @var array|null Cached exclusions for this request. */
+	private ?array $exclusions = null;
 
 	private static ?self $instance = null;
 
@@ -90,6 +95,7 @@ final class DZE_Discounts {
 			add_action( 'admin_post_dze_discount_save',   [ $this, 'handle_save' ] );
 			add_action( 'admin_post_dze_discount_delete', [ $this, 'handle_delete' ] );
 			add_action( 'admin_post_dze_discount_toggle', [ $this, 'handle_toggle' ] );
+			add_action( 'admin_post_dze_discount_exclusions', [ $this, 'handle_exclusions_save' ] );
 			add_action( 'wp_ajax_dze_auto_count',         [ $this, 'ajax_auto_count' ] );
 		}
 
@@ -440,11 +446,17 @@ final class DZE_Discounts {
 
 	/** Catalog discount % for a product: the strongest of any sale or best-seller boost. */
 	private function catalog_percent_for( \WC_Product $product ): float {
+		if ( $this->is_excluded( $product->get_id(), $product->get_parent_id() ) ) {
+			return 0.0;
+		}
 		return max( $this->sale_percent_for( $product ), $this->autobest_percent_for( $product ) );
 	}
 
 	/** Reference-price inflation % for a product from any active marketing event in scope. */
 	private function sale_inflate_for( \WC_Product $product ): float {
+		if ( $this->is_excluded( $product->get_id(), $product->get_parent_id() ) ) {
+			return 0.0;
+		}
 		$pid    = $product->get_id();
 		$parent = $product->get_parent_id();
 		$best   = 0.0;
@@ -570,6 +582,68 @@ final class DZE_Discounts {
 		return false;
 	}
 
+	/** The global "never discount" list: [ 'products' => int[], 'categories' => int[] ]. */
+	public static function get_exclusions(): array {
+		$e = get_option( self::OPT_EXCLUSIONS, [] );
+		$e = is_array( $e ) ? $e : [];
+		return [
+			'products'   => array_values( array_unique( array_map( 'intval', (array) ( $e['products'] ?? [] ) ) ) ),
+			'categories' => array_values( array_unique( array_map( 'intval', (array) ( $e['categories'] ?? [] ) ) ) ),
+		];
+	}
+
+	private function exclusions(): array {
+		if ( null === $this->exclusions ) {
+			$this->exclusions = self::get_exclusions();
+		}
+		return $this->exclusions;
+	}
+
+	/** True when a product is on the global "never discount" list (by id or category). */
+	private function is_excluded( int $product_id, int $parent_id = 0 ): bool {
+		$ex = $this->exclusions();
+		if ( empty( $ex['products'] ) && empty( $ex['categories'] ) ) {
+			return false;
+		}
+		$ids = [ $product_id, $parent_id ];
+		if ( DZE_Wpml::is_active() ) {
+			$ids[] = DZE_Wpml::canonical_id( $product_id, 'product' );
+			if ( $parent_id ) {
+				$ids[] = DZE_Wpml::canonical_id( $parent_id, 'product' );
+			}
+		}
+		foreach ( $ids as $id ) {
+			if ( $id && in_array( (int) $id, $ex['products'], true ) ) {
+				return true;
+			}
+		}
+		if ( ! empty( $ex['categories'] ) ) {
+			$match = $parent_id ?: $product_id;
+			if ( has_term( $ex['categories'], 'product_cat', $match ) ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** SQL AND-clause excluding the "never discount" products/categories (alias `p`). */
+	private function exclusion_sql( string $alias = 'p' ): string {
+		global $wpdb;
+		$ex  = self::get_exclusions();
+		$out = '';
+		if ( ! empty( $ex['products'] ) ) {
+			$ids  = implode( ',', array_map( 'intval', $ex['products'] ) );
+			$out .= " AND {$alias}.ID NOT IN ({$ids}) ";
+		}
+		if ( ! empty( $ex['categories'] ) ) {
+			$cids = implode( ',', array_map( 'intval', $ex['categories'] ) );
+			$out .= " AND {$alias}.ID NOT IN ( SELECT tr.object_id FROM {$wpdb->term_relationships} tr
+			         INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
+			         WHERE tt.taxonomy = 'product_cat' AND tt.term_id IN ({$cids}) ) ";
+		}
+		return $out;
+	}
+
 	/** Out-of-stock products are ALWAYS excluded from automatic discounts. */
 	private function in_stock_sql( string $alias = 'p' ): string {
 		global $wpdb;
@@ -632,13 +706,14 @@ final class DZE_Discounts {
 		$since = gmdate( 'Y-m-d H:i:s', time() - $lookback_days * DAY_IN_SECONDS );
 		$oos   = $this->in_stock_sql( 'p' );
 		$lang  = $this->default_lang_sql( 'p' ); // dedupe WPML translations.
+		$excl  = $this->exclusion_sql( 'p' );    // global "never discount" list.
 		$table = $wpdb->prefix . 'wc_order_product_lookup';
 		$has   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
 
 		if ( 'newest' === $strategy ) {
 			[ $join, $order ] = $this->priority_sql( $priority );
 			$sql = "SELECT p.ID AS product_id FROM {$wpdb->posts} p {$join}
-			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND p.post_date_gmt >= %s AND {$oos} {$lang}
+			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND p.post_date_gmt >= %s AND {$oos} {$lang} {$excl}
 			        {$order}";
 			return [ $sql, [ $since ] ];
 		}
@@ -650,7 +725,7 @@ final class DZE_Discounts {
 		if ( 'slow' === $strategy ) {
 			[ $join, $order ] = $this->priority_sql( $priority );
 			$sql = "SELECT p.ID AS product_id FROM {$wpdb->posts} p {$join}
-			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND {$oos} {$lang}
+			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND {$oos} {$lang} {$excl}
 			          AND p.ID NOT IN ( SELECT DISTINCT l.product_id FROM {$table} l WHERE l.date_created >= %s )
 			        {$order}";
 			return [ $sql, [ $since ] ];
@@ -660,7 +735,7 @@ final class DZE_Discounts {
 			$mid  = gmdate( 'Y-m-d H:i:s', time() - (int) ceil( $lookback_days / 2 ) * DAY_IN_SECONDS );
 			$sql  = "SELECT l.product_id FROM {$table} l
 			         INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
-			         WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos} {$lang}
+			         WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos} {$lang} {$excl}
 			         GROUP BY l.product_id
 			         HAVING SUM(CASE WHEN l.date_created >= %s THEN l.product_qty ELSE 0 END)
 			              - SUM(CASE WHEN l.date_created <  %s THEN l.product_qty ELSE 0 END) > 0
@@ -672,7 +747,7 @@ final class DZE_Discounts {
 		// Best-sellers — most units sold in the window.
 		$sql = "SELECT l.product_id FROM {$table} l
 		        INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
-		        WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos} {$lang}
+		        WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos} {$lang} {$excl}
 		        GROUP BY l.product_id
 		        ORDER BY SUM(l.product_qty) DESC";
 		return [ $sql, [ $since ] ];
@@ -728,6 +803,9 @@ final class DZE_Discounts {
 	}
 
 	private function bulk_percent_for( \WC_Product $product, int $qty ): float {
+		if ( $this->is_excluded( $product->get_id(), $product->get_parent_id() ) ) {
+			return 0.0;
+		}
 		$pid    = $product->get_id();
 		$parent = $product->get_parent_id();
 		$best   = 0.0;
@@ -838,6 +916,9 @@ final class DZE_Discounts {
 				if ( ! $product instanceof \WC_Product ) {
 					continue;
 				}
+				if ( $this->is_excluded( $product->get_id(), $product->get_parent_id() ) ) {
+					continue;
+				}
 				if ( $this->product_in_scope( $wholesale_rule, $product->get_id(), $product->get_parent_id() ) ) {
 					$subtotal += (float) $product->get_price() * (int) $item['quantity'];
 				}
@@ -934,6 +1015,9 @@ final class DZE_Discounts {
 			foreach ( $cart->get_cart() as $item ) {
 				$product = $item['data'] ?? null;
 				if ( ! $product instanceof \WC_Product ) {
+					continue;
+				}
+				if ( $this->is_excluded( $product->get_id(), $product->get_parent_id() ) ) {
 					continue;
 				}
 				if ( ! $this->product_in_scope( $rule, $product->get_id(), $product->get_parent_id() ) ) {
@@ -1229,6 +1313,20 @@ final class DZE_Discounts {
 		}
 		$events_tabs = ( 'events' === $mode ) ? $this->events_tabs_html( 'events' ) : '';
 		require DZE_DIR . 'admin/views/discounts-page.php';
+	}
+
+	/** Saves the global "never discount" list. */
+	public function handle_exclusions_save(): void {
+		check_admin_referer( 'dze_discount_exclusions' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
+		}
+		$products   = $this->parse_ids( wp_unslash( $_POST['excl_products'] ?? '' ) );
+		$categories = array_values( array_filter( array_map( 'absint', (array) ( $_POST['excl_categories'] ?? [] ) ) ) );
+		update_option( self::OPT_EXCLUSIONS, [ 'products' => $products, 'categories' => $categories ], false );
+
+		wp_safe_redirect( add_query_arg( [ 'page' => self::MENU_SLUG, 'excl_saved' => 1 ], admin_url( 'admin.php' ) ) );
+		exit;
 	}
 
 	/** AJAX: preview how many products an automatic-discount rule would cover. */

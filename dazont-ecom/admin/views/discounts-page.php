@@ -194,5 +194,44 @@ $gmc_on     = $gmc && $gmc->is_configured();
 			<li><?php esc_html_e( 'Classic coupons your customers type keep working alongside these. To stop a coupon from stacking on discounted products, tick “Exclude sale items” on that coupon.', 'dazont-ecom' ); ?></li>
 		</ul>
 	</div>
+
+	<?php
+	// Global "never discount" list.
+	$excl      = DZE_Discounts::get_exclusions();
+	$excl_cats = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => false, 'number' => 500 ] );
+	?>
+	<hr style="margin:24px 0;" />
+	<h2><?php esc_html_e( 'Never discount these products', 'dazont-ecom' ); ?></h2>
+	<p class="description" style="max-width:900px;">
+		<?php esc_html_e( 'Products (or whole categories) listed here are skipped by EVERY promotion — automatic discounts, bulk offers and marketing-event sales. Use it for things like a “Priority processing” upsell that should always stay full price.', 'dazont-ecom' ); ?>
+	</p>
+	<?php if ( isset( $_GET['excl_saved'] ) ) : ?>
+		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Exclusions saved.', 'dazont-ecom' ); ?></p></div>
+	<?php endif; ?>
+	<form method="post" action="<?php echo esc_url( $admin_post ); ?>" style="max-width:900px;">
+		<input type="hidden" name="action" value="dze_discount_exclusions" />
+		<?php wp_nonce_field( 'dze_discount_exclusions' ); ?>
+		<table class="form-table" role="presentation">
+			<tr>
+				<th scope="row"><label for="dze-excl-products"><?php esc_html_e( 'Product IDs', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<input type="text" id="dze-excl-products" name="excl_products" class="large-text" value="<?php echo esc_attr( implode( ', ', $excl['products'] ) ); ?>" placeholder="e.g. 123, 456" />
+					<p class="description"><?php esc_html_e( 'Comma-separated product IDs. Tip: the Products gallery and the product list both show each product’s #ID.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
+			<tr>
+				<th scope="row"><label for="dze-excl-cats"><?php esc_html_e( 'Categories', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<select id="dze-excl-cats" name="excl_categories[]" multiple size="6" style="min-width:280px;">
+						<?php if ( ! is_wp_error( $excl_cats ) ) : foreach ( $excl_cats as $c ) : ?>
+							<option value="<?php echo esc_attr( $c->term_id ); ?>" <?php selected( in_array( (int) $c->term_id, $excl['categories'], true ) ); ?>><?php echo esc_html( $c->name ); ?></option>
+						<?php endforeach; endif; ?>
+					</select>
+					<p class="description"><?php esc_html_e( 'Ctrl/Cmd-click to select several. Every product in these categories is excluded.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
+		</table>
+		<?php submit_button( __( 'Save exclusions', 'dazont-ecom' ) ); ?>
+	</form>
 	<?php endif; ?>
 </div>
