@@ -347,6 +347,14 @@ final class DZE_Discounts {
 
 		if ( $has_sale ) {
 
+			// Reference-price inflation: raise the struck-through regular price
+			// while an event runs (bigger apparent saving). Only when configured.
+			if ( $this->sale_inflation_active() ) {
+				add_filter( 'woocommerce_product_get_regular_price',           [ $this, 'filter_regular_price' ], 20, 2 );
+				add_filter( 'woocommerce_product_variation_get_regular_price', [ $this, 'filter_regular_price' ], 20, 2 );
+				add_filter( 'woocommerce_variation_prices_regular_price',      [ $this, 'filter_variation_regular_price' ], 20, 3 );
+			}
+
 			// Homepage / hero image swap for big events (auto-reverts after).
 			if ( $this->build_hero_map() ) {
 				add_filter( 'wp_get_attachment_image_src', [ $this, 'swap_image_src' ], 20, 4 );
@@ -435,6 +443,51 @@ final class DZE_Discounts {
 		return max( $this->sale_percent_for( $product ), $this->autobest_percent_for( $product ) );
 	}
 
+	/** Reference-price inflation % for a product from any active marketing event in scope. */
+	private function sale_inflate_for( \WC_Product $product ): float {
+		$pid    = $product->get_id();
+		$parent = $product->get_parent_id();
+		$best   = 0.0;
+		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
+			$inf = (float) ( $rule['inflate'] ?? 0 );
+			if ( $inf > 0 && $this->product_in_scope( $rule, $pid, $parent ) ) {
+				$best = max( $best, $inf );
+			}
+		}
+		return $best;
+	}
+
+	/** True when at least one active marketing event inflates the reference price. */
+	private function sale_inflation_active(): bool {
+		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
+			if ( (float) ( $rule['inflate'] ?? 0 ) > 0 ) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Raises the struck-through regular price of products in an inflating event. */
+	public function filter_regular_price( $price, $product ) {
+		if ( ! $product instanceof \WC_Product ) {
+			return $price;
+		}
+		$inflate = $this->sale_inflate_for( $product );
+		if ( $inflate <= 0 || (float) $price <= 0 ) {
+			return $price;
+		}
+		$decimals = function_exists( 'wc_get_price_decimals' ) ? wc_get_price_decimals() : 2;
+		return round( (float) $price * ( 1 + $inflate / 100 ), $decimals );
+	}
+
+	/** Variation-prices variant of filter_regular_price. */
+	public function filter_variation_regular_price( $price, $variation, $product ) {
+		if ( ! $variation instanceof \WC_Product ) {
+			return $price;
+		}
+		return $this->filter_regular_price( $price, $variation );
+	}
+
 	/** @var array<int,float>|null product_id => best-seller-boost %, this request. */
 	private ?array $autobest_map = null;
 
@@ -444,9 +497,19 @@ final class DZE_Discounts {
 		if ( empty( $map ) ) {
 			return 0.0;
 		}
+		// The map is keyed by default-language product IDs (WPML dedupe), so also
+		// check the viewed product's canonical translation — the discount then
+		// applies on every language version of the product.
+		$ids = [ $product->get_id(), $product->get_parent_id() ];
+		if ( DZE_Wpml::is_active() ) {
+			$ids[] = DZE_Wpml::canonical_id( $product->get_id(), 'product' );
+			if ( $product->get_parent_id() ) {
+				$ids[] = DZE_Wpml::canonical_id( $product->get_parent_id(), 'product' );
+			}
+		}
 		$best = 0.0;
-		foreach ( [ $product->get_id(), $product->get_parent_id() ] as $id ) {
-			if ( $id && isset( $map[ $id ] ) ) {
+		foreach ( array_unique( array_filter( $ids ) ) as $id ) {
+			if ( isset( $map[ $id ] ) ) {
 				$best = max( $best, $map[ $id ] );
 			}
 		}
@@ -514,6 +577,29 @@ final class DZE_Discounts {
 	}
 
 	/**
+	 * Under WPML every product is duplicated once per language, which would count
+	 * each product several times. This clause restricts a query to the default
+	 * language's products only, so counts and selections match the real catalogue
+	 * size. Empty when WPML (or its translations table) is absent.
+	 */
+	private function default_lang_sql( string $alias = 'p' ): string {
+		global $wpdb;
+		if ( ! DZE_Wpml::is_active() ) {
+			return '';
+		}
+		$def = DZE_Wpml::default_language();
+		if ( '' === $def ) {
+			return '';
+		}
+		$table = $wpdb->prefix . 'icl_translations';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return '';
+		}
+		$def = esc_sql( $def );
+		return " AND {$alias}.ID IN ( SELECT t.element_id FROM {$table} t WHERE t.element_type = 'post_product' AND t.language_code = '{$def}' ) ";
+	}
+
+	/**
 	 * Priority ordering (posts aliased `p`), used to decide WHICH products win
 	 * when a strategy matches more than the cap. Returns [ join_sql, order_sql ].
 	 */
@@ -545,13 +631,14 @@ final class DZE_Discounts {
 		global $wpdb;
 		$since = gmdate( 'Y-m-d H:i:s', time() - $lookback_days * DAY_IN_SECONDS );
 		$oos   = $this->in_stock_sql( 'p' );
+		$lang  = $this->default_lang_sql( 'p' ); // dedupe WPML translations.
 		$table = $wpdb->prefix . 'wc_order_product_lookup';
 		$has   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
 
 		if ( 'newest' === $strategy ) {
 			[ $join, $order ] = $this->priority_sql( $priority );
 			$sql = "SELECT p.ID AS product_id FROM {$wpdb->posts} p {$join}
-			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND p.post_date_gmt >= %s AND {$oos}
+			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND p.post_date_gmt >= %s AND {$oos} {$lang}
 			        {$order}";
 			return [ $sql, [ $since ] ];
 		}
@@ -563,7 +650,7 @@ final class DZE_Discounts {
 		if ( 'slow' === $strategy ) {
 			[ $join, $order ] = $this->priority_sql( $priority );
 			$sql = "SELECT p.ID AS product_id FROM {$wpdb->posts} p {$join}
-			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND {$oos}
+			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND {$oos} {$lang}
 			          AND p.ID NOT IN ( SELECT DISTINCT l.product_id FROM {$table} l WHERE l.date_created >= %s )
 			        {$order}";
 			return [ $sql, [ $since ] ];
@@ -573,7 +660,7 @@ final class DZE_Discounts {
 			$mid  = gmdate( 'Y-m-d H:i:s', time() - (int) ceil( $lookback_days / 2 ) * DAY_IN_SECONDS );
 			$sql  = "SELECT l.product_id FROM {$table} l
 			         INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
-			         WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos}
+			         WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos} {$lang}
 			         GROUP BY l.product_id
 			         HAVING SUM(CASE WHEN l.date_created >= %s THEN l.product_qty ELSE 0 END)
 			              - SUM(CASE WHEN l.date_created <  %s THEN l.product_qty ELSE 0 END) > 0
@@ -585,7 +672,7 @@ final class DZE_Discounts {
 		// Best-sellers — most units sold in the window.
 		$sql = "SELECT l.product_id FROM {$table} l
 		        INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
-		        WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos}
+		        WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos} {$lang}
 		        GROUP BY l.product_id
 		        ORDER BY SUM(l.product_qty) DESC";
 		return [ $sql, [ $since ] ];
@@ -605,32 +692,39 @@ final class DZE_Discounts {
 		return array_map( 'intval', (array) $ids );
 	}
 
+	/** Hard safety ceiling for a single automatic-discount rule's product list. */
+	private const AUTO_MAX = 100000;
+	/** Max product names returned for the preview popup (payload guard). */
+	private const AUTO_LIST_MAX = 300;
+
 	/**
-	 * How many products a strategy currently matches (before the cap), plus a
-	 * small sample of names — powers the "preview" counter in the editor.
+	 * How many products a strategy currently matches (before the cap), plus the
+	 * actual list of products that would be discounted (capped for payload) —
+	 * powers the "preview" counter and popup in the editor.
 	 *
-	 * @return array{total:int,applied:int,sample:string[]}
+	 * @return array{total:int,applied:int,products:array<int,array{id:int,name:string}>,shown:int}
 	 */
 	public function auto_count( string $strategy, int $top_n, int $lookback_days, string $priority = 'recent' ): array {
 		global $wpdb;
 		$built = $this->auto_candidates_sql( $strategy, $lookback_days, $priority );
 		if ( null === $built ) {
-			return [ 'total' => 0, 'applied' => 0, 'sample' => [] ];
+			return [ 'total' => 0, 'applied' => 0, 'products' => [], 'shown' => 0 ];
 		}
 		[ $sql, $params ] = $built;
 
 		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders bound via prepare().
-		$total = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM ( {$sql} ) t", $params ) );
+		$total   = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM ( {$sql} ) t", $params ) );
+		$applied = min( $total, $top_n );
 
-		$sample_ids = $this->auto_product_ids( $strategy, min( 12, max( 1, $top_n ) ), $lookback_days, $priority );
-		$sample     = [];
-		foreach ( $sample_ids as $id ) {
+		$list_ids = $this->auto_product_ids( $strategy, min( $applied, self::AUTO_LIST_MAX ), $lookback_days, $priority );
+		$products = [];
+		foreach ( $list_ids as $id ) {
 			$p = function_exists( 'wc_get_product' ) ? wc_get_product( $id ) : null;
 			if ( $p ) {
-				$sample[] = $p->get_name();
+				$products[] = [ 'id' => (int) $id, 'name' => $p->get_name() ];
 			}
 		}
-		return [ 'total' => $total, 'applied' => min( $total, $top_n ), 'sample' => $sample ];
+		return [ 'total' => $total, 'applied' => $applied, 'products' => $products, 'shown' => count( $products ) ];
 	}
 
 	private function bulk_percent_for( \WC_Product $product, int $qty ): float {
@@ -683,7 +777,7 @@ final class DZE_Discounts {
 	public function filter_prices_hash( $hash, $product ) {
 		$sig = [];
 		foreach ( $this->rules_of_type( 'sale' ) as $id => $rule ) {
-			$sig[] = $id . ':' . ( $rule['percent'] ?? 0 );
+			$sig[] = $id . ':' . ( $rule['percent'] ?? 0 ) . ':' . ( $rule['inflate'] ?? 0 );
 		}
 		foreach ( $this->rules_of_type( 'autobest' ) as $id => $rule ) {
 			$sig[] = 'ab' . $id . ':' . ( $rule['percent'] ?? 0 );
@@ -1056,8 +1150,9 @@ final class DZE_Discounts {
 				'counting' => __( 'Counting…', 'dazont-ecom' ),
 				'error'    => __( 'Could not count.', 'dazont-ecom' ),
 				/* translators: 1: total matching, 2: number that will be discounted */
-				'result'   => __( '%1$s products match — the top %2$s will be discounted.', 'dazont-ecom' ),
-				'examples' => __( 'Examples:', 'dazont-ecom' ),
+				'result'    => __( '%1$s products match — the top %2$s will be discounted.', 'dazont-ecom' ),
+				/* translators: %s: number of products shown */
+				'listTitle' => __( 'Products to be discounted (%s shown)', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -1144,7 +1239,7 @@ final class DZE_Discounts {
 		}
 		$strategy = in_array( $_POST['strategy'] ?? '', array_keys( self::auto_strategies() ), true ) ? sanitize_key( wp_unslash( $_POST['strategy'] ) ) : 'bestsellers';
 		$priority = in_array( $_POST['priority'] ?? '', array_keys( self::auto_priorities() ), true ) ? sanitize_key( wp_unslash( $_POST['priority'] ) ) : 'recent';
-		$top_n    = min( 200, max( 1, (int) ( $_POST['top_n'] ?? 20 ) ) );
+		$top_n    = max( 1, min( self::AUTO_MAX, (int) ( $_POST['top_n'] ?? 20 ) ) );
 		$lookback = min( 365, max( 1, (int) ( $_POST['lookback_days'] ?? 30 ) ) );
 
 		if ( function_exists( 'set_time_limit' ) ) {
@@ -1195,6 +1290,10 @@ final class DZE_Discounts {
 			'type'          => $type,
 			'enabled'       => ! empty( $in['enabled'] ),
 			'percent'       => min( 100, max( 0, (float) ( $in['percent'] ?? 0 ) ) ),
+			// Marketing-event "reference price" boost: temporarily raises the
+			// struck-through regular price while the event runs, so the same
+			// discount reads as a bigger saving. Sale type only.
+			'inflate'       => min( 1000, max( 0, (float) ( $in['inflate'] ?? 0 ) ) ),
 			'scope'         => $scope,
 			'category_ids'  => array_map( 'absint', (array) ( $in['category_ids'] ?? [] ) ),
 			'product_ids'   => $this->parse_ids( $in['product_ids'] ?? '' ),
@@ -1208,7 +1307,7 @@ final class DZE_Discounts {
 			// Automatic product discount fields.
 			'strategy'      => in_array( $in['strategy'] ?? '', array_keys( self::auto_strategies() ), true ) ? $in['strategy'] : 'bestsellers',
 			'priority'      => in_array( $in['priority'] ?? '', array_keys( self::auto_priorities() ), true ) ? $in['priority'] : 'recent',
-			'top_n'         => min( 200, max( 1, (int) ( $in['top_n'] ?? 20 ) ) ),
+			'top_n'         => max( 1, min( self::AUTO_MAX, (int) ( $in['top_n'] ?? 20 ) ) ),
 			'lookback_days' => min( 365, max( 1, (int) ( $in['lookback_days'] ?? 30 ) ) ),
 			'banner_enabled'   => ! empty( $in['banner_enabled'] ),
 			'banner_text'      => sanitize_text_field( $in['banner_text'] ?? '' ),

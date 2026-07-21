@@ -51,10 +51,13 @@
 	}
 
 	// ---- Automatic-discount "count matching products" preview ----
+	var autoProducts = [];
+
 	$(document).on('click', '#dze-auto-count', function () {
 		if (typeof dzeDiscounts === 'undefined') { return; }
 		var d = dzeDiscounts, $out = $('#dze-auto-count-out');
 		$out.css('color', '#555').text(d.i18n.counting);
+		$('#dze-auto-list').hide();
 		$.post(d.ajaxUrl, {
 			action: 'dze_auto_count',
 			nonce: d.nonce,
@@ -65,11 +68,27 @@
 		}).done(function (res) {
 			if (!res.success) { $out.css('color', '#b32d2e').text(d.i18n.error); return; }
 			var txt = d.i18n.result.replace('%1$s', res.data.total).replace('%2$s', res.data.applied);
-			if (res.data.sample && res.data.sample.length) {
-				txt += '  ' + d.i18n.examples + ' ' + res.data.sample.slice(0, 8).join(', ');
-			}
 			$out.css('color', '#0a7040').text(txt);
+			autoProducts = res.data.products || [];
+			if (autoProducts.length) { $('#dze-auto-list').show(); }
 		}).fail(function () { $out.css('color', '#b32d2e').text(d.i18n.error); });
+	});
+
+	// Popup: the exact products that would be discounted.
+	$(document).on('click', '#dze-auto-list', function () {
+		if (!autoProducts.length) { return; }
+		var d = dzeDiscounts;
+		var html = '<h2 style="margin-top:0;">' + d.i18n.listTitle.replace('%s', autoProducts.length) + '</h2>';
+		html += '<ol class="dze-auto-list">';
+		autoProducts.forEach(function (p) {
+			html += '<li>' + $('<span>').text(p.name).html() + ' <code>#' + p.id + '</code></li>';
+		});
+		html += '</ol>';
+		$('#dze-auto-modal .dze-auto-modal__inner').html(html);
+		$('#dze-auto-modal').css('display', 'flex');
+	});
+	$(document).on('click', '#dze-auto-modal', function (e) {
+		if (e.target === this) { $(this).hide(); }
 	});
 
 	function refreshScope() {

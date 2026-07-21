@@ -61,6 +61,19 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				<td><input type="number" id="dze-percent" name="percent" min="0" max="100" step="0.01" class="small-text" value="<?php echo esc_attr( $e( 'percent', '10' ) ); ?>" /> %</td>
 			</tr>
 
+			<?php if ( $is_events ) : ?>
+			<tr class="dze-field-inflate">
+				<th scope="row"><label for="dze-inflate"><?php esc_html_e( 'Reference-price boost (%)', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<input type="number" id="dze-inflate" name="inflate" min="0" max="1000" step="0.01" class="small-text" value="<?php echo esc_attr( $e( 'inflate', '0' ) ); ?>" /> %
+					<p class="description">
+						<?php esc_html_e( 'Optional. While the event runs, temporarily raises the crossed-out “regular” price by this %, so the same discount shows a bigger saving. Example: a €50 product with a 100% boost shows €100 crossed out, then a 60% discount = €40. Set 0 to keep real prices.', 'dazont-ecom' ); ?>
+						<br /><em><?php esc_html_e( 'Use responsibly and in line with your local pricing/advertising rules (e.g. EU “Omnibus” lowest-price rules).', 'dazont-ecom' ); ?></em>
+					</p>
+				</td>
+			</tr>
+			<?php endif; ?>
+
 			<?php if ( ! $is_events ) : ?>
 			<tr class="dze-field-threshold">
 				<th scope="row"><label for="dze-threshold"><span class="dze-threshold-label"></span></label></th>
@@ -138,10 +151,10 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				</td>
 			</tr>
 			<tr class="dze-field-top-n">
-				<th scope="row"><label for="dze-top-n"><?php esc_html_e( 'How many products', 'dazont-ecom' ); ?></label></th>
+				<th scope="row"><label for="dze-top-n"><?php esc_html_e( 'How many products (cap)', 'dazont-ecom' ); ?></label></th>
 				<td>
-					<input type="number" id="dze-top-n" name="top_n" min="1" max="200" step="1" class="small-text" value="<?php echo esc_attr( $e( 'top_n', '20' ) ); ?>" />
-					<p class="description"><?php esc_html_e( 'Maximum number of products discounted at once by this rule.', 'dazont-ecom' ); ?></p>
+					<input type="number" id="dze-top-n" name="top_n" min="1" max="100000" step="1" class="small-text" value="<?php echo esc_attr( $e( 'top_n', '20' ) ); ?>" />
+					<p class="description"><?php esc_html_e( 'Maximum number of products this rule discounts at once. There is no fixed limit — set it high (e.g. above your catalogue size) to discount every matching product.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
 			<tr class="dze-field-lookback">
@@ -167,8 +180,10 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				<th scope="row"><?php esc_html_e( 'Preview', 'dazont-ecom' ); ?></th>
 				<td>
 					<button type="button" class="button" id="dze-auto-count"><?php esc_html_e( 'Count matching products', 'dazont-ecom' ); ?></button>
+					<button type="button" class="button" id="dze-auto-list" style="display:none;"><?php esc_html_e( 'View list', 'dazont-ecom' ); ?></button>
 					<span id="dze-auto-count-out" style="margin-left:8px;font-size:13px;color:#555;"></span>
-					<p class="description"><?php esc_html_e( 'See how many products currently match — and a few examples — before enabling.', 'dazont-ecom' ); ?></p>
+					<p class="description"><?php esc_html_e( 'See how many products currently match, and open the exact list that would be discounted, before enabling.', 'dazont-ecom' ); ?></p>
+					<div class="dze-auto-modal" id="dze-auto-modal" style="display:none;"><div class="dze-auto-modal__inner"></div></div>
 				</td>
 			</tr>
 			<?php endif; ?>
