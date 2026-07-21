@@ -103,6 +103,15 @@ $ai_settings_url = add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG ], adm
 				</td>
 			</tr>
 			<tr>
+				<th scope="row"><?php esc_html_e( 'Net price preview', 'dazont-ecom' ); ?></th>
+				<td>
+					<label><?php esc_html_e( 'On a product priced', 'dazont-ecom' ); ?>
+						<input type="number" id="dze-ev-calc-price" min="0" step="0.01" class="small-text" value="50" />
+					</label>
+					<div id="dze-ev-calc-out" class="dze-calc-out" style="margin-top:8px;font-size:13px;"></div>
+				</td>
+			</tr>
+			<tr>
 				<th scope="row"><?php esc_html_e( 'Dates', 'dazont-ecom' ); ?></th>
 				<td>
 					<label><?php esc_html_e( 'From', 'dazont-ecom' ); ?> <input type="date" id="dze-ev-start" /></label>

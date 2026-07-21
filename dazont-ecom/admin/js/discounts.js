@@ -91,6 +91,39 @@
 		if (e.target === this) { $(this).hide(); }
 	});
 
+	// ---- Live "net price" calculator for marketing events (boost + discount) ----
+	function updateSaleCalc() {
+		var $out = $('#dze-calc-out');
+		if (!$out.length) { return; }
+		var price   = parseFloat($('#dze-calc-price').val()) || 0;
+		var percent = parseFloat($('#dze-percent').val()) || 0;
+		var inflate = parseFloat($('#dze-inflate').val()) || 0;
+
+		var crossed = price * (1 + inflate / 100);
+		var net     = crossed * (1 - percent / 100);
+		var realPct = price > 0 ? (1 - net / price) * 100 : 0;
+		var f = function (n) { return (Math.round(n * 100) / 100).toLocaleString(); };
+		var r1 = function (n) { return Math.round(n * 10) / 10; };
+
+		var html = '';
+		html += '<div><strong>' + 'Customer sees:' + '</strong> ';
+		if (inflate > 0) { html += '<del style="color:#888;">' + f(crossed) + '</del> '; }
+		html += '<strong>' + f(net) + '</strong> <span style="color:#b32d2e;">(-' + r1(percent) + '%)</span></div>';
+
+		if (realPct >= 0) {
+			html += '<div>Real discount vs normal price (' + f(price) + '): <strong>' + r1(realPct) + '%</strong> → you receive ' + f(net) + '.</div>';
+		} else {
+			html += '<div style="color:#b32d2e;">⚠ This is a PRICE INCREASE of ' + r1(-realPct) + '% vs the normal price (' + f(price) + '). The customer pays ' + f(net) + ', more than usual.</div>';
+		}
+		if (realPct >= 50) {
+			html += '<div style="color:#b26a00;">⚠ Deep real discount (' + r1(realPct) + '%) — check this stays above your cost/margin.</div>';
+		}
+		if (inflate > 0) {
+			html += '<div style="color:#787c82;margin-top:4px;font-size:12px;">Note: the headline “-' + r1(percent) + '%” is vs the boosted price, not the real one.</div>';
+		}
+		$out.html(html);
+	}
+
 	function refreshScope() {
 		var scope = $('.dze-scope:checked').val();
 		$('.dze-field-categories').toggle(scope === 'categories');
@@ -141,6 +174,8 @@
 		$('#dze-type').on('change', refreshType);
 		$('#dze-strategy').on('change', refreshStrategyDesc);
 		$('#dze-auto-count-out').text('');
+		updateSaleCalc();
+		$('#dze-percent, #dze-inflate, #dze-calc-price').on('input change', updateSaleCalc);
 		$(document).on('change', '.dze-scope', refreshScope);
 		$(document).on('change', '.dze-banner-loc', refreshBannerLocation);
 	});

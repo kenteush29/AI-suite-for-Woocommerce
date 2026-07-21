@@ -679,6 +679,21 @@ final class DZE_Gmc {
 		}
 		$title = mb_substr( wp_strip_all_tags( (string) $title ), 0, 60 );
 
+		// GMC reads your product feed prices. When a reference-price boost is on,
+		// the on-site strikethrough price is inflated, so advertising the headline
+		// "% off" to Google would double-count against the feed price and mislead.
+		// Send the TRUE effective discount vs the real price instead.
+		$percent = (float) ( $rule['percent'] ?? 0 );
+		$inflate = (float) ( $rule['inflate'] ?? 0 );
+		if ( $inflate > 0 ) {
+			$factor  = ( 1 + $inflate / 100 ) * ( 1 - $percent / 100 ); // net / real price
+			$percent = ( 1 - $factor ) * 100;                            // real discount vs real price
+		}
+		$percent_int = (int) round( $percent );
+		if ( $percent_int <= 0 ) {
+			throw new RuntimeException( __( 'The reference-price boost makes the real discount zero or negative, so this event cannot be a Google promotion. Lower the boost or raise the discount.', 'dazont-ecom' ) );
+		}
+
 		$promotion = [
 			'promotionId'       => 'dze_' . preg_replace( '/[^A-Za-z0-9_]/', '', (string) $rule['id'] ),
 			'targetCountry'     => $country,
@@ -690,7 +705,7 @@ final class DZE_Gmc {
 				'longTitle'                    => $title,
 				'couponValueType'              => 'PERCENT_OFF',
 				// Merchant API expects the percentage as a string (int64).
-				'percentOff'                   => (string) (int) round( (float) ( $rule['percent'] ?? 0 ) ),
+				'percentOff'                   => (string) $percent_int,
 				'promotionEffectiveTimePeriod' => [
 					'startTime' => gmdate( 'Y-m-d\TH:i:s\Z', $start_ts ),
 					'endTime'   => gmdate( 'Y-m-d\TH:i:s\Z', $end_ts ),

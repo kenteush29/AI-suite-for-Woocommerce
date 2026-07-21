@@ -69,7 +69,17 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 					<p class="description">
 						<?php esc_html_e( 'Optional. While the event runs, temporarily raises the crossed-out “regular” price by this %, so the same discount shows a bigger saving. Example: a €50 product with a 100% boost shows €100 crossed out, then a 60% discount = €40. Set 0 to keep real prices.', 'dazont-ecom' ); ?>
 						<br /><em><?php esc_html_e( 'Use responsibly and in line with your local pricing/advertising rules (e.g. EU “Omnibus” lowest-price rules).', 'dazont-ecom' ); ?></em>
+						<br /><?php esc_html_e( 'Google Merchant Center: only the REAL effective discount (vs the true price) is sent, never the boosted headline — this avoids price-mismatch disapprovals.', 'dazont-ecom' ); ?>
 					</p>
+				</td>
+			</tr>
+			<tr class="dze-field-calc">
+				<th scope="row"><?php esc_html_e( 'Net price preview', 'dazont-ecom' ); ?></th>
+				<td>
+					<label><?php esc_html_e( 'On a product priced', 'dazont-ecom' ); ?>
+						<input type="number" id="dze-calc-price" min="0" step="0.01" class="small-text" value="50" />
+					</label>
+					<div id="dze-calc-out" class="dze-calc-out" style="margin-top:8px;font-size:13px;"></div>
 				</td>
 			</tr>
 			<?php endif; ?>
