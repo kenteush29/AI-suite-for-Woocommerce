@@ -35,7 +35,7 @@
 
 		// Automatic product discount: its own params, and no manual scope
 		// (products are auto-selected by the chosen strategy).
-		$('.dze-field-strategy, .dze-field-top-n, .dze-field-lookback').toggle(isAutoBest);
+		$('.dze-field-strategy, .dze-field-top-n, .dze-field-lookback, .dze-field-autocount').toggle(isAutoBest);
 		$('.dze-field-scope').toggle(!isAutoBest);
 		if (isAutoBest) { refreshStrategyDesc(); }
 	}
@@ -45,7 +45,32 @@
 		$('.dze-strat-desc').each(function () {
 			$(this).toggle($(this).data('strategy') === s);
 		});
+		// Priority only matters where the strategy isn't already sales-ranked.
+		var usesPriority = (s === 'newest' || s === 'slow');
+		$('.dze-field-priority').toggle(usesPriority);
 	}
+
+	// ---- Automatic-discount "count matching products" preview ----
+	$(document).on('click', '#dze-auto-count', function () {
+		if (typeof dzeDiscounts === 'undefined') { return; }
+		var d = dzeDiscounts, $out = $('#dze-auto-count-out');
+		$out.css('color', '#555').text(d.i18n.counting);
+		$.post(d.ajaxUrl, {
+			action: 'dze_auto_count',
+			nonce: d.nonce,
+			strategy: $('#dze-strategy').val(),
+			priority: $('#dze-priority').val(),
+			top_n: $('#dze-top-n').val(),
+			lookback_days: $('#dze-lookback').val()
+		}).done(function (res) {
+			if (!res.success) { $out.css('color', '#b32d2e').text(d.i18n.error); return; }
+			var txt = d.i18n.result.replace('%1$s', res.data.total).replace('%2$s', res.data.applied);
+			if (res.data.sample && res.data.sample.length) {
+				txt += '  ' + d.i18n.examples + ' ' + res.data.sample.slice(0, 8).join(', ');
+			}
+			$out.css('color', '#0a7040').text(txt);
+		}).fail(function () { $out.css('color', '#b32d2e').text(d.i18n.error); });
+	});
 
 	function refreshScope() {
 		var scope = $('.dze-scope:checked').val();
@@ -96,6 +121,7 @@
 		refreshBannerLocation();
 		$('#dze-type').on('change', refreshType);
 		$('#dze-strategy').on('change', refreshStrategyDesc);
+		$('#dze-auto-count-out').text('');
 		$(document).on('change', '.dze-scope', refreshScope);
 		$(document).on('change', '.dze-banner-loc', refreshBannerLocation);
 	});

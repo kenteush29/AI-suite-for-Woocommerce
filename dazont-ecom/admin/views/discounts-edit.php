@@ -151,6 +151,26 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 					<p class="description"><?php esc_html_e( 'The window used by the strategy (recent sales, or how far back "new arrivals" reaches). The product list refreshes automatically, twice a day.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
+			<tr class="dze-field-priority">
+				<th scope="row"><label for="dze-priority"><?php esc_html_e( 'When more products match than the cap', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<select id="dze-priority" name="priority">
+						<?php $cur_priority = (string) $e( 'priority', 'recent' );
+						foreach ( DZE_Discounts::auto_priorities() as $key => $label ) : ?>
+							<option value="<?php echo esc_attr( $key ); ?>" <?php selected( $cur_priority, $key ); ?>><?php echo esc_html( $label ); ?></option>
+						<?php endforeach; ?>
+					</select>
+					<p class="description"><?php esc_html_e( 'If e.g. 1000 products qualify but the cap is 150, this decides which 150 are picked. (Best-sellers & Trending are already ranked by sales, so this is only used for New arrivals & Slow movers.)', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
+			<tr class="dze-field-autocount">
+				<th scope="row"><?php esc_html_e( 'Preview', 'dazont-ecom' ); ?></th>
+				<td>
+					<button type="button" class="button" id="dze-auto-count"><?php esc_html_e( 'Count matching products', 'dazont-ecom' ); ?></button>
+					<span id="dze-auto-count-out" style="margin-left:8px;font-size:13px;color:#555;"></span>
+					<p class="description"><?php esc_html_e( 'See how many products currently match — and a few examples — before enabling.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
 			<?php endif; ?>
 
 			<?php if ( $is_events ) : ?>

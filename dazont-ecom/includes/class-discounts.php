@@ -90,6 +90,7 @@ final class DZE_Discounts {
 			add_action( 'admin_post_dze_discount_save',   [ $this, 'handle_save' ] );
 			add_action( 'admin_post_dze_discount_delete', [ $this, 'handle_delete' ] );
 			add_action( 'admin_post_dze_discount_toggle', [ $this, 'handle_toggle' ] );
+			add_action( 'wp_ajax_dze_auto_count',         [ $this, 'ajax_auto_count' ] );
 		}
 
 		// The pricing engine must run on the front end, on cart AJAX and on the
@@ -128,6 +129,19 @@ final class DZE_Discounts {
 			'slow'        => __( 'Slow movers — little or no recent sales', 'dazont-ecom' ),
 			'bestsellers' => __( 'Best-sellers — current top sellers', 'dazont-ecom' ),
 			'trending'    => __( 'Trending — sales accelerating lately', 'dazont-ecom' ),
+		];
+	}
+
+	/**
+	 * Tie-breaker order deciding WHICH products win when a strategy matches more
+	 * than the cap. Only meaningful for "New arrivals" and "Slow movers" (the
+	 * others are already ranked by sales); hidden for those in the editor.
+	 */
+	public static function auto_priorities(): array {
+		return [
+			'recent'    => __( 'Most recently added first', 'dazont-ecom' ),
+			'oldest'    => __( 'Oldest products first', 'dazont-ecom' ),
+			'top_sales' => __( 'Best all-time sellers first', 'dazont-ecom' ),
 		];
 	}
 
@@ -460,12 +474,13 @@ final class DZE_Discounts {
 				continue;
 			}
 			$strategy = in_array( $rule['strategy'] ?? '', array_keys( self::auto_strategies() ), true ) ? $rule['strategy'] : 'bestsellers';
+			$priority = in_array( $rule['priority'] ?? '', array_keys( self::auto_priorities() ), true ) ? $rule['priority'] : 'recent';
 			$top_n    = max( 1, (int) ( $rule['top_n'] ?? 20 ) );
 			$lookback = max( 1, (int) ( $rule['lookback_days'] ?? 30 ) );
-			$key      = 'dze_auto_' . md5( $id . '|' . $strategy . '|' . $top_n . '|' . $lookback );
+			$key      = 'dze_auto_' . md5( $id . '|' . $strategy . '|' . $priority . '|' . $top_n . '|' . $lookback );
 			$ids      = get_transient( $key );
 			if ( ! is_array( $ids ) ) {
-				$ids = $this->auto_product_ids( $strategy, $top_n, $lookback );
+				$ids = $this->auto_product_ids( $strategy, $top_n, $lookback, $priority );
 				set_transient( $key, $ids, 12 * HOUR_IN_SECONDS );
 			}
 			foreach ( $ids as $pid ) {
@@ -492,93 +507,130 @@ final class DZE_Discounts {
 		return false;
 	}
 
-	/**
-	 * Published product IDs for one automatic-discount strategy, over the last
-	 * $lookback_days, capped to $top_n. All strategies read WooCommerce Analytics
-	 * (the product-lookup table); if it is unavailable they return nothing.
-	 */
-	private function auto_product_ids( string $strategy, int $top_n, int $lookback_days ): array {
+	/** Out-of-stock products are ALWAYS excluded from automatic discounts. */
+	private function in_stock_sql( string $alias = 'p' ): string {
 		global $wpdb;
+		return " {$alias}.ID NOT IN ( SELECT pm.post_id FROM {$wpdb->postmeta} pm WHERE pm.meta_key = '_stock_status' AND pm.meta_value = 'outofstock' ) ";
+	}
 
-		// "New arrivals" needs no analytics — it's just recently published products.
-		if ( 'newest' === $strategy ) {
-			$since = gmdate( 'Y-m-d H:i:s', time() - $lookback_days * DAY_IN_SECONDS );
-			$ids   = $wpdb->get_col( $wpdb->prepare(
-				"SELECT ID FROM {$wpdb->posts}
-				 WHERE post_type = 'product' AND post_status = 'publish' AND post_date_gmt >= %s
-				 ORDER BY post_date_gmt DESC
-				 LIMIT %d",
-				$since,
-				$top_n
-			) );
-			return array_map( 'intval', (array) $ids );
-		}
-
+	/**
+	 * Priority ordering (posts aliased `p`), used to decide WHICH products win
+	 * when a strategy matches more than the cap. Returns [ join_sql, order_sql ].
+	 */
+	private function priority_sql( string $priority ): array {
+		global $wpdb;
 		$table = $wpdb->prefix . 'wc_order_product_lookup';
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-			return [];
+		$has   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+		if ( 'top_sales' === $priority && $has ) {
+			return [
+				" LEFT JOIN ( SELECT product_id, SUM(product_qty) tot FROM {$table} GROUP BY product_id ) sp ON sp.product_id = p.ID ",
+				' ORDER BY COALESCE(sp.tot,0) DESC, p.post_date_gmt DESC ',
+			];
 		}
+		if ( 'oldest' === $priority ) {
+			return [ '', ' ORDER BY p.post_date_gmt ASC ' ];
+		}
+		return [ '', ' ORDER BY p.post_date_gmt DESC ' ]; // recent (default).
+	}
+
+	/**
+	 * SQL (with %s/%d placeholders) selecting candidate `product_id`s for a
+	 * strategy — without the final LIMIT — plus its params. Out-of-stock products
+	 * are always excluded. 'newest'/'slow' honour the priority ordering;
+	 * 'bestsellers'/'trending' keep their intrinsic sales ranking.
+	 *
+	 * @return array{0:string,1:array}|null  [ sql, params ] or null if analytics missing.
+	 */
+	private function auto_candidates_sql( string $strategy, int $lookback_days, string $priority ): ?array {
+		global $wpdb;
 		$since = gmdate( 'Y-m-d H:i:s', time() - $lookback_days * DAY_IN_SECONDS );
+		$oos   = $this->in_stock_sql( 'p' );
+		$table = $wpdb->prefix . 'wc_order_product_lookup';
+		$has   = ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) === $table );
+
+		if ( 'newest' === $strategy ) {
+			[ $join, $order ] = $this->priority_sql( $priority );
+			$sql = "SELECT p.ID AS product_id FROM {$wpdb->posts} p {$join}
+			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND p.post_date_gmt >= %s AND {$oos}
+			        {$order}";
+			return [ $sql, [ $since ] ];
+		}
+
+		if ( ! $has ) {
+			return null; // the remaining strategies need WooCommerce Analytics.
+		}
 
 		if ( 'slow' === $strategy ) {
-			// Published products with NO recorded sales inside the window — the
-			// long tail we want to stimulate. Most-recent first, capped.
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table derives from $wpdb->prefix.
-			$ids = $wpdb->get_col( $wpdb->prepare(
-				"SELECT p.ID
-				 FROM {$wpdb->posts} p
-				 WHERE p.post_type = 'product' AND p.post_status = 'publish'
-				   AND p.ID NOT IN (
-				       SELECT DISTINCT l.product_id FROM {$table} l WHERE l.date_created >= %s
-				   )
-				 ORDER BY p.post_date_gmt DESC
-				 LIMIT %d",
-				$since,
-				$top_n
-			) );
-			return array_map( 'intval', (array) $ids );
+			[ $join, $order ] = $this->priority_sql( $priority );
+			$sql = "SELECT p.ID AS product_id FROM {$wpdb->posts} p {$join}
+			        WHERE p.post_type = 'product' AND p.post_status = 'publish' AND {$oos}
+			          AND p.ID NOT IN ( SELECT DISTINCT l.product_id FROM {$table} l WHERE l.date_created >= %s )
+			        {$order}";
+			return [ $sql, [ $since ] ];
 		}
 
 		if ( 'trending' === $strategy ) {
-			// Biggest sales acceleration: units in the recent half of the window
-			// minus units in the earlier half, positive deltas first.
-			$mid = gmdate( 'Y-m-d H:i:s', time() - (int) ceil( $lookback_days / 2 ) * DAY_IN_SECONDS );
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table derives from $wpdb->prefix.
-			$ids = $wpdb->get_col( $wpdb->prepare(
-				"SELECT l.product_id
-				 FROM {$table} l
-				 INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
-				 WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s
-				 GROUP BY l.product_id
-				 HAVING SUM(CASE WHEN l.date_created >= %s THEN l.product_qty ELSE 0 END)
-				      - SUM(CASE WHEN l.date_created <  %s THEN l.product_qty ELSE 0 END) > 0
-				 ORDER BY SUM(CASE WHEN l.date_created >= %s THEN l.product_qty ELSE 0 END)
-				        - SUM(CASE WHEN l.date_created <  %s THEN l.product_qty ELSE 0 END) DESC
-				 LIMIT %d",
-				$since,
-				$mid,
-				$mid,
-				$mid,
-				$mid,
-				$top_n
-			) );
-			return array_map( 'intval', (array) $ids );
+			$mid  = gmdate( 'Y-m-d H:i:s', time() - (int) ceil( $lookback_days / 2 ) * DAY_IN_SECONDS );
+			$sql  = "SELECT l.product_id FROM {$table} l
+			         INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
+			         WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos}
+			         GROUP BY l.product_id
+			         HAVING SUM(CASE WHEN l.date_created >= %s THEN l.product_qty ELSE 0 END)
+			              - SUM(CASE WHEN l.date_created <  %s THEN l.product_qty ELSE 0 END) > 0
+			         ORDER BY SUM(CASE WHEN l.date_created >= %s THEN l.product_qty ELSE 0 END)
+			                - SUM(CASE WHEN l.date_created <  %s THEN l.product_qty ELSE 0 END) DESC";
+			return [ $sql, [ $since, $mid, $mid, $mid, $mid ] ];
 		}
 
-		// Default: best-sellers — most units sold in the window.
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table derives from $wpdb->prefix.
-		$ids = $wpdb->get_col( $wpdb->prepare(
-			"SELECT l.product_id
-			 FROM {$table} l
-			 INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
-			 WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s
-			 GROUP BY l.product_id
-			 ORDER BY SUM(l.product_qty) DESC
-			 LIMIT %d",
-			$since,
-			$top_n
-		) );
+		// Best-sellers — most units sold in the window.
+		$sql = "SELECT l.product_id FROM {$table} l
+		        INNER JOIN {$wpdb->posts} p ON p.ID = l.product_id
+		        WHERE p.post_status = 'publish' AND p.post_type = 'product' AND l.date_created >= %s AND {$oos}
+		        GROUP BY l.product_id
+		        ORDER BY SUM(l.product_qty) DESC";
+		return [ $sql, [ $since ] ];
+	}
+
+	/** Capped list of product IDs for a strategy. */
+	private function auto_product_ids( string $strategy, int $top_n, int $lookback_days, string $priority = 'recent' ): array {
+		global $wpdb;
+		$built = $this->auto_candidates_sql( $strategy, $lookback_days, $priority );
+		if ( null === $built ) {
+			return [];
+		}
+		[ $sql, $params ] = $built;
+		$params[] = $top_n;
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- placeholders in $sql are bound via prepare().
+		$ids = $wpdb->get_col( $wpdb->prepare( $sql . ' LIMIT %d', $params ) );
 		return array_map( 'intval', (array) $ids );
+	}
+
+	/**
+	 * How many products a strategy currently matches (before the cap), plus a
+	 * small sample of names — powers the "preview" counter in the editor.
+	 *
+	 * @return array{total:int,applied:int,sample:string[]}
+	 */
+	public function auto_count( string $strategy, int $top_n, int $lookback_days, string $priority = 'recent' ): array {
+		global $wpdb;
+		$built = $this->auto_candidates_sql( $strategy, $lookback_days, $priority );
+		if ( null === $built ) {
+			return [ 'total' => 0, 'applied' => 0, 'sample' => [] ];
+		}
+		[ $sql, $params ] = $built;
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- placeholders bound via prepare().
+		$total = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM ( {$sql} ) t", $params ) );
+
+		$sample_ids = $this->auto_product_ids( $strategy, min( 12, max( 1, $top_n ) ), $lookback_days, $priority );
+		$sample     = [];
+		foreach ( $sample_ids as $id ) {
+			$p = function_exists( 'wc_get_product' ) ? wc_get_product( $id ) : null;
+			if ( $p ) {
+				$sample[] = $p->get_name();
+			}
+		}
+		return [ 'total' => $total, 'applied' => min( $total, $top_n ), 'sample' => $sample ];
 	}
 
 	private function bulk_percent_for( \WC_Product $product, int $qty ): float {
@@ -997,6 +1049,17 @@ final class DZE_Discounts {
 		wp_enqueue_style( 'dze-admin', DZE_URL . 'admin/css/admin.css', [], DZE_VERSION );
 		wp_enqueue_media(); // Media Library picker for the hero image fields.
 		wp_enqueue_script( 'dze-discounts', DZE_URL . 'admin/js/discounts.js', [ 'jquery' ], DZE_VERSION, true );
+		wp_localize_script( 'dze-discounts', 'dzeDiscounts', [
+			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+			'nonce'   => wp_create_nonce( self::SAVE_NONCE ),
+			'i18n'    => [
+				'counting' => __( 'Counting…', 'dazont-ecom' ),
+				'error'    => __( 'Could not count.', 'dazont-ecom' ),
+				/* translators: 1: total matching, 2: number that will be discounted */
+				'result'   => __( '%1$s products match — the top %2$s will be discounted.', 'dazont-ecom' ),
+				'examples' => __( 'Examples:', 'dazont-ecom' ),
+			],
+		] );
 	}
 
 	/**
@@ -1073,6 +1136,23 @@ final class DZE_Discounts {
 		require DZE_DIR . 'admin/views/discounts-page.php';
 	}
 
+	/** AJAX: preview how many products an automatic-discount rule would cover. */
+	public function ajax_auto_count(): void {
+		check_ajax_referer( self::SAVE_NONCE, 'nonce' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
+		}
+		$strategy = in_array( $_POST['strategy'] ?? '', array_keys( self::auto_strategies() ), true ) ? sanitize_key( wp_unslash( $_POST['strategy'] ) ) : 'bestsellers';
+		$priority = in_array( $_POST['priority'] ?? '', array_keys( self::auto_priorities() ), true ) ? sanitize_key( wp_unslash( $_POST['priority'] ) ) : 'recent';
+		$top_n    = min( 200, max( 1, (int) ( $_POST['top_n'] ?? 20 ) ) );
+		$lookback = min( 365, max( 1, (int) ( $_POST['lookback_days'] ?? 30 ) ) );
+
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 60 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+		wp_send_json_success( $this->auto_count( $strategy, $top_n, $lookback, $priority ) );
+	}
+
 	/** Public helper for the list view: flags of languages a rule is active in. */
 	public function rule_language_flags( array $rule ): array {
 		if ( ! DZE_Wpml::is_active() ) {
@@ -1127,6 +1207,7 @@ final class DZE_Discounts {
 			'tiers'         => $this->sanitize_tiers( $in['tiers'] ?? [] ),
 			// Automatic product discount fields.
 			'strategy'      => in_array( $in['strategy'] ?? '', array_keys( self::auto_strategies() ), true ) ? $in['strategy'] : 'bestsellers',
+			'priority'      => in_array( $in['priority'] ?? '', array_keys( self::auto_priorities() ), true ) ? $in['priority'] : 'recent',
 			'top_n'         => min( 200, max( 1, (int) ( $in['top_n'] ?? 20 ) ) ),
 			'lookback_days' => min( 365, max( 1, (int) ( $in['lookback_days'] ?? 30 ) ) ),
 			'banner_enabled'   => ! empty( $in['banner_enabled'] ),

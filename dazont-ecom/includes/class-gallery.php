@@ -35,6 +35,8 @@ final class DZE_Gallery {
 		}
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'admin_footer-edit.php', [ $this, 'render_inline_gallery' ] );
+		add_action( 'restrict_manage_posts', [ $this, 'list_filters' ] );
+		add_action( 'pre_get_posts',         [ $this, 'apply_filters' ] );
 		add_action( 'wp_ajax_dze_gallery_variations', [ $this, 'ajax_variations' ] );
 	}
 
@@ -119,7 +121,8 @@ final class DZE_Gallery {
 		<div class="dze-gal-modal" id="dze-gal-modal" style="display:none;"><div class="dze-gal-modal__inner"></div></div>
 
 		<style>
-			.dze-gal{display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));margin:12px 0;}
+			#dze-gal-view{max-width:100%;}
+			.dze-gal{display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));margin:12px 0;}
 			.dze-gal__card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;}
 			.dze-gal .dze-thumb-wrap{aspect-ratio:1/1;overflow:hidden;border-radius:8px;background:#f6f7f7;display:flex;align-items:center;justify-content:center;}
 			.dze-gal__img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;}
@@ -130,11 +133,11 @@ final class DZE_Gallery {
 			.dze-view-toggle .button.active{background:#2271b1;color:#fff;border-color:#2271b1;}
 			.dze-lightbox,.dze-gal-modal{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:100000;padding:24px;}
 			.dze-lightbox img{max-width:92vw;max-height:92vh;border-radius:6px;}
-			.dze-gal-modal__inner{background:#fff;border-radius:10px;max-width:900px;max-height:88vh;overflow:auto;padding:18px 20px;}
-			.dze-gal-vargrid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));margin-top:10px;}
+			.dze-gal-modal__inner{background:#fff;border-radius:10px;width:min(1100px,94vw);max-height:88vh;overflow:auto;padding:18px 22px;}
+			.dze-gal-vargrid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));margin-top:10px;}
 			.dze-gal-vargrid figure{margin:0;text-align:center;}
 			.dze-gal-vargrid img{width:100%;height:auto;border-radius:6px;cursor:zoom-in;}
-			.dze-gal-vargrid figcaption{font-size:12px;color:#555;margin-top:4px;}
+			.dze-gal-vargrid figcaption{font-size:12px;color:#555;margin-top:6px;line-height:1.3;word-break:break-word;}
 			body.dze-gallery-on .wp-list-table{display:none;}
 		</style>
 		<?php
@@ -160,14 +163,97 @@ final class DZE_Gallery {
 			}
 			$img_id = (int) $variation->get_image_id();
 			if ( ! $img_id ) {
-				continue;
+				$img_id = (int) get_post_thumbnail_id( $product_id ); // fall back to the parent image.
 			}
 			$out[] = [
-				'title' => wc_get_formatted_variation( $variation, true, false, true ),
-				'thumb' => wp_get_attachment_image_url( $img_id, 'woocommerce_thumbnail' ) ?: wp_get_attachment_image_url( $img_id, 'thumbnail' ),
-				'full'  => wp_get_attachment_image_url( $img_id, 'full' ),
+				// Full, human-readable variation title (attribute names + values).
+				'title' => wp_strip_all_tags( wc_get_formatted_variation( $variation, true, true, false ) ),
+				'thumb' => $img_id ? ( wp_get_attachment_image_url( $img_id, 'woocommerce_thumbnail' ) ?: wp_get_attachment_image_url( $img_id, 'thumbnail' ) ) : '',
+				'full'  => $img_id ? wp_get_attachment_image_url( $img_id, 'full' ) : '',
 			];
 		}
+		// List variations alphabetically by their full title.
+		usort( $out, static fn( $a, $b ) => strcasecmp( $a['title'], $b['title'] ) );
+
 		wp_send_json_success( [ 'images' => $out ] );
+	}
+
+	/**
+	 * Adds sort + variation-attribute filters to the native products list
+	 * toolbar. They post through the standard "Filter" button, so they apply to
+	 * both the table and the Gallery view (which mirrors the same query).
+	 */
+	public function list_filters( string $post_type ): void {
+		if ( 'product' !== $post_type || ! function_exists( 'wc_get_attribute_taxonomies' ) ) {
+			return;
+		}
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- read-only list filtering via GET.
+		$orderby = isset( $_GET['orderby'] ) ? sanitize_key( wp_unslash( $_GET['orderby'] ) ) : '';
+		$order   = ( isset( $_GET['order'] ) && 'asc' === strtolower( (string) $_GET['order'] ) ) ? 'asc' : 'desc';
+		$sorts   = [
+			'date_desc'  => __( 'Newest added', 'dazont-ecom' ),
+			'date_asc'   => __( 'Oldest added', 'dazont-ecom' ),
+			'title_asc'  => __( 'Title A → Z', 'dazont-ecom' ),
+			'title_desc' => __( 'Title Z → A', 'dazont-ecom' ),
+		];
+		$current = ( $orderby ? $orderby : 'date' ) . '_' . $order;
+		echo '<select name="dze_sort">';
+		echo '<option value="">' . esc_html__( 'Sort by…', 'dazont-ecom' ) . '</option>';
+		foreach ( $sorts as $key => $label ) {
+			printf( '<option value="%s"%s>%s</option>', esc_attr( $key ), selected( $current, $key, false ), esc_html( $label ) );
+		}
+		echo '</select> ';
+
+		foreach ( wc_get_attribute_taxonomies() as $attr ) {
+			$tax = wc_attribute_taxonomy_name( $attr->attribute_name );
+			if ( ! taxonomy_exists( $tax ) ) {
+				continue;
+			}
+			$terms = get_terms( [ 'taxonomy' => $tax, 'hide_empty' => true ] );
+			if ( is_wp_error( $terms ) || empty( $terms ) ) {
+				continue;
+			}
+			$cur = isset( $_GET['dze_attr'][ $tax ] ) ? sanitize_text_field( wp_unslash( $_GET['dze_attr'][ $tax ] ) ) : '';
+			echo '<select name="dze_attr[' . esc_attr( $tax ) . ']">';
+			printf( '<option value="">%s</option>', esc_html( sprintf( /* translators: %s: attribute name */ __( '%s: any', 'dazont-ecom' ), $attr->attribute_label ) ) );
+			foreach ( $terms as $t ) {
+				printf( '<option value="%s"%s>%s</option>', esc_attr( $t->slug ), selected( $cur, $t->slug, false ), esc_html( $t->name ) );
+			}
+			echo '</select> ';
+		}
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
+	}
+
+	/** Applies the sort + attribute filters to the products list query. */
+	public function apply_filters( $query ): void {
+		if ( ! is_admin() || ! $query instanceof WP_Query || ! $query->is_main_query() ) {
+			return;
+		}
+		if ( 'product' !== $query->get( 'post_type' ) ) {
+			return;
+		}
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- read-only list filtering via GET.
+		if ( ! empty( $_GET['dze_sort'] ) ) {
+			switch ( sanitize_key( wp_unslash( $_GET['dze_sort'] ) ) ) {
+				case 'title_asc':  $query->set( 'orderby', 'title' ); $query->set( 'order', 'ASC' ); break;
+				case 'title_desc': $query->set( 'orderby', 'title' ); $query->set( 'order', 'DESC' ); break;
+				case 'date_asc':   $query->set( 'orderby', 'date' );  $query->set( 'order', 'ASC' ); break;
+				case 'date_desc':  $query->set( 'orderby', 'date' );  $query->set( 'order', 'DESC' ); break;
+			}
+		}
+		if ( ! empty( $_GET['dze_attr'] ) && is_array( $_GET['dze_attr'] ) ) {
+			$tax_query = (array) $query->get( 'tax_query' );
+			foreach ( wp_unslash( $_GET['dze_attr'] ) as $tax => $slug ) {
+				$tax  = sanitize_key( $tax );
+				$slug = sanitize_text_field( $slug );
+				if ( $slug !== '' && taxonomy_exists( $tax ) ) {
+					$tax_query[] = [ 'taxonomy' => $tax, 'field' => 'slug', 'terms' => $slug ];
+				}
+			}
+			if ( count( $tax_query ) ) {
+				$query->set( 'tax_query', $tax_query );
+			}
+		}
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
 	}
 }

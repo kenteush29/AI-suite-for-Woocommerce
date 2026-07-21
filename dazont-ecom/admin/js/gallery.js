@@ -16,7 +16,16 @@
 	}
 
 	function initToggle() {
-		if (!$('#dze-gal-view').length) { return; }
+		var $view = $('#dze-gal-view');
+		if (!$view.length) { return; }
+
+		// The grid is printed in the footer (outside .wrap), which would let it
+		// slide under the admin menu. Move it into the content area, right after
+		// the products table, so it respects the page width.
+		var $table = $('.wrap .wp-list-table').first();
+		if ($table.length) { $view.insertAfter($table); }
+		else { $('.wrap').first().append($view); }
+
 		var $bar = $('<span class="dze-view-toggle"></span>')
 			.append('<button type="button" class="button dze-view-list">' + i18n.list + '</button>')
 			.append('<button type="button" class="button dze-view-gallery">' + i18n.gallery + '</button>');

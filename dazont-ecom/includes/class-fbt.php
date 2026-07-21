@@ -309,6 +309,8 @@ final class DZE_Fbt {
 			'ignore_sticky_posts' => true,
 			'post__not_in'        => $exclude,
 			'tax_query'           => $tax_query,
+			// Never recommend an out-of-stock product.
+			'meta_query'          => [ [ 'key' => '_stock_status', 'value' => 'outofstock', 'compare' => '!=' ] ],
 		];
 		$q = new WP_Query( $args );
 		return array_map( 'intval', $q->posts );
