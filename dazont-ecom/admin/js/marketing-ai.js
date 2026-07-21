@@ -56,7 +56,6 @@
 			id: $row.data('id'),
 			title: $row.find('.dze-f-title').val(),
 			percent: $row.find('.dze-f-percent').val(),
-			inflate: $row.find('.dze-f-inflate').val(),
 			start_date: $row.find('.dze-f-start').val(),
 			end_date: $row.find('.dze-f-end').val(),
 			languages: $row.find('.dze-f-langs').val(),
@@ -99,7 +98,6 @@
 		$('#dze-ev-id').val(data.id || '');
 		$('#dze-ev-name').val(data.title || '');
 		$('#dze-ev-percent').val(data.percent || 10);
-		$('#dze-ev-inflate').val(data.inflate || 0);
 		$('#dze-ev-start').val(data.start || '');
 		$('#dze-ev-end').val(data.end || '');
 		$('#dze-ev-subject').val(data.subject || '');
@@ -107,39 +105,14 @@
 		$('#dze-ev-title').text(data.id ? i18n.modifyTitle : i18n.newTitle);
 		$('.dze-ev-status').text('');
 		$('#dze-ev-modal').css('display', 'flex');
-		updateEvCalc();
 	}
 	function closeModal() { $('#dze-ev-modal').hide(); }
-
-	// Live net-price preview inside the popup (boost + discount interaction).
-	function updateEvCalc() {
-		var $out = $('#dze-ev-calc-out');
-		if (!$out.length) { return; }
-		var price   = parseFloat($('#dze-ev-calc-price').val()) || 0;
-		var percent = parseFloat($('#dze-ev-percent').val()) || 0;
-		var inflate = parseFloat($('#dze-ev-inflate').val()) || 0;
-		var crossed = price * (1 + inflate / 100);
-		var net     = crossed * (1 - percent / 100);
-		var realPct = price > 0 ? (1 - net / price) * 100 : 0;
-		var f = function (n) { return (Math.round(n * 100) / 100).toLocaleString(); };
-		var r1 = function (n) { return Math.round(n * 10) / 10; };
-		var html = '<div><strong>Customer sees:</strong> ';
-		if (inflate > 0) { html += '<del style="color:#888;">' + f(crossed) + '</del> '; }
-		html += '<strong>' + f(net) + '</strong> <span style="color:#b32d2e;">(-' + r1(percent) + '%)</span></div>';
-		if (realPct >= 0) {
-			html += '<div>Real discount vs normal price (' + f(price) + '): <strong>' + r1(realPct) + '%</strong>.</div>';
-		} else {
-			html += '<div style="color:#b32d2e;">⚠ PRICE INCREASE of ' + r1(-realPct) + '% — customer pays ' + f(net) + ', more than usual.</div>';
-		}
-		$out.html(html);
-	}
-	$(document).on('input change', '#dze-ev-percent, #dze-ev-inflate, #dze-ev-calc-price', updateEvCalc);
 
 	$(document).on('click', '.dze-mai-modify', function () {
 		var $r = $(this).closest('.dze-mai-row');
 		openModal({
 			id: $r.data('id'), title: $r.data('title'), percent: $r.data('percent'),
-			inflate: $r.data('inflate'), start: $r.data('start'), end: $r.data('end'),
+			start: $r.data('start'), end: $r.data('end'),
 			langs: $r.data('langs'), subject: $r.data('subject')
 		});
 	});
@@ -161,7 +134,6 @@
 			id: $('#dze-ev-id').val(),
 			title: $('#dze-ev-name').val(),
 			percent: $('#dze-ev-percent').val(),
-			inflate: $('#dze-ev-inflate').val(),
 			start_date: $('#dze-ev-start').val(),
 			end_date: $('#dze-ev-end').val(),
 			languages: $('#dze-ev-langs').val() || '',

@@ -61,28 +61,6 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				<td><input type="number" id="dze-percent" name="percent" min="0" max="100" step="0.01" class="small-text" value="<?php echo esc_attr( $e( 'percent', '10' ) ); ?>" /> %</td>
 			</tr>
 
-			<?php if ( $is_events ) : ?>
-			<tr class="dze-field-inflate">
-				<th scope="row"><label for="dze-inflate"><?php esc_html_e( 'Reference-price boost (%)', 'dazont-ecom' ); ?></label></th>
-				<td>
-					<input type="number" id="dze-inflate" name="inflate" min="0" max="1000" step="0.01" class="small-text" value="<?php echo esc_attr( $e( 'inflate', '0' ) ); ?>" /> %
-					<p class="description">
-						<?php esc_html_e( 'Optional. While the event runs, temporarily raises the crossed-out “regular” price by this %, so the same discount shows a bigger saving. Example: a €50 product with a 100% boost shows €100 crossed out, then a 60% discount = €40. Set 0 to keep real prices.', 'dazont-ecom' ); ?>
-						<br /><em><?php esc_html_e( 'Use responsibly and in line with your local pricing/advertising rules (e.g. EU “Omnibus” lowest-price rules).', 'dazont-ecom' ); ?></em>
-						<br /><?php esc_html_e( 'Google Merchant Center: only the REAL effective discount (vs the true price) is sent, never the boosted headline — this avoids price-mismatch disapprovals.', 'dazont-ecom' ); ?>
-					</p>
-				</td>
-			</tr>
-			<tr class="dze-field-calc">
-				<th scope="row"><?php esc_html_e( 'Net price preview', 'dazont-ecom' ); ?></th>
-				<td>
-					<label><?php esc_html_e( 'On a product priced', 'dazont-ecom' ); ?>
-						<input type="number" id="dze-calc-price" min="0" step="0.01" class="small-text" value="50" />
-					</label>
-					<div id="dze-calc-out" class="dze-calc-out" style="margin-top:8px;font-size:13px;"></div>
-				</td>
-			</tr>
-			<?php endif; ?>
 
 			<?php if ( ! $is_events ) : ?>
 			<tr class="dze-field-threshold">

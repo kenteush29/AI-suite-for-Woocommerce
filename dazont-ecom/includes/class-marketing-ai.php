@@ -588,9 +588,6 @@ final class DZE_Marketing_Ai {
 
 		$schema = '{"events":[{"title":string (<=60 chars),"type":"sale",'
 			. '"start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","percent":integer 5-70,'
-			. '"reference_boost":integer 0-200 (optional: temporarily raises the crossed-out '
-			. '"regular" price by this % during the event so the same discount reads as a bigger '
-			. 'saving; use 0 unless a strong headline deal is warranted, and keep the net price sensible),'
 			. '"email_subject":string (a marketing email subject line, <=80 chars),'
 			. '"rationale":string (one short sentence naming the real occasion it maps to)}]}';
 
@@ -657,7 +654,6 @@ final class DZE_Marketing_Ai {
 				'start_date'    => $start,
 				'end_date'      => $end,
 				'percent'       => min( 90, max( 1, (int) round( (float) ( $ev['percent'] ?? 0 ) ) ) ),
-				'inflate'       => min( 300, max( 0, (int) round( (float) ( $ev['reference_boost'] ?? 0 ) ) ) ),
 				'countries'     => $countries,   // as chosen at generate time
 				'languages'     => [ $lang ],    // one language per generation
 				'email_subject' => mb_substr( sanitize_text_field( (string) ( $ev['email_subject'] ?? '' ) ), 0, 120 ),
@@ -812,7 +808,6 @@ final class DZE_Marketing_Ai {
 		$ev = [
 			'title'         => sanitize_text_field( wp_unslash( $_POST['title'] ?? ( $src['title'] ?? '' ) ) ),
 			'percent'       => min( 90, max( 1, (int) ( $_POST['percent'] ?? ( $src['percent'] ?? 10 ) ) ) ),
-			'inflate'       => min( 300, max( 0, (int) ( $_POST['inflate'] ?? ( $src['inflate'] ?? 0 ) ) ) ),
 			'start_date'    => $this->clean_date( wp_unslash( $_POST['start_date'] ?? ( $src['start_date'] ?? '' ) ) ),
 			'end_date'      => $this->clean_date( wp_unslash( $_POST['end_date'] ?? ( $src['end_date'] ?? '' ) ) ),
 			'languages'     => $this->list_codes( explode( ',', (string) ( $_POST['languages'] ?? implode( ',', (array) ( $src['languages'] ?? [] ) ) ) ), 5 ),
@@ -883,7 +878,6 @@ final class DZE_Marketing_Ai {
 			'type'          => 'sale',
 			'enabled'       => false, // one active event at a time — enable manually.
 			'percent'       => (float) $ev['percent'],
-			'inflate'       => (float) ( $ev['inflate'] ?? 0 ),
 			'scope'         => 'all',
 			'category_ids'  => [],
 			'product_ids'   => [],

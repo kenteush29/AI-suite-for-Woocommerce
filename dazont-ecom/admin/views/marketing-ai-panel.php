@@ -96,22 +96,6 @@ $ai_settings_url = add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG ], adm
 				<td><input type="number" id="dze-ev-percent" min="1" max="90" class="small-text" value="10" /> %</td>
 			</tr>
 			<tr>
-				<th scope="row"><label for="dze-ev-inflate"><?php esc_html_e( 'Reference-price boost (%)', 'dazont-ecom' ); ?></label></th>
-				<td>
-					<input type="number" id="dze-ev-inflate" min="0" max="300" class="small-text" value="0" /> %
-					<p class="description"><?php esc_html_e( 'Temporarily raises the crossed-out price during the event, so the discount looks bigger. 0 = keep real prices.', 'dazont-ecom' ); ?></p>
-				</td>
-			</tr>
-			<tr>
-				<th scope="row"><?php esc_html_e( 'Net price preview', 'dazont-ecom' ); ?></th>
-				<td>
-					<label><?php esc_html_e( 'On a product priced', 'dazont-ecom' ); ?>
-						<input type="number" id="dze-ev-calc-price" min="0" step="0.01" class="small-text" value="50" />
-					</label>
-					<div id="dze-ev-calc-out" class="dze-calc-out" style="margin-top:8px;font-size:13px;"></div>
-				</td>
-			</tr>
-			<tr>
 				<th scope="row"><?php esc_html_e( 'Dates', 'dazont-ecom' ); ?></th>
 				<td>
 					<label><?php esc_html_e( 'From', 'dazont-ecom' ); ?> <input type="date" id="dze-ev-start" /></label>

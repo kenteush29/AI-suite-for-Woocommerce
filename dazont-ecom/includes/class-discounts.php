@@ -353,14 +353,6 @@ final class DZE_Discounts {
 
 		if ( $has_sale ) {
 
-			// Reference-price inflation: raise the struck-through regular price
-			// while an event runs (bigger apparent saving). Only when configured.
-			if ( $this->sale_inflation_active() ) {
-				add_filter( 'woocommerce_product_get_regular_price',           [ $this, 'filter_regular_price' ], 20, 2 );
-				add_filter( 'woocommerce_product_variation_get_regular_price', [ $this, 'filter_regular_price' ], 20, 2 );
-				add_filter( 'woocommerce_variation_prices_regular_price',      [ $this, 'filter_variation_regular_price' ], 20, 3 );
-			}
-
 			// Homepage / hero image swap for big events (auto-reverts after).
 			if ( $this->build_hero_map() ) {
 				add_filter( 'wp_get_attachment_image_src', [ $this, 'swap_image_src' ], 20, 4 );
@@ -450,54 +442,6 @@ final class DZE_Discounts {
 			return 0.0;
 		}
 		return max( $this->sale_percent_for( $product ), $this->autobest_percent_for( $product ) );
-	}
-
-	/** Reference-price inflation % for a product from any active marketing event in scope. */
-	private function sale_inflate_for( \WC_Product $product ): float {
-		if ( $this->is_excluded( $product->get_id(), $product->get_parent_id() ) ) {
-			return 0.0;
-		}
-		$pid    = $product->get_id();
-		$parent = $product->get_parent_id();
-		$best   = 0.0;
-		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
-			$inf = (float) ( $rule['inflate'] ?? 0 );
-			if ( $inf > 0 && $this->product_in_scope( $rule, $pid, $parent ) ) {
-				$best = max( $best, $inf );
-			}
-		}
-		return $best;
-	}
-
-	/** True when at least one active marketing event inflates the reference price. */
-	private function sale_inflation_active(): bool {
-		foreach ( $this->rules_of_type( 'sale' ) as $rule ) {
-			if ( (float) ( $rule['inflate'] ?? 0 ) > 0 ) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	/** Raises the struck-through regular price of products in an inflating event. */
-	public function filter_regular_price( $price, $product ) {
-		if ( ! $product instanceof \WC_Product ) {
-			return $price;
-		}
-		$inflate = $this->sale_inflate_for( $product );
-		if ( $inflate <= 0 || (float) $price <= 0 ) {
-			return $price;
-		}
-		$decimals = function_exists( 'wc_get_price_decimals' ) ? wc_get_price_decimals() : 2;
-		return round( (float) $price * ( 1 + $inflate / 100 ), $decimals );
-	}
-
-	/** Variation-prices variant of filter_regular_price. */
-	public function filter_variation_regular_price( $price, $variation, $product ) {
-		if ( ! $variation instanceof \WC_Product ) {
-			return $price;
-		}
-		return $this->filter_regular_price( $price, $variation );
 	}
 
 	/** @var array<int,float>|null product_id => best-seller-boost %, this request. */
@@ -855,7 +799,7 @@ final class DZE_Discounts {
 	public function filter_prices_hash( $hash, $product ) {
 		$sig = [];
 		foreach ( $this->rules_of_type( 'sale' ) as $id => $rule ) {
-			$sig[] = $id . ':' . ( $rule['percent'] ?? 0 ) . ':' . ( $rule['inflate'] ?? 0 );
+			$sig[] = $id . ':' . ( $rule['percent'] ?? 0 );
 		}
 		foreach ( $this->rules_of_type( 'autobest' ) as $id => $rule ) {
 			$sig[] = 'ab' . $id . ':' . ( $rule['percent'] ?? 0 );
@@ -1388,10 +1332,6 @@ final class DZE_Discounts {
 			'type'          => $type,
 			'enabled'       => ! empty( $in['enabled'] ),
 			'percent'       => min( 100, max( 0, (float) ( $in['percent'] ?? 0 ) ) ),
-			// Marketing-event "reference price" boost: temporarily raises the
-			// struck-through regular price while the event runs, so the same
-			// discount reads as a bigger saving. Sale type only.
-			'inflate'       => min( 1000, max( 0, (float) ( $in['inflate'] ?? 0 ) ) ),
 			'scope'         => $scope,
 			'category_ids'  => array_map( 'absint', (array) ( $in['category_ids'] ?? [] ) ),
 			'product_ids'   => $this->parse_ids( $in['product_ids'] ?? '' ),

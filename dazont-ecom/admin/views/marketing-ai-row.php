@@ -6,7 +6,7 @@ defined( 'ABSPATH' ) || exit;
  * @var array $sug
  */
 $sug = wp_parse_args( $sug, [
-	'id' => '', 'title' => '', 'percent' => 0, 'inflate' => 0, 'start_date' => '', 'end_date' => '',
+	'id' => '', 'title' => '', 'percent' => 0, 'start_date' => '', 'end_date' => '',
 	'languages' => [], 'email_subject' => '', 'rationale' => '', 'countries' => [],
 ] );
 $langs     = implode( ', ', (array) $sug['languages'] );
@@ -15,7 +15,6 @@ $countries = implode( ', ', (array) $sug['countries'] );
 <tr class="dze-mai-row" data-id="<?php echo esc_attr( $sug['id'] ); ?>"
 	data-title="<?php echo esc_attr( $sug['title'] ); ?>"
 	data-percent="<?php echo esc_attr( (int) $sug['percent'] ); ?>"
-	data-inflate="<?php echo esc_attr( (int) $sug['inflate'] ); ?>"
 	data-start="<?php echo esc_attr( $sug['start_date'] ); ?>"
 	data-end="<?php echo esc_attr( $sug['end_date'] ); ?>"
 	data-langs="<?php echo esc_attr( $langs ); ?>"
@@ -24,7 +23,6 @@ $countries = implode( ', ', (array) $sug['countries'] );
 	<td>
 		<input type="text" class="large-text dze-f-title" value="<?php echo esc_attr( $sug['title'] ); ?>" />
 		<input type="hidden" class="dze-f-subject" value="<?php echo esc_attr( $sug['email_subject'] ); ?>" />
-		<input type="hidden" class="dze-f-inflate" value="<?php echo esc_attr( (int) $sug['inflate'] ); ?>" />
 		<input type="hidden" class="dze-f-langs" value="<?php echo esc_attr( $langs ); ?>" />
 		<?php if ( ! empty( $sug['rationale'] ) ) : ?>
 			<div class="description" style="margin:3px 0 0;font-size:12px;"><?php echo esc_html( $sug['rationale'] ); ?><?php if ( $countries ) : ?> · <code style="font-size:11px;"><?php echo esc_html( $countries ); ?></code><?php endif; ?></div>
