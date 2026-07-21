@@ -37,6 +37,14 @@
 		// (products are auto-selected by the chosen strategy).
 		$('.dze-field-strategy, .dze-field-top-n, .dze-field-lookback').toggle(isAutoBest);
 		$('.dze-field-scope').toggle(!isAutoBest);
+		if (isAutoBest) { refreshStrategyDesc(); }
+	}
+
+	function refreshStrategyDesc() {
+		var s = $('#dze-strategy').val();
+		$('.dze-strat-desc').each(function () {
+			$(this).toggle($(this).data('strategy') === s);
+		});
 	}
 
 	function refreshScope() {
@@ -87,6 +95,7 @@
 		refreshScope();
 		refreshBannerLocation();
 		$('#dze-type').on('change', refreshType);
+		$('#dze-strategy').on('change', refreshStrategyDesc);
 		$(document).on('change', '.dze-scope', refreshScope);
 		$(document).on('change', '.dze-banner-loc', refreshBannerLocation);
 	});

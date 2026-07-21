@@ -2,26 +2,23 @@
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Product Gallery (admin).
+ * Products Gallery — a "Gallery" view mode added to the STANDARD WooCommerce
+ * products list (Products → All Products), next to the normal list.
  *
- * An alternative, visual way to browse the WooCommerce catalogue from the admin
- * — like scrolling the storefront: big product images in a grid, click to zoom
- * (same lightbox idea as the Restock module), and, for variable products, a
- * button that loads the variation images in a popup on demand.
+ * It does not add a separate page: on the native products screen it injects a
+ * "List / Gallery" toggle. In Gallery mode the standard table is hidden and the
+ * exact same products (same search, filters, sorting and pagination) are shown
+ * as a storefront-like image grid — click an image to zoom, and, for variable
+ * products, a button loads the variation images in a popup on demand.
  *
- * Built to stay light on big catalogues:
- *   - the list is paginated (a bounded WP_Query, no meta joins), so a 10k-product
- *     shop only ever loads one page at a time;
- *   - grid images use the small "thumbnail" size and native lazy-loading; the
- *     full-size image is fetched only when a thumbnail is clicked to zoom;
- *   - variation images are loaded via AJAX only when their product's button is
- *     clicked — nothing variation-related is queried up front.
+ * Built to stay light: the grid is rendered from the list query that already
+ * ran (no extra product query), grid images use the small thumbnail size with
+ * native lazy-loading, full images load only on click, and variation images are
+ * fetched by AJAX only when their button is clicked.
  */
 final class DZE_Gallery {
 
-	public const MENU_SLUG = 'dazont-ecom-gallery';
-	private const NONCE     = 'dze_gallery';
-	private const PER_PAGE  = 24;
+	private const NONCE = 'dze_gallery';
 
 	private static ?self $instance = null;
 
@@ -36,24 +33,19 @@ final class DZE_Gallery {
 		if ( ! is_admin() ) {
 			return;
 		}
-		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
+		add_action( 'admin_footer-edit.php', [ $this, 'render_inline_gallery' ] );
 		add_action( 'wp_ajax_dze_gallery_variations', [ $this, 'ajax_variations' ] );
 	}
 
-	public function register_menu(): void {
-		add_submenu_page(
-			DZE_Restock::MENU_SLUG,
-			__( 'Products gallery', 'dazont-ecom' ),
-			__( 'Products gallery', 'dazont-ecom' ),
-			'manage_woocommerce',
-			self::MENU_SLUG,
-			[ $this, 'render_page' ]
-		);
+	/** Only on the Products list screen. */
+	private function is_products_screen(): bool {
+		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+		return $screen && 'edit-product' === $screen->id;
 	}
 
 	public function enqueue_assets( string $hook ): void {
-		if ( strpos( $hook, self::MENU_SLUG ) === false ) {
+		if ( 'edit.php' !== $hook || ! $this->is_products_screen() ) {
 			return;
 		}
 		wp_enqueue_script( 'dze-gallery', DZE_URL . 'admin/js/gallery.js', [ 'jquery' ], DZE_VERSION, true );
@@ -61,42 +53,91 @@ final class DZE_Gallery {
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'   => wp_create_nonce( self::NONCE ),
 			'i18n'    => [
-				'loading' => __( 'Loading…', 'dazont-ecom' ),
-				'none'    => __( 'No variation images.', 'dazont-ecom' ),
-				'error'   => __( 'Could not load variations.', 'dazont-ecom' ),
+				'loading'    => __( 'Loading…', 'dazont-ecom' ),
+				'none'       => __( 'No variation images.', 'dazont-ecom' ),
+				'error'      => __( 'Could not load variations.', 'dazont-ecom' ),
 				'variations' => __( 'Variations', 'dazont-ecom' ),
+				'list'       => __( 'List', 'dazont-ecom' ),
+				'gallery'    => __( 'Gallery', 'dazont-ecom' ),
 			],
 		] );
 	}
 
-	public function render_page(): void {
-		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
+	/** Renders the (hidden) gallery grid built from the current list query. */
+	public function render_inline_gallery(): void {
+		if ( ! $this->is_products_screen() || ! current_user_can( 'manage_woocommerce' ) ) {
+			return;
 		}
+		$wp_query = $GLOBALS['wp_query'] ?? null;
+		$posts    = ( $wp_query instanceof WP_Query ) ? $wp_query->posts : [];
+		?>
+		<div id="dze-gal-view" class="dze-gal" style="display:none;">
+			<?php
+			if ( empty( $posts ) ) {
+				echo '<p>' . esc_html__( 'No products on this page.', 'dazont-ecom' ) . '</p>';
+			}
+			foreach ( $posts as $post ) {
+				$product = wc_get_product( $post );
+				if ( ! $product instanceof \WC_Product ) {
+					continue;
+				}
+				$img_id    = (int) $product->get_image_id();
+				$thumb     = $img_id ? wp_get_attachment_image_url( $img_id, 'woocommerce_thumbnail' ) : wc_placeholder_img_src( 'woocommerce_thumbnail' );
+				$full      = $img_id ? wp_get_attachment_image_url( $img_id, 'full' ) : $thumb;
+				$is_var    = $product->is_type( 'variable' );
+				$var_count = $is_var ? count( $product->get_children() ) : 0;
+				$edit_link = get_edit_post_link( $product->get_id() );
+				?>
+				<div class="dze-gal__card">
+					<div class="dze-thumb-wrap">
+						<img class="dze-thumb dze-gal__img" src="<?php echo esc_url( $thumb ); ?>" data-full="<?php echo esc_url( $full ); ?>" alt="" loading="lazy" />
+					</div>
+					<div class="dze-gal__name"><?php echo esc_html( $product->get_name() ); ?></div>
+					<div class="dze-gal__meta">
+						<span class="dze-gal__price"><?php echo wp_kses_post( $product->get_price_html() ); ?></span>
+						<span class="dze-gal__id">#<?php echo (int) $product->get_id(); ?></span>
+					</div>
+					<div class="dze-gal__actions">
+						<?php if ( $edit_link ) : ?>
+							<a class="button button-small" href="<?php echo esc_url( $edit_link ); ?>"><?php esc_html_e( 'Edit', 'dazont-ecom' ); ?></a>
+						<?php endif; ?>
+						<?php if ( $is_var && $var_count > 0 ) : ?>
+							<button type="button" class="button button-small dze-gal__vars" data-product="<?php echo (int) $product->get_id(); ?>">
+								<?php
+								/* translators: %d: number of variations */
+								echo esc_html( sprintf( __( 'Variations (%d)', 'dazont-ecom' ), $var_count ) );
+								?>
+							</button>
+						<?php endif; ?>
+					</div>
+				</div>
+				<?php
+			}
+			?>
+		</div>
 
-		$paged  = max( 1, (int) ( $_GET['paged'] ?? 1 ) );
-		$search = isset( $_GET['s'] ) ? sanitize_text_field( wp_unslash( $_GET['s'] ) ) : '';
-		$cat    = isset( $_GET['product_cat'] ) ? sanitize_text_field( wp_unslash( $_GET['product_cat'] ) ) : '';
+		<div class="dze-gal-modal" id="dze-gal-modal" style="display:none;"><div class="dze-gal-modal__inner"></div></div>
 
-		$args = [
-			'post_type'      => 'product',
-			'post_status'    => 'publish',
-			'posts_per_page' => self::PER_PAGE,
-			'paged'          => $paged,
-			'orderby'        => 'date',
-			'order'          => 'DESC',
-		];
-		if ( $search !== '' ) {
-			$args['s'] = $search;
-		}
-		if ( $cat !== '' ) {
-			$args['tax_query'] = [ [ 'taxonomy' => 'product_cat', 'field' => 'slug', 'terms' => $cat ] ];
-		}
-		$query      = new WP_Query( $args );
-		$categories = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => true, 'number' => 300 ] );
-		$base_url   = admin_url( 'admin.php' );
-
-		require DZE_DIR . 'admin/views/gallery-page.php';
+		<style>
+			.dze-gal{display:grid;gap:18px;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));margin:12px 0;}
+			.dze-gal__card{background:#fff;border:1px solid #dcdcde;border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:6px;}
+			.dze-gal .dze-thumb-wrap{aspect-ratio:1/1;overflow:hidden;border-radius:8px;background:#f6f7f7;display:flex;align-items:center;justify-content:center;}
+			.dze-gal__img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;}
+			.dze-gal__name{font-weight:600;font-size:13px;line-height:1.3;}
+			.dze-gal__meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#555;}
+			.dze-gal__actions{display:flex;gap:6px;margin-top:auto;flex-wrap:wrap;}
+			.dze-view-toggle{margin-left:8px;}
+			.dze-view-toggle .button.active{background:#2271b1;color:#fff;border-color:#2271b1;}
+			.dze-lightbox,.dze-gal-modal{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:100000;padding:24px;}
+			.dze-lightbox img{max-width:92vw;max-height:92vh;border-radius:6px;}
+			.dze-gal-modal__inner{background:#fff;border-radius:10px;max-width:900px;max-height:88vh;overflow:auto;padding:18px 20px;}
+			.dze-gal-vargrid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));margin-top:10px;}
+			.dze-gal-vargrid figure{margin:0;text-align:center;}
+			.dze-gal-vargrid img{width:100%;height:auto;border-radius:6px;cursor:zoom-in;}
+			.dze-gal-vargrid figcaption{font-size:12px;color:#555;margin-top:4px;}
+			body.dze-gallery-on .wp-list-table{display:none;}
+		</style>
+		<?php
 	}
 
 	/** AJAX: variation images for one product (thumb + full URLs, per variation). */

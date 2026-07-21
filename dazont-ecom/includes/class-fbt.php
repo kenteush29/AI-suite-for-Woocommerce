@@ -4,35 +4,33 @@ defined( 'ABSPATH' ) || exit;
 /**
  * Frequently Bought Together.
  *
- * Shows a small, automatic "Frequently bought together" block on the single
- * product page. Recommendations are 100% automatic and chosen for relevance:
+ * Shows an automatic "goes well with" block on the single product page. Unlike
+ * order-history recommenders, this needs NO sales at all — it recommends from
+ * the product's own attributes and categories, so it works from day one:
  *
- *   1. Co-purchase — products most often bought in the SAME orders as the one
- *      being viewed (behavioural relevance: a military pant that ships with a
- *      military jacket will surface that jacket). Read once from the WooCommerce
- *      Analytics product-lookup table.
- *   2. Fallback / top-up — when there isn't enough order history yet, the block
- *      is filled with products from the same category (thematic relevance).
+ *   Tier 1 (best) — same shared attribute value AND a complementary category.
+ *                   e.g. viewing a MULTICAM JACKET → MULTICAM PANTS.
+ *   Tier 2        — same shared attribute value (e.g. same camo), any type.
+ *   Tier 3        — a complementary category (e.g. jacket → pants), any pattern.
+ *   Tier 4        — same category (thematic fallback).
  *
- * Performance is the priority: the recommendation IDs for a product are computed
- * at most once per PERF_TTL and then served from a transient, so ordinary page
- * views never run the analysis query. The block only ever loads on single
- * product pages, adds no front-end JavaScript of its own, and renders with a
- * handful of already-cached WooCommerce calls. Everything is tunable/removable
- * through filters (see below) — no settings screen, nothing to configure.
+ * "Shared attribute" = the global product attribute(s) you mark as matching
+ * (e.g. Camo / Pattern). "Complementary category" = the category pairings you
+ * define (e.g. Jackets ↔ Pants). Both are set on the Recommendations screen,
+ * along with placement, heading and how many products to show.
  *
- * Filters:
- *   dze_fbt_enabled  (bool)            master on/off (default true)
- *   dze_fbt_limit    (int)             how many products to show (default 4)
- *   dze_fbt_heading  (string)          block heading
- *   dze_fbt_ttl      (int, seconds)    how long recommendations are cached
- *   dze_fbt_ids      (int[] , $pid)    final recommended IDs (last word to devs)
+ * Performance: the recommended IDs for a product are computed at most once per
+ * day (keyed by product + a hash of the settings) and cached in a transient, so
+ * ordinary views run no queries; each tier is a bounded, index-friendly
+ * WP_Query (ids only, no_found_rows); it only loads on product pages and adds
+ * no front-end JavaScript.
  */
 final class DZE_Fbt {
 
+	public const OPT_SETTINGS = 'dze_fbt_settings';
+	public const MENU_SLUG    = 'dazont-ecom-fbt';
 	private const CACHE_PREFIX = 'dze_fbt_';
-	private const DEFAULT_LIMIT = 4;
-	private const PERF_TTL = DAY_IN_SECONDS; // recommendations refresh once a day.
+	private const PERF_TTL      = DAY_IN_SECONDS;
 
 	private static ?self $instance = null;
 
@@ -44,17 +42,113 @@ final class DZE_Fbt {
 	}
 
 	private function __construct() {
-		// Front-end only, and only when WooCommerce is present.
-		add_action( 'woocommerce_after_single_product_summary', [ $this, 'render' ], 15 );
+		if ( is_admin() ) {
+			add_action( 'admin_menu', [ $this, 'register_menu' ] );
+			add_action( 'admin_init', [ $this, 'register_settings' ] );
+		}
+
+		$s = self::get_settings();
+		if ( empty( $s['enabled'] ) ) {
+			return;
+		}
+		$placements = self::placements();
+		$place      = $placements[ $s['position'] ] ?? $placements['below_summary'];
+		add_action( $place['hook'], [ $this, 'render' ], $place['priority'] );
 	}
 
-	private function limit(): int {
-		return max( 1, (int) apply_filters( 'dze_fbt_limit', self::DEFAULT_LIMIT ) );
+	// =========================================================================
+	// Settings
+	// =========================================================================
+
+	public static function get_settings(): array {
+		$s = get_option( self::OPT_SETTINGS, [] );
+		$s = is_array( $s ) ? $s : [];
+		return wp_parse_args( $s, [
+			'enabled'          => true,
+			'heading'          => __( 'Frequently bought together', 'dazont-ecom' ),
+			'limit'            => 4,
+			'position'         => 'below_summary',
+			'match_attributes' => [],  // taxonomy slugs, e.g. [ 'pa_camo' ].
+			'category_pairs'   => [],  // [ [ 'from' => term_id, 'to' => [ term_ids ] ], ... ].
+		] );
 	}
 
-	/** Renders the block under the product summary. Cheap: cached IDs + WC calls. */
+	/** Placement choices on the single product page: key => [label, hook, priority]. */
+	public static function placements(): array {
+		return [
+			'below_summary'   => [ 'label' => __( 'Below the product summary (default)', 'dazont-ecom' ), 'hook' => 'woocommerce_after_single_product_summary', 'priority' => 15 ],
+			'above_related'   => [ 'label' => __( 'Just above Related products', 'dazont-ecom' ),          'hook' => 'woocommerce_after_single_product_summary', 'priority' => 19 ],
+			'under_cart'      => [ 'label' => __( 'Right under the Add to cart button', 'dazont-ecom' ),    'hook' => 'woocommerce_after_add_to_cart_form',       'priority' => 10 ],
+			'after_meta'      => [ 'label' => __( 'After the product meta (SKU/categories)', 'dazont-ecom' ), 'hook' => 'woocommerce_single_product_summary',      'priority' => 45 ],
+			'page_bottom'     => [ 'label' => __( 'At the very bottom of the product page', 'dazont-ecom' ), 'hook' => 'woocommerce_after_single_product',         'priority' => 5 ],
+		];
+	}
+
+	public function register_menu(): void {
+		add_submenu_page(
+			DZE_Restock::MENU_SLUG,
+			__( 'Recommendations', 'dazont-ecom' ),
+			__( 'Recommendations', 'dazont-ecom' ),
+			'manage_woocommerce',
+			self::MENU_SLUG,
+			[ $this, 'render_settings_page' ]
+		);
+	}
+
+	public function register_settings(): void {
+		register_setting( 'dze_fbt_options', self::OPT_SETTINGS, [ 'sanitize_callback' => [ $this, 'sanitize_settings' ], 'autoload' => true ] );
+	}
+
+	public function sanitize_settings( $value ): array {
+		$in = is_array( $value ) ? $value : [];
+
+		$position = array_key_exists( $in['position'] ?? '', self::placements() ) ? $in['position'] : 'below_summary';
+
+		$attrs = [];
+		foreach ( (array) ( $in['match_attributes'] ?? [] ) as $tax ) {
+			$tax = sanitize_key( $tax );
+			if ( $tax !== '' && taxonomy_exists( $tax ) ) {
+				$attrs[] = $tax;
+			}
+		}
+
+		$pairs = [];
+		$rows  = (array) ( $in['category_pairs'] ?? [] );
+		foreach ( $rows as $row ) {
+			$from = absint( $row['from'] ?? 0 );
+			$to   = array_values( array_unique( array_filter( array_map( 'absint', (array) ( $row['to'] ?? [] ) ) ) ) );
+			if ( $from && ! empty( $to ) ) {
+				$pairs[] = [ 'from' => $from, 'to' => $to ];
+			}
+		}
+
+		return [
+			'enabled'          => ! empty( $in['enabled'] ),
+			'heading'          => sanitize_text_field( (string) ( $in['heading'] ?? '' ) ),
+			'limit'            => min( 12, max( 1, (int) ( $in['limit'] ?? 4 ) ) ),
+			'position'         => $position,
+			'match_attributes' => array_values( array_unique( $attrs ) ),
+			'category_pairs'   => $pairs,
+		];
+	}
+
+	public function render_settings_page(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
+		}
+		$settings   = self::get_settings();
+		$placements = self::placements();
+		$attributes = function_exists( 'wc_get_attribute_taxonomies' ) ? wc_get_attribute_taxonomies() : [];
+		$categories = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => false, 'number' => 500 ] );
+		require DZE_DIR . 'admin/views/fbt-settings.php';
+	}
+
+	// =========================================================================
+	// Front-end render
+	// =========================================================================
+
 	public function render(): void {
-		if ( ! apply_filters( 'dze_fbt_enabled', true ) || ! function_exists( 'wc_get_product' ) ) {
+		if ( ! function_exists( 'wc_get_product' ) ) {
 			return;
 		}
 		global $product;
@@ -65,13 +159,13 @@ final class DZE_Fbt {
 			return;
 		}
 
-		$ids = $this->recommendations( $product->get_id(), $this->limit() );
+		$s   = self::get_settings();
+		$ids = $this->recommendations( $product->get_id(), (int) $s['limit'] );
 		if ( empty( $ids ) ) {
 			return;
 		}
 
-		$heading = (string) apply_filters( 'dze_fbt_heading', __( 'Frequently bought together', 'dazont-ecom' ) );
-
+		$heading = (string) $s['heading'];
 		echo '<section class="dze-fbt">';
 		if ( $heading !== '' ) {
 			echo '<h2 class="dze-fbt__title">' . esc_html( $heading ) . '</h2>';
@@ -79,112 +173,144 @@ final class DZE_Fbt {
 		echo '<ul class="dze-fbt__grid">';
 		foreach ( $ids as $pid ) {
 			$p = wc_get_product( $pid );
-			if ( ! $p instanceof \WC_Product || ! $p->is_visible() ) {
-				continue;
+			if ( $p instanceof \WC_Product && $p->is_visible() ) {
+				$this->card( $p );
 			}
-			$this->card( $p );
 		}
-		echo '</ul>';
-		echo '</section>';
+		echo '</ul></section>';
 		$this->print_styles_once();
 	}
 
-	/** One product card: image, title, price and a native add-to-cart button. */
 	private function card( \WC_Product $p ): void {
-		$link  = get_permalink( $p->get_id() );
-		$image = $p->get_image( 'woocommerce_thumbnail' );
-
 		echo '<li class="dze-fbt__item">';
-		printf( '<a class="dze-fbt__link" href="%s">%s<span class="dze-fbt__name">%s</span></a>',
-			esc_url( $link ),
-			$image, // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- WC image markup.
+		printf(
+			'<a class="dze-fbt__link" href="%s">%s<span class="dze-fbt__name">%s</span></a>',
+			esc_url( get_permalink( $p->get_id() ) ),
+			$p->get_image( 'woocommerce_thumbnail' ), // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- WC image markup.
 			esc_html( $p->get_name() )
 		);
 		echo '<span class="dze-fbt__price">' . $p->get_price_html() . '</span>'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- WC price markup.
 
-		// Reuse WooCommerce's own loop add-to-cart button (keeps AJAX behaviour
-		// and theme styling; no custom cart JS needed).
 		$prev = $GLOBALS['product'] ?? null;
 		$GLOBALS['product'] = $p;
 		woocommerce_template_loop_add_to_cart();
 		$GLOBALS['product'] = $prev;
-
 		echo '</li>';
 	}
 
-	/**
-	 * Recommended product IDs for a product, cached for PERF_TTL. Co-purchase
-	 * first, topped up with same-category products when history is thin.
-	 */
+	// =========================================================================
+	// Recommendation engine (no order history needed)
+	// =========================================================================
+
 	public function recommendations( int $product_id, int $limit ): array {
-		$key    = self::CACHE_PREFIX . $product_id . '_' . $limit;
+		$s   = self::get_settings();
+		$sig = substr( md5( wp_json_encode( [ $s['match_attributes'], $s['category_pairs'], $limit ] ) ), 0, 8 );
+		$key = self::CACHE_PREFIX . $product_id . '_' . $sig;
+
 		$cached = get_transient( $key );
 		if ( is_array( $cached ) ) {
 			return $cached;
 		}
 
-		$ids = $this->co_purchased_ids( $product_id, $limit );
-		if ( count( $ids ) < $limit ) {
-			$ids = array_values( array_unique( array_merge( $ids, $this->same_category_ids( $product_id, $limit * 2 ) ) ) );
-		}
-		$ids = array_values( array_filter( $ids, static fn( $id ) => (int) $id !== $product_id ) );
-		$ids = array_slice( $ids, 0, $limit );
-
-		/** @var int[] $ids */
-		$ids = array_map( 'intval', (array) apply_filters( 'dze_fbt_ids', $ids, $product_id ) );
-
-		$ttl = (int) apply_filters( 'dze_fbt_ttl', self::PERF_TTL );
-		set_transient( $key, $ids, max( HOUR_IN_SECONDS, $ttl ) );
+		$ids = $this->compute( $product_id, $limit, $s );
+		set_transient( $key, $ids, self::PERF_TTL );
 		return $ids;
 	}
 
-	/** Products most often bought in the same orders as $product_id (WC Analytics). */
-	private function co_purchased_ids( int $product_id, int $limit ): array {
-		global $wpdb;
-		$table = $wpdb->prefix . 'wc_order_product_lookup';
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
-			return [];
+	private function compute( int $product_id, int $limit, array $s ): array {
+		// The viewed product's matching-attribute term IDs, per taxonomy.
+		$attr_terms = [];
+		foreach ( (array) $s['match_attributes'] as $tax ) {
+			$terms = wp_get_post_terms( $product_id, $tax, [ 'fields' => 'ids' ] );
+			if ( ! is_wp_error( $terms ) && ! empty( $terms ) ) {
+				$attr_terms[ $tax ] = array_map( 'intval', $terms );
+			}
 		}
-		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table derives from $wpdb->prefix.
-		$ids = $wpdb->get_col( $wpdb->prepare(
-			"SELECT l2.product_id
-			 FROM {$table} l1
-			 INNER JOIN {$table} l2 ON l2.order_id = l1.order_id AND l2.product_id <> l1.product_id
-			 INNER JOIN {$wpdb->posts} p ON p.ID = l2.product_id AND p.post_status = 'publish' AND p.post_type = 'product'
-			 WHERE l1.product_id = %d
-			 GROUP BY l2.product_id
-			 ORDER BY COUNT(DISTINCT l2.order_id) DESC
-			 LIMIT %d",
-			$product_id,
-			$limit
-		) );
-		return array_map( 'intval', (array) $ids );
+
+		// Its categories, and the complementary categories they map to.
+		$cats     = wp_get_post_terms( $product_id, 'product_cat', [ 'fields' => 'ids' ] );
+		$cats     = is_wp_error( $cats ) ? [] : array_map( 'intval', $cats );
+		$comp_cats = $this->complementary_categories( $cats, (array) $s['category_pairs'] );
+
+		$match_tq = [];
+		if ( ! empty( $attr_terms ) ) {
+			$match_tq = [ 'relation' => 'OR' ];
+			foreach ( $attr_terms as $tax => $ids ) {
+				$match_tq[] = [ 'taxonomy' => $tax, 'field' => 'term_id', 'terms' => $ids ];
+			}
+		}
+
+		$found   = [];
+		$exclude = [ $product_id ];
+
+		$collect = function ( array $tax_query ) use ( &$found, &$exclude, $limit ) {
+			if ( count( $found ) >= $limit ) {
+				return;
+			}
+			$need = $limit - count( $found );
+			$new  = $this->query_ids( $tax_query, $need + count( $exclude ), $exclude );
+			foreach ( $new as $id ) {
+				if ( ! in_array( $id, $found, true ) ) {
+					$found[]   = $id;
+					$exclude[] = $id;
+				}
+			}
+		};
+
+		// Tier 1 — same attribute AND a complementary category (the sweet spot).
+		if ( $match_tq && $comp_cats ) {
+			$collect( [ 'relation' => 'AND', $match_tq, [ 'taxonomy' => 'product_cat', 'field' => 'term_id', 'terms' => $comp_cats ] ] );
+		}
+		// Tier 2 — same attribute (e.g. same camo), any category.
+		if ( $match_tq ) {
+			$collect( $match_tq );
+		}
+		// Tier 3 — a complementary category (e.g. jacket → pants), any pattern.
+		if ( $comp_cats ) {
+			$collect( [ [ 'taxonomy' => 'product_cat', 'field' => 'term_id', 'terms' => $comp_cats ] ] );
+		}
+		// Tier 4 — same category (thematic fallback so the block is never empty).
+		if ( $cats ) {
+			$collect( [ [ 'taxonomy' => 'product_cat', 'field' => 'term_id', 'terms' => $cats ] ] );
+		}
+
+		return array_slice( $found, 0, $limit );
 	}
 
-	/** Same-category products (thematic fallback when co-purchase data is thin). */
-	private function same_category_ids( int $product_id, int $limit ): array {
-		$terms = wp_get_post_terms( $product_id, 'product_cat', [ 'fields' => 'ids' ] );
-		if ( is_wp_error( $terms ) || empty( $terms ) ) {
+	/** Categories complementary to $cats, per the configured pairs (bidirectional). */
+	private function complementary_categories( array $cats, array $pairs ): array {
+		if ( empty( $cats ) || empty( $pairs ) ) {
 			return [];
 		}
-		// Cheapest possible ordering (indexed post_date) — never ORDER BY RAND(),
-		// which forces a full sort of the category and would hurt big catalogues.
-		$q = new WP_Query( [
+		$out = [];
+		foreach ( $pairs as $pair ) {
+			$from = (int) ( $pair['from'] ?? 0 );
+			$to   = array_map( 'intval', (array) ( $pair['to'] ?? [] ) );
+			if ( in_array( $from, $cats, true ) ) {
+				$out = array_merge( $out, $to );        // jacket → pants
+			}
+			if ( array_intersect( $to, $cats ) ) {
+				$out[] = $from;                          // pants → jacket
+			}
+		}
+		// Don't recommend the product's own categories as "complementary".
+		return array_values( array_diff( array_unique( $out ), $cats ) );
+	}
+
+	private function query_ids( array $tax_query, int $limit, array $exclude ): array {
+		$args = [
 			'post_type'           => 'product',
 			'post_status'         => 'publish',
-			'posts_per_page'      => $limit,
-			'post__not_in'        => [ $product_id ],
+			'posts_per_page'      => max( 1, $limit ),
+			'fields'              => 'ids',
 			'orderby'             => 'date',
 			'order'               => 'DESC',
-			'fields'              => 'ids',
 			'no_found_rows'       => true,
 			'ignore_sticky_posts' => true,
-			'tax_query'           => [ [
-				'taxonomy' => 'product_cat',
-				'field'    => 'term_id',
-				'terms'    => $terms,
-			] ],
-		] );
+			'post__not_in'        => $exclude,
+			'tax_query'           => $tax_query,
+		];
+		$q = new WP_Query( $args );
 		return array_map( 'intval', $q->posts );
 	}
 
@@ -196,7 +322,7 @@ final class DZE_Fbt {
 		}
 		self::$styles_done = true;
 		echo '<style>'
-			. '.dze-fbt{margin:2.5em 0;}'
+			. '.dze-fbt{margin:2.5em 0;clear:both;}'
 			. '.dze-fbt__title{margin:0 0 1em;font-size:1.25em;}'
 			. '.dze-fbt__grid{list-style:none;margin:0;padding:0;display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}'
 			. '.dze-fbt__item{display:flex;flex-direction:column;gap:6px;text-align:center;}'

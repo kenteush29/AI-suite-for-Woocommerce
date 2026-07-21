@@ -120,7 +120,21 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 							<option value="<?php echo esc_attr( $key ); ?>" <?php selected( $cur_strategy, $key ); ?>><?php echo esc_html( $label ); ?></option>
 						<?php endforeach; ?>
 					</select>
-					<p class="description"><?php esc_html_e( 'Which products the plugin auto-selects. New arrivals & slow movers stimulate products that need a push; best-sellers & trending reward momentum (they give up margin on products already selling).', 'dazont-ecom' ); ?></p>
+					<div class="dze-strat-desc" data-strategy="newest">
+						<p class="description"><strong><?php esc_html_e( 'Eligible products:', 'dazont-ecom' ); ?></strong> <?php esc_html_e( 'every published product whose publish date falls within the last “Time window” days. Ordered newest first, then capped at “How many products”. No sales data needed.', 'dazont-ecom' ); ?></p>
+					</div>
+					<div class="dze-strat-desc" data-strategy="slow">
+						<p class="description"><strong><?php esc_html_e( 'Eligible products:', 'dazont-ecom' ); ?></strong> <?php esc_html_e( 'published products with ZERO recorded sales during the last “Time window” days (units sold = 0 in that window). Ordered newest first, then capped. Products that sold at least once in the window are excluded — this pushes the long tail, not what already sells.', 'dazont-ecom' ); ?></p>
+					</div>
+					<div class="dze-strat-desc" data-strategy="bestsellers">
+						<p class="description"><strong><?php esc_html_e( 'Eligible products:', 'dazont-ecom' ); ?></strong> <?php esc_html_e( 'published products with the MOST units sold during the last “Time window” days. Ranked by units sold (highest first), then capped. Products with no sales in the window never qualify.', 'dazont-ecom' ); ?></p>
+					</div>
+					<div class="dze-strat-desc" data-strategy="trending">
+						<p class="description"><strong><?php esc_html_e( 'Eligible products:', 'dazont-ecom' ); ?></strong> <?php esc_html_e( 'published products whose units sold in the most recent HALF of the window are higher than in the earlier half (sales accelerating). Ranked by the biggest positive difference, then capped. Flat or declining products are excluded.', 'dazont-ecom' ); ?></p>
+					</div>
+					<p class="description" style="margin-top:6px;border-top:1px solid #eee;padding-top:6px;">
+						<?php esc_html_e( 'In every strategy: only Published products count; the list refreshes automatically twice a day; and any product already covered by an active Marketing Event is skipped (the event always wins). Sales data comes from WooCommerce Analytics.', 'dazont-ecom' ); ?>
+					</p>
 				</td>
 			</tr>
 			<tr class="dze-field-top-n">
