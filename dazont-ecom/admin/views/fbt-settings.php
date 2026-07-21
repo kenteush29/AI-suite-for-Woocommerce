@@ -13,8 +13,9 @@ $sel_attrs  = (array) $settings['match_attributes'];
 $pairs      = (array) $settings['category_pairs'];
 $cat_list   = is_wp_error( $categories ) ? [] : $categories;
 // Render existing pairs + a few empty rows to add more (no JS needed).
-$rows       = $pairs;
-for ( $i = count( $rows ); $i < count( $rows ) + 3; $i++ ) {
+$rows  = array_values( $pairs );
+$start = count( $rows );
+for ( $i = $start; $i < $start + 3; $i++ ) {
 	$rows[] = [ 'from' => 0, 'to' => [] ];
 }
 ?>
