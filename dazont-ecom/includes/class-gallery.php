@@ -61,6 +61,8 @@ final class DZE_Gallery {
 				'variations' => __( 'Variations', 'dazont-ecom' ),
 				'list'       => __( 'List', 'dazont-ecom' ),
 				'gallery'    => __( 'Gallery', 'dazont-ecom' ),
+				'columns'    => __( 'Columns', 'dazont-ecom' ),
+				'auto'       => __( 'Auto', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -99,6 +101,10 @@ final class DZE_Gallery {
 						<span class="dze-gal__price"><?php echo wp_kses_post( $product->get_price_html() ); ?></span>
 						<span class="dze-gal__id">#<?php echo (int) $product->get_id(); ?></span>
 					</div>
+					<div class="dze-gal__date"><?php
+						/* translators: %s: product publish date */
+						echo esc_html( sprintf( __( 'Added %s', 'dazont-ecom' ), get_the_date( '', $post ) ) );
+					?></div>
 					<div class="dze-gal__actions">
 						<?php if ( $edit_link ) : ?>
 							<a class="button button-small" href="<?php echo esc_url( $edit_link ); ?>"><?php esc_html_e( 'Edit', 'dazont-ecom' ); ?></a>
@@ -128,8 +134,10 @@ final class DZE_Gallery {
 			.dze-gal__img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;}
 			.dze-gal__name{font-weight:600;font-size:13px;line-height:1.3;}
 			.dze-gal__meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:#555;}
+			.dze-gal__date{font-size:11px;color:#787c82;}
 			.dze-gal__actions{display:flex;gap:6px;margin-top:auto;flex-wrap:wrap;}
-			.dze-view-toggle{margin-left:8px;}
+			.dze-view-toggle,.dze-gal-cols{margin-left:8px;}
+			.dze-gal-cols label{font-size:12px;color:#555;}
 			.dze-view-toggle .button.active{background:#2271b1;color:#fff;border-color:#2271b1;}
 			.dze-lightbox,.dze-gal-modal{position:fixed;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:100000;padding:24px;}
 			.dze-lightbox img{max-width:92vw;max-height:92vh;border-radius:6px;}

@@ -522,7 +522,7 @@ final class DZE_Gmc {
 	 * country (a GMC promotion always targets a single country). Returns
 	 * [ "lang|COUNTRY" => [status,message,...] ] and stores it on the rule.
 	 */
-	public function sync_rule( string $rule_id ): array {
+	public function sync_rule( string $rule_id, array $only = [] ): array {
 		$rules = DZE_Discounts::get_rules();
 		if ( ! isset( $rules[ $rule_id ] ) ) {
 			return [];
@@ -535,6 +535,9 @@ final class DZE_Gmc {
 		$statuses = [];
 		foreach ( $this->sync_targets( $rule ) as $t ) {
 			$sk = $t['key'] . '|' . $t['country'];
+			if ( ! empty( $only ) && ! in_array( $sk, $only, true ) ) {
+				continue; // caller restricted which country/language targets to push.
+			}
 			try {
 				$token       = $this->get_access_token();
 				$promotion   = $this->build_promotion( $rule, $t['key'], $t['country'], $t['language'] );
@@ -555,6 +558,47 @@ final class DZE_Gmc {
 		update_option( DZE_Discounts::OPTION, $rules, false );
 
 		return $statuses;
+	}
+
+	/**
+	 * Cancels a rule's promotions in Google (called when the promo is deleted or
+	 * disabled in the shop). The Merchant API has no delete for promotions, so we
+	 * re-insert each previously-synced promotion with an end time in the past —
+	 * Google then stops showing it. Best-effort and silent: a failure here must
+	 * never block the shop-side delete.
+	 */
+	public function cancel_rule( array $rule ): void {
+		if ( ( $rule['type'] ?? '' ) !== 'sale' ) {
+			return;
+		}
+		$synced = (array) ( $rule['gmc_sync'] ?? [] );
+		if ( empty( $synced ) ) {
+			return; // nothing was ever pushed.
+		}
+		try {
+			$token = $this->get_access_token();
+		} catch ( \Throwable $e ) {
+			return;
+		}
+		$now   = time();
+		$start = gmdate( 'Y-m-d\TH:i:s\Z', $now - 120 );
+		$end   = gmdate( 'Y-m-d\TH:i:s\Z', $now - 60 );
+
+		foreach ( $this->sync_targets( $rule ) as $t ) {
+			$sk = $t['key'] . '|' . $t['country'];
+			if ( ( $synced[ $sk ]['status'] ?? '' ) !== 'synced' ) {
+				continue;
+			}
+			try {
+				$promotion = $this->build_promotion( $rule, $t['key'], $t['country'], $t['language'] );
+				$promotion['attributes']['promotionEffectiveTimePeriod'] = [ 'startTime' => $start, 'endTime' => $end ];
+				$data_source = $this->resolve_data_source( $t['merchant_id'], $t['country'], $t['language'], $token );
+				$url = self::MERCHANT_API . '/' . self::PROMO_SUBAPI . '/accounts/' . $t['merchant_id'] . '/promotions:insert';
+				$this->request( 'POST', $url, $token, [ 'promotion' => $promotion, 'dataSource' => $data_source ] );
+			} catch ( \Throwable $e ) {
+				// ignore — best effort.
+			}
+		}
 	}
 
 	/**
@@ -585,6 +629,24 @@ final class DZE_Gmc {
 			}
 		}
 		return $targets;
+	}
+
+	/**
+	 * All configured Merchant Center targets (account-backed country/language),
+	 * as [ "key|COUNTRY" => "LABEL" ] — for the "push to GMC" target picker.
+	 */
+	public function configured_targets(): array {
+		$out = [];
+		foreach ( self::get_accounts() as $key => $acc ) {
+			if ( empty( $acc['merchant_id'] ) ) {
+				continue;
+			}
+			foreach ( self::account_countries( $acc ) as $country ) {
+				$sk         = $key . '|' . $country;
+				$out[ $sk ] = ( 'default' === $key ? '' : strtoupper( $key ) . ':' ) . strtoupper( $country );
+			}
+		}
+		return $out;
 	}
 
 	/** Language keys the promo targets (effective WPML languages, or 'default'). */

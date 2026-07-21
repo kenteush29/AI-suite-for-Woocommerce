@@ -1443,6 +1443,15 @@ final class DZE_Discounts {
 		$rules[ $id ] = $rule;
 		self::save_rules( $rules );
 
+		// "Save & Push to GMC": sync straight after saving (all configured targets).
+		if ( ! empty( $in['push_gmc'] ) && 'sale' === $type && class_exists( 'DZE_Gmc' ) && DZE_Gmc::instance()->is_configured() ) {
+			$statuses = DZE_Gmc::instance()->sync_rule( $id );
+			$errors   = array_filter( $statuses, static fn( $s ) => ( $s['status'] ?? '' ) === 'error' );
+			set_transient( 'dze_discount_notice', empty( $errors )
+				? __( 'Saved and pushed to Google Merchant Center.', 'dazont-ecom' )
+				: __( 'Saved. Some Merchant Center targets reported an error — see the GMC sync column.', 'dazont-ecom' ), 60 );
+		}
+
 		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
 	}
@@ -1454,9 +1463,16 @@ final class DZE_Discounts {
 		}
 		$id    = isset( $_GET['rule'] ) ? sanitize_key( wp_unslash( $_GET['rule'] ) ) : '';
 		$rules = self::get_rules();
+
+		// If this promo was pushed to Google Merchant Center, cancel it there too.
+		if ( isset( $rules[ $id ] ) && ! empty( $rules[ $id ]['gmc_sync'] ) && class_exists( 'DZE_Gmc' ) ) {
+			DZE_Gmc::instance()->cancel_rule( $rules[ $id ] );
+		}
+
+		$back = ( isset( $rules[ $id ]['type'] ) && in_array( $rules[ $id ]['type'], self::EVENT_TYPES, true ) ) ? self::MENU_SLUG_EVENTS : self::MENU_SLUG;
 		unset( $rules[ $id ] );
 		self::save_rules( $rules );
-		wp_safe_redirect( add_query_arg( [ 'page' => self::MENU_SLUG, 'deleted' => 1 ], admin_url( 'admin.php' ) ) );
+		wp_safe_redirect( add_query_arg( [ 'page' => $back, 'deleted' => 1 ], admin_url( 'admin.php' ) ) );
 		exit;
 	}
 

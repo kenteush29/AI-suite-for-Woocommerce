@@ -5,6 +5,13 @@
 	var cfg  = dzeGallery;
 	var i18n = cfg.i18n;
 	var STORE_KEY = 'dze_gal_view';
+	var COLS_KEY  = 'dze_gal_cols';
+
+	function applyCols(n) {
+		var $grid = $('#dze-gal-view .dze-gal');
+		if (!n || n === 'auto') { $grid.css('grid-template-columns', ''); }
+		else { $grid.css('grid-template-columns', 'repeat(' + n + ',minmax(0,1fr))'); }
+	}
 
 	// ---- List / Gallery view toggle on the standard products list ----
 	function applyView(mode) {
@@ -43,6 +50,23 @@
 			try { localStorage.setItem(STORE_KEY, 'gallery'); } catch (e) {}
 			applyView('gallery');
 		});
+
+		// Columns-per-row selector.
+		var savedCols = 'auto';
+		try { savedCols = localStorage.getItem(COLS_KEY) || 'auto'; } catch (e) {}
+		var $cols = $('<span class="dze-gal-cols"><label>' + i18n.columns + ' </label></span>');
+		var $sel = $('<select></select>').append('<option value="auto">' + i18n.auto + '</option>');
+		[2, 3, 4, 5, 6, 7, 8].forEach(function (n) {
+			$sel.append('<option value="' + n + '"' + (String(n) === savedCols ? ' selected' : '') + '>' + n + '</option>');
+		});
+		$cols.append($sel);
+		$bar.after($cols);
+		$sel.on('change', function () {
+			var v = $(this).val();
+			try { localStorage.setItem(COLS_KEY, v); } catch (e) {}
+			applyCols(v);
+		});
+		applyCols(savedCols);
 
 		var saved = 'list';
 		try { saved = localStorage.getItem(STORE_KEY) || 'list'; } catch (e) {}

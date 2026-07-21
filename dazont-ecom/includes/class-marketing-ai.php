@@ -111,9 +111,10 @@ final class DZE_Marketing_Ai {
 		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
 		add_action( 'wp_dashboard_setup',    [ $this, 'register_dashboard_widget' ] );
-		add_action( 'wp_ajax_dze_mai_generate', [ $this, 'ajax_generate' ] );
-		add_action( 'wp_ajax_dze_mai_accept',   [ $this, 'ajax_accept' ] );
-		add_action( 'wp_ajax_dze_mai_refuse',   [ $this, 'ajax_refuse' ] );
+		add_action( 'wp_ajax_dze_mai_generate',   [ $this, 'ajax_generate' ] );
+		add_action( 'wp_ajax_dze_mai_accept',     [ $this, 'ajax_accept' ] );
+		add_action( 'wp_ajax_dze_mai_save_event', [ $this, 'ajax_save_event' ] );
+		add_action( 'wp_ajax_dze_mai_refuse',     [ $this, 'ajax_refuse' ] );
 		// Settings live on the "AI Assistant" submenu (register_menu →
 		// render_settings_page); the generate/review UI renders inside the
 		// Marketing Events page via render_calendar_panel().
@@ -587,6 +588,9 @@ final class DZE_Marketing_Ai {
 
 		$schema = '{"events":[{"title":string (<=60 chars),"type":"sale",'
 			. '"start_date":"YYYY-MM-DD","end_date":"YYYY-MM-DD","percent":integer 5-70,'
+			. '"reference_boost":integer 0-200 (optional: temporarily raises the crossed-out '
+			. '"regular" price by this % during the event so the same discount reads as a bigger '
+			. 'saving; use 0 unless a strong headline deal is warranted, and keep the net price sensible),'
 			. '"email_subject":string (a marketing email subject line, <=80 chars),'
 			. '"rationale":string (one short sentence naming the real occasion it maps to)}]}';
 
@@ -653,6 +657,7 @@ final class DZE_Marketing_Ai {
 				'start_date'    => $start,
 				'end_date'      => $end,
 				'percent'       => min( 90, max( 1, (int) round( (float) ( $ev['percent'] ?? 0 ) ) ) ),
+				'inflate'       => min( 300, max( 0, (int) round( (float) ( $ev['reference_boost'] ?? 0 ) ) ) ),
 				'countries'     => $countries,   // as chosen at generate time
 				'languages'     => [ $lang ],    // one language per generation
 				'email_subject' => mb_substr( sanitize_text_field( (string) ( $ev['email_subject'] ?? '' ) ), 0, 120 ),
@@ -787,6 +792,66 @@ final class DZE_Marketing_Ai {
 		] );
 	}
 
+	/**
+	 * Unified create/accept endpoint used by the row "Accept", the "Accept &
+	 * modify" popup and the "New event" popup. Creates a scheduled-sale event
+	 * from the posted fields; if a suggestion id is given it is consumed; if
+	 * push_gmc is set the event is also pushed to Google Merchant Center (to the
+	 * chosen targets, or all configured ones).
+	 */
+	public function ajax_save_event(): void {
+		check_ajax_referer( self::NONCE, 'nonce' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
+		}
+
+		$suggestions = self::get_suggestions();
+		$sug_id      = isset( $_POST['id'] ) ? sanitize_key( wp_unslash( $_POST['id'] ) ) : '';
+		$src         = ( $sug_id !== '' && isset( $suggestions[ $sug_id ] ) ) ? $suggestions[ $sug_id ] : [];
+
+		$ev = [
+			'title'         => sanitize_text_field( wp_unslash( $_POST['title'] ?? ( $src['title'] ?? '' ) ) ),
+			'percent'       => min( 90, max( 1, (int) ( $_POST['percent'] ?? ( $src['percent'] ?? 10 ) ) ) ),
+			'inflate'       => min( 300, max( 0, (int) ( $_POST['inflate'] ?? ( $src['inflate'] ?? 0 ) ) ) ),
+			'start_date'    => $this->clean_date( wp_unslash( $_POST['start_date'] ?? ( $src['start_date'] ?? '' ) ) ),
+			'end_date'      => $this->clean_date( wp_unslash( $_POST['end_date'] ?? ( $src['end_date'] ?? '' ) ) ),
+			'languages'     => $this->list_codes( explode( ',', (string) ( $_POST['languages'] ?? implode( ',', (array) ( $src['languages'] ?? [] ) ) ) ), 5 ),
+			'email_subject' => sanitize_text_field( wp_unslash( $_POST['email_subject'] ?? ( $src['email_subject'] ?? '' ) ) ),
+		];
+		if ( $ev['title'] === '' ) {
+			wp_send_json_error( [ 'message' => __( 'Give the event a title.', 'dazont-ecom' ) ] );
+		}
+		if ( $ev['start_date'] === '' || $ev['end_date'] === '' ) {
+			wp_send_json_error( [ 'message' => __( 'This event needs a valid start and end date.', 'dazont-ecom' ) ] );
+		}
+
+		$rule_id = $this->create_sale_rule( $ev );
+
+		if ( $sug_id !== '' && isset( $suggestions[ $sug_id ] ) ) {
+			unset( $suggestions[ $sug_id ] );
+			self::save_suggestions( $suggestions );
+		}
+
+		$message = __( 'Event added to your calendar (disabled — review and enable it).', 'dazont-ecom' );
+
+		if ( ! empty( $_POST['push_gmc'] ) && class_exists( 'DZE_Gmc' ) && DZE_Gmc::instance()->is_configured() ) {
+			// Enable it so it can go live in Google, then push.
+			$rules = DZE_Discounts::get_rules();
+			if ( isset( $rules[ $rule_id ] ) ) {
+				$rules[ $rule_id ]['enabled'] = true;
+				update_option( DZE_Discounts::OPTION, $rules, false );
+			}
+			$only     = isset( $_POST['gmc_targets'] ) ? array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['gmc_targets'] ) ) : [];
+			$statuses = DZE_Gmc::instance()->sync_rule( $rule_id, $only );
+			$errors   = array_filter( $statuses, static fn( $s ) => ( $s['status'] ?? '' ) === 'error' );
+			$message  = empty( $errors )
+				? __( 'Event created, enabled and pushed to Google Merchant Center.', 'dazont-ecom' )
+				: __( 'Event created and enabled, but some Merchant Center targets errored — check the GMC column.', 'dazont-ecom' );
+		}
+
+		wp_send_json_success( [ 'message' => $message, 'rule_id' => $rule_id ] );
+	}
+
 	public function ajax_refuse(): void {
 		check_ajax_referer( self::NONCE, 'nonce' );
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
@@ -818,6 +883,7 @@ final class DZE_Marketing_Ai {
 			'type'          => 'sale',
 			'enabled'       => false, // one active event at a time — enable manually.
 			'percent'       => (float) $ev['percent'],
+			'inflate'       => (float) ( $ev['inflate'] ?? 0 ),
 			'scope'         => 'all',
 			'category_ids'  => [],
 			'product_ids'   => [],
@@ -864,6 +930,9 @@ final class DZE_Marketing_Ai {
 				'confirmRef'     => __( 'Discard this suggestion?', 'dazont-ecom' ),
 				'confirmRefBulk' => __( 'Discard the selected suggestions?', 'dazont-ecom' ),
 				'needDates'      => __( 'Pick a start and end date first.', 'dazont-ecom' ),
+				'saving'         => __( 'Saving…', 'dazont-ecom' ),
+				'modifyTitle'    => __( 'Accept & modify event', 'dazont-ecom' ),
+				'newTitle'       => __( 'New marketing event', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -874,6 +943,9 @@ final class DZE_Marketing_Ai {
 		$suggestions = self::get_suggestions();
 		$languages   = self::active_languages();
 		$primary     = self::primary_language();
+		$gmc         = class_exists( 'DZE_Gmc' ) ? DZE_Gmc::instance() : null;
+		$gmc_on      = $gmc && $gmc->is_configured();
+		$gmc_targets = $gmc_on ? $gmc->configured_targets() : [];
 		require DZE_DIR . 'admin/views/marketing-ai-panel.php';
 
 		echo '<h2 class="title" style="margin-top:24px;">' . esc_html__( 'Calendar', 'dazont-ecom' ) . '</h2>';

@@ -48,14 +48,15 @@
 	// ---- Accept one suggestion (with its inline edits). Returns a promise. ----
 	function acceptRow($row) {
 		var $status = $row.find('.dze-mai-row-status');
-		$row.find('.dze-mai-accept').prop('disabled', true);
+		$row.find('.dze-mai-accept, .dze-mai-modify').prop('disabled', true);
 		$status.css('color', '#666').text(i18n.accepting);
 		return $.post(cfg.ajaxUrl, {
-			action: 'dze_mai_accept',
+			action: 'dze_mai_save_event',
 			nonce: cfg.nonce,
 			id: $row.data('id'),
 			title: $row.find('.dze-f-title').val(),
 			percent: $row.find('.dze-f-percent').val(),
+			inflate: $row.find('.dze-f-inflate').val(),
 			start_date: $row.find('.dze-f-start').val(),
 			end_date: $row.find('.dze-f-end').val(),
 			languages: $row.find('.dze-f-langs').val(),
@@ -66,12 +67,12 @@
 				$row.fadeOut(200, function () { $(this).remove(); });
 			} else {
 				$status.css('color', '#b32d2e').text((res.data && res.data.message) || i18n.error);
-				$row.find('.dze-mai-accept').prop('disabled', false);
+				$row.find('.dze-mai-accept, .dze-mai-modify').prop('disabled', false);
 			}
 		})
 		.fail(function () {
 			$status.css('color', '#b32d2e').text(i18n.error);
-			$row.find('.dze-mai-accept').prop('disabled', false);
+			$row.find('.dze-mai-accept, .dze-mai-modify').prop('disabled', false);
 		});
 	}
 
@@ -81,12 +82,83 @@
 			.always(function () { $row.fadeOut(200, function () { $(this).remove(); }); });
 	}
 
-	$(document).on('click', '.dze-mai-accept', function () { acceptRow($(this).closest('.dze-mai-row')); });
+	// Single Accept → reload so the new event shows in the list below immediately.
+	$(document).on('click', '.dze-mai-accept', function () {
+		acceptRow($(this).closest('.dze-mai-row')).done(function (res) {
+			if (res && res.success) { window.location.reload(); }
+		});
+	});
 
 	$(document).on('click', '.dze-mai-refuse', function () {
 		if (!window.confirm(i18n.confirmRef)) { return; }
 		refuseRow($(this).closest('.dze-mai-row'));
 	});
+
+	// ---- Event editor popup (Accept & modify / New event) ----
+	function openModal(data) {
+		$('#dze-ev-id').val(data.id || '');
+		$('#dze-ev-name').val(data.title || '');
+		$('#dze-ev-percent').val(data.percent || 10);
+		$('#dze-ev-inflate').val(data.inflate || 0);
+		$('#dze-ev-start').val(data.start || '');
+		$('#dze-ev-end').val(data.end || '');
+		$('#dze-ev-subject').val(data.subject || '');
+		$('#dze-ev-langs').val(data.langs || '');
+		$('#dze-ev-title').text(data.id ? i18n.modifyTitle : i18n.newTitle);
+		$('.dze-ev-status').text('');
+		$('#dze-ev-modal').css('display', 'flex');
+	}
+	function closeModal() { $('#dze-ev-modal').hide(); }
+
+	$(document).on('click', '.dze-mai-modify', function () {
+		var $r = $(this).closest('.dze-mai-row');
+		openModal({
+			id: $r.data('id'), title: $r.data('title'), percent: $r.data('percent'),
+			inflate: $r.data('inflate'), start: $r.data('start'), end: $r.data('end'),
+			langs: $r.data('langs'), subject: $r.data('subject')
+		});
+	});
+	$(document).on('click', '.dze-mai-new-event', function () { openModal({}); });
+	$(document).on('click', '.dze-ev-cancel', function () { closeModal(); });
+	$(document).on('click', '#dze-ev-modal', function (e) { if (e.target === this) { closeModal(); } });
+
+	function saveModal(pushGmc) {
+		var $status = $('.dze-ev-status');
+		if (!$('#dze-ev-start').val() || !$('#dze-ev-end').val()) {
+			$status.css('color', '#b32d2e').text(i18n.needDates);
+			return;
+		}
+		$('.dze-ev-save, .dze-ev-save-gmc').prop('disabled', true);
+		$status.css('color', '#666').text(i18n.saving);
+		var payload = {
+			action: 'dze_mai_save_event',
+			nonce: cfg.nonce,
+			id: $('#dze-ev-id').val(),
+			title: $('#dze-ev-name').val(),
+			percent: $('#dze-ev-percent').val(),
+			inflate: $('#dze-ev-inflate').val(),
+			start_date: $('#dze-ev-start').val(),
+			end_date: $('#dze-ev-end').val(),
+			languages: $('#dze-ev-langs').val() || '',
+			email_subject: $('#dze-ev-subject').val()
+		};
+		if (pushGmc) {
+			payload.push_gmc = 1;
+			payload.gmc_targets = $('.dze-ev-gmc:checked').map(function () { return $(this).val(); }).get();
+		}
+		$.post(cfg.ajaxUrl, payload).done(function (res) {
+			if (res.success) { window.location.reload(); }
+			else {
+				$status.css('color', '#b32d2e').text((res.data && res.data.message) || i18n.error);
+				$('.dze-ev-save, .dze-ev-save-gmc').prop('disabled', false);
+			}
+		}).fail(function () {
+			$status.css('color', '#b32d2e').text(i18n.error);
+			$('.dze-ev-save, .dze-ev-save-gmc').prop('disabled', false);
+		});
+	}
+	$(document).on('click', '.dze-ev-save', function () { saveModal(false); });
+	$(document).on('click', '.dze-ev-save-gmc', function () { saveModal(true); });
 
 	// ---- Select all ----
 	$(document).on('change', '#dze-mai-check-all', function () {
@@ -97,16 +169,14 @@
 		return $('#dze-mai-suggestions .dze-mai-cb:checked').closest('.dze-mai-row');
 	}
 
-	// ---- Bulk accept ----
+	// ---- Bulk accept (reload once all are added) ----
 	$(document).on('click', '.dze-mai-bulk-accept', function () {
 		var $rows = selectedRows();
 		if (!$rows.length) { return; }
 		var $status = $('#dze-mai-bulk-status');
 		$status.css('color', '#666').text(i18n.accepting + ' (' + $rows.length + ')');
 		var jobs = $rows.map(function () { return acceptRow($(this)); }).get();
-		$.when.apply($, jobs).always(function () {
-			$status.css('color', '#0a7040').text('✓');
-		});
+		$.when.apply($, jobs).always(function () { window.location.reload(); });
 	});
 
 	// ---- Bulk discard ----

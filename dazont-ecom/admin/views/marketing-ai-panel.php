@@ -8,11 +8,16 @@ defined( 'ABSPATH' ) || exit;
  * @var array  $suggestions
  * @var array  $languages   Active site languages ([code, native_name, flag]).
  * @var string $primary     Primary language code (pre-selected).
+ * @var bool   $gmc_on      Whether Google Merchant Center is configured.
+ * @var array  $gmc_targets [ "key|COUNTRY" => "LABEL" ] configured GMC targets.
  */
 $ai_settings_url = add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG ], admin_url( 'admin.php' ) );
 ?>
 <div class="dze-mai-block" style="background:#f6f7f7;border:1px solid #dcdcde;border-radius:6px;padding:16px 18px;margin-bottom:20px;">
-	<h2 class="title" style="margin-top:0;"><?php esc_html_e( 'AI Marketing Assistant — generate a calendar', 'dazont-ecom' ); ?></h2>
+	<h2 class="title" style="margin-top:0;display:flex;align-items:center;gap:12px;">
+		<?php esc_html_e( 'AI Marketing Assistant — generate a calendar', 'dazont-ecom' ); ?>
+		<button type="button" class="button dze-mai-new-event" style="font-weight:400;"><?php esc_html_e( '+ New event', 'dazont-ecom' ); ?></button>
+	</h2>
 
 	<?php if ( ! $has_key ) : ?>
 		<p class="description">
@@ -63,8 +68,7 @@ $ai_settings_url = add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG ], adm
 					<th><?php esc_html_e( 'Event', 'dazont-ecom' ); ?></th>
 					<th style="width:72px;"><?php esc_html_e( 'Discount', 'dazont-ecom' ); ?></th>
 					<th style="width:300px;"><?php esc_html_e( 'Dates', 'dazont-ecom' ); ?></th>
-					<th style="width:84px;"><?php esc_html_e( 'Languages', 'dazont-ecom' ); ?></th>
-					<th style="width:150px;"><?php esc_html_e( 'Actions', 'dazont-ecom' ); ?></th>
+					<th style="width:220px;"><?php esc_html_e( 'Actions', 'dazont-ecom' ); ?></th>
 				</tr>
 			</thead>
 			<tbody>
@@ -75,3 +79,66 @@ $ai_settings_url = add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG ], adm
 		</table>
 	<?php endif; ?>
 </div>
+
+<?php // ---- Event editor popup (Accept & modify / New event) ---- ?>
+<div class="dze-ev-modal" id="dze-ev-modal" style="display:none;">
+	<div class="dze-ev-modal__inner">
+		<h2 id="dze-ev-title" style="margin-top:0;"><?php esc_html_e( 'Event', 'dazont-ecom' ); ?></h2>
+		<input type="hidden" id="dze-ev-id" value="" />
+		<input type="hidden" id="dze-ev-langs" value="" />
+		<table class="form-table" role="presentation">
+			<tr>
+				<th scope="row"><label for="dze-ev-name"><?php esc_html_e( 'Title', 'dazont-ecom' ); ?></label></th>
+				<td><input type="text" id="dze-ev-name" class="large-text" /></td>
+			</tr>
+			<tr>
+				<th scope="row"><label for="dze-ev-percent"><?php esc_html_e( 'Discount (%)', 'dazont-ecom' ); ?></label></th>
+				<td><input type="number" id="dze-ev-percent" min="1" max="90" class="small-text" value="10" /> %</td>
+			</tr>
+			<tr>
+				<th scope="row"><label for="dze-ev-inflate"><?php esc_html_e( 'Reference-price boost (%)', 'dazont-ecom' ); ?></label></th>
+				<td>
+					<input type="number" id="dze-ev-inflate" min="0" max="300" class="small-text" value="0" /> %
+					<p class="description"><?php esc_html_e( 'Temporarily raises the crossed-out price during the event, so the discount looks bigger. 0 = keep real prices.', 'dazont-ecom' ); ?></p>
+				</td>
+			</tr>
+			<tr>
+				<th scope="row"><?php esc_html_e( 'Dates', 'dazont-ecom' ); ?></th>
+				<td>
+					<label><?php esc_html_e( 'From', 'dazont-ecom' ); ?> <input type="date" id="dze-ev-start" /></label>
+					&nbsp;
+					<label><?php esc_html_e( 'To', 'dazont-ecom' ); ?> <input type="date" id="dze-ev-end" /></label>
+				</td>
+			</tr>
+			<tr>
+				<th scope="row"><label for="dze-ev-subject"><?php esc_html_e( 'Email subject', 'dazont-ecom' ); ?></label></th>
+				<td><input type="text" id="dze-ev-subject" class="large-text" /></td>
+			</tr>
+			<?php if ( $gmc_on && ! empty( $gmc_targets ) ) : ?>
+			<tr>
+				<th scope="row"><?php esc_html_e( 'Push to GMC', 'dazont-ecom' ); ?></th>
+				<td>
+					<p class="description" style="margin-top:0;"><?php esc_html_e( 'Choose which Merchant Center country/language targets to push to (used only by “Save & Push to GMC”).', 'dazont-ecom' ); ?></p>
+					<?php foreach ( $gmc_targets as $sk => $label ) : ?>
+						<label style="display:inline-block;margin:0 12px 4px 0;">
+							<input type="checkbox" class="dze-ev-gmc" value="<?php echo esc_attr( $sk ); ?>" checked /> <?php echo esc_html( $label ); ?>
+						</label>
+					<?php endforeach; ?>
+				</td>
+			</tr>
+			<?php endif; ?>
+		</table>
+		<p>
+			<button type="button" class="button button-primary dze-ev-save"><?php esc_html_e( 'Save', 'dazont-ecom' ); ?></button>
+			<?php if ( $gmc_on ) : ?>
+				<button type="button" class="button dze-ev-save-gmc"><?php esc_html_e( 'Save & Push to GMC', 'dazont-ecom' ); ?></button>
+			<?php endif; ?>
+			<button type="button" class="button-link dze-ev-cancel" style="margin-left:6px;"><?php esc_html_e( 'Cancel', 'dazont-ecom' ); ?></button>
+			<span class="dze-ev-status" style="margin-left:8px;font-size:13px;"></span>
+		</p>
+	</div>
+</div>
+<style>
+	.dze-ev-modal{position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:24px;}
+	.dze-ev-modal__inner{background:#fff;border-radius:10px;width:min(640px,96vw);max-height:88vh;overflow:auto;padding:18px 24px;}
+</style>
