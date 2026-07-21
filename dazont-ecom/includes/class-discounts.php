@@ -21,7 +21,7 @@ defined( 'ABSPATH' ) || exit;
  *                  "Wholesale" coupon.
  *   - autobest   : "Automatic product discount" — a % sale applied automatically
  *                  to a set of products chosen by a strategy (new arrivals, slow
- *                  movers, best-sellers or trending), refreshed twice a day.
+ *                  movers, best-sellers or trending), refreshed weekly.
  *
  * Scope for every rule: whole store, specific categories, or specific products
  * (autobest picks its products automatically instead). Percentage-only.
@@ -74,6 +74,18 @@ final class DZE_Discounts {
 	/** Global "never discount" list, applied to EVERY promotion. */
 	public const OPT_EXCLUSIONS = 'dze_discount_exclusions';
 
+	// Sale-price materialisation (writes native _sale_price into product data so
+	// weekly feeds/exports — e.g. GMC — pick promotions up).
+	public const SYNC_HOOK        = 'dze_sale_sync';
+	private const OPT_SYNC_QUEUE  = 'dze_sale_sync_queue';
+	private const META_RULE       = '_dze_sale_rule';   // parent flag: which promo manages it.
+	private const META_MANAGED    = '_dze_sale_managed'; // per (variation) row flag.
+	private const META_PREV       = '_dze_sale_prev';   // original _sale_price to restore.
+	private const META_PREV_PRICE = '_dze_price_prev';  // original _price to restore.
+	private const META_PREV_FROM  = '_dze_sale_prev_from';
+	private const META_PREV_TO    = '_dze_sale_prev_to';
+	private const SYNC_CHUNK      = 60;                 // rows processed per background pass.
+
 	/** @var array<string,array>|null Cached active rules for this request. */
 	private ?array $active = null;
 	/** @var array|null Cached exclusions for this request. */
@@ -96,12 +108,17 @@ final class DZE_Discounts {
 			add_action( 'admin_post_dze_discount_delete', [ $this, 'handle_delete' ] );
 			add_action( 'admin_post_dze_discount_toggle', [ $this, 'handle_toggle' ] );
 			add_action( 'admin_post_dze_discount_exclusions', [ $this, 'handle_exclusions_save' ] );
+			add_action( 'admin_post_dze_sale_resync',     [ $this, 'handle_resync' ] );
 			add_action( 'wp_ajax_dze_auto_count',         [ $this, 'ajax_auto_count' ] );
 		}
 
 		// The pricing engine must run on the front end, on cart AJAX and on the
 		// Store API (REST) — everywhere WooCommerce computes prices/totals.
 		add_action( 'init', [ $this, 'register_engine' ] );
+
+		// Materialise sale prices into product data (for feeds/exports).
+		add_action( self::SYNC_HOOK, [ $this, 'run_sale_sync' ] );
+		add_action( 'init', [ $this, 'schedule_sale_sync' ] );
 
 		add_shortcode( 'dze_promo_banner', [ $this, 'shortcode_banner' ] );
 	}
@@ -475,7 +492,7 @@ final class DZE_Discounts {
 	/**
 	 * Builds (and caches for the request) a map of product_id => discount % for
 	 * every active "Automatic product discount" rule. Each rule's product list is
-	 * cached 12h so the ranking query runs at most twice a day per rule.
+	 * cached one week so the ranking query runs at most once a week per rule.
 	 *
 	 * Compatibility rule (see the class docblock): products already covered by
 	 * the active marketing event (scheduled sale) are removed here, so an event
@@ -500,7 +517,7 @@ final class DZE_Discounts {
 			$ids      = get_transient( $key );
 			if ( ! is_array( $ids ) ) {
 				$ids = $this->auto_product_ids( $strategy, $top_n, $lookback, $priority );
-				set_transient( $key, $ids, 12 * HOUR_IN_SECONDS );
+				set_transient( $key, $ids, WEEK_IN_SECONDS );
 			}
 			foreach ( $ids as $pid ) {
 				if ( $this->in_active_event_scope( (int) $pid ) ) {
@@ -1007,6 +1024,276 @@ final class DZE_Discounts {
 	}
 
 	// =========================================================================
+	// Sale-price materialisation
+	//
+	// The runtime filters above keep the storefront correct instantly. This
+	// additionally writes WooCommerce's native _sale_price (+ scheduled-sale
+	// dates for events) into the product data, so data-level consumers — feed
+	// plugins, the weekly WPML/GMC export — see the promotion too. Products we
+	// touch are flagged and their original sale price is stashed, so releasing a
+	// promo restores exactly what was there before. Runs in the background,
+	// chunked, on every rule change and once a week.
+	// =========================================================================
+
+	/** Unschedules the weekly sync (called on plugin deactivation). */
+	public static function clear_sale_sync(): void {
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::SYNC_HOOK );
+		}
+		$ts = wp_next_scheduled( self::SYNC_HOOK );
+		if ( $ts ) {
+			wp_unschedule_event( $ts, self::SYNC_HOOK );
+		}
+	}
+
+	public function schedule_sale_sync(): void {
+		if ( function_exists( 'as_schedule_recurring_action' ) ) {
+			if ( ! as_next_scheduled_action( self::SYNC_HOOK ) ) {
+				as_schedule_recurring_action( time() + 300, WEEK_IN_SECONDS, self::SYNC_HOOK, [], 'dazont-ecom' );
+			}
+		} elseif ( ! wp_next_scheduled( self::SYNC_HOOK ) ) {
+			wp_schedule_event( time() + 300, 'weekly', self::SYNC_HOOK );
+		}
+	}
+
+	/** Rebuild the desired state and kick a background pass (called on rule change). */
+	public function queue_sale_sync(): void {
+		delete_option( self::OPT_SYNC_QUEUE ); // force a fresh diff on the next pass.
+		$this->kick_sale_sync();
+	}
+
+	private function kick_sale_sync(): void {
+		if ( function_exists( 'as_enqueue_async_action' ) ) {
+			as_enqueue_async_action( self::SYNC_HOOK, [], 'dazont-ecom' );
+		} else {
+			// A single event (+15s) is far from the weekly recurring one, so WP's
+			// duplicate guard won't confuse the two.
+			wp_schedule_single_event( time() + 15, self::SYNC_HOOK );
+		}
+	}
+
+	/** Background worker: applies/releases native sale prices, a chunk at a time. */
+	public function run_sale_sync(): void {
+		$queue = get_option( self::OPT_SYNC_QUEUE, null );
+		if ( ! is_array( $queue ) ) {
+			$desired = $this->materialize_desired();
+			$managed = $this->managed_sale_ids();
+			$set     = [];
+			foreach ( $desired as $pid => $d ) {
+				$d['id'] = $pid;
+				$set[]   = $d;
+			}
+			$queue = [
+				'set'     => $set,
+				'release' => array_values( array_diff( $managed, array_keys( $desired ) ) ),
+			];
+		}
+
+		$processed = 0;
+		while ( $processed < self::SYNC_CHUNK && ! empty( $queue['release'] ) ) {
+			$this->release_sale( (int) array_pop( $queue['release'] ) );
+			$processed++;
+		}
+		while ( $processed < self::SYNC_CHUNK && ! empty( $queue['set'] ) ) {
+			$this->apply_sale( (array) array_pop( $queue['set'] ) );
+			$processed++;
+		}
+
+		if ( empty( $queue['set'] ) && empty( $queue['release'] ) ) {
+			delete_option( self::OPT_SYNC_QUEUE );
+		} else {
+			update_option( self::OPT_SYNC_QUEUE, $queue, false );
+			$this->kick_sale_sync();
+		}
+	}
+
+	/**
+	 * Desired sale state: [ product_id => ['pct','rule'] ], strongest % wins.
+	 * Only CURRENTLY-active promos are materialised (the runtime filters already
+	 * drive live on-site display); a promo that hasn't started or has ended is
+	 * simply not written, and gets released on the next reconcile.
+	 */
+	private function materialize_desired(): array {
+		$map = [];
+		$now = time();
+		foreach ( self::get_rules() as $id => $rule ) {
+			if ( ( $rule['type'] ?? '' ) !== 'sale' || empty( $rule['enabled'] ) ) {
+				continue;
+			}
+			$pct = (float) ( $rule['percent'] ?? 0 );
+			if ( $pct <= 0 ) {
+				continue;
+			}
+			[ $from, $to ] = $this->window_ts( $rule );
+			if ( ( PHP_INT_MIN !== $from && $now < $from ) || ( PHP_INT_MAX !== $to && $now > $to ) ) {
+				continue; // not active right now.
+			}
+			foreach ( $this->scope_product_ids( $rule ) as $pid ) {
+				$this->merge_desired( $map, (int) $pid, $pct, (string) $id );
+			}
+		}
+		// Automatic product discounts (evergreen).
+		foreach ( $this->autobest_map() as $pid => $pct ) {
+			$this->merge_desired( $map, (int) $pid, (float) $pct, 'auto' );
+		}
+		return $map;
+	}
+
+	private function merge_desired( array &$map, int $pid, float $pct, string $rule ): void {
+		if ( $pid <= 0 || $pct <= 0 ) {
+			return;
+		}
+		if ( ! isset( $map[ $pid ] ) || $pct > $map[ $pid ]['pct'] ) {
+			$map[ $pid ] = [ 'pct' => $pct, 'rule' => $rule ];
+		}
+	}
+
+	/** Published product IDs in a rule's scope (all languages), minus exclusions. */
+	private function scope_product_ids( array $rule ): array {
+		global $wpdb;
+		$scope = $rule['scope'] ?? 'all';
+		if ( 'products' === $scope ) {
+			$ids = array_map( 'intval', (array) ( $rule['product_ids'] ?? [] ) );
+		} elseif ( 'categories' === $scope ) {
+			$cats = array_map( 'intval', (array) ( $rule['category_ids'] ?? [] ) );
+			if ( empty( $cats ) ) {
+				return [];
+			}
+			$in  = implode( ',', $cats );
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $in is a list of ints.
+			$ids = $wpdb->get_col( "SELECT DISTINCT tr.object_id FROM {$wpdb->term_relationships} tr
+				INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
+				INNER JOIN {$wpdb->posts} p ON p.ID = tr.object_id AND p.post_type = 'product' AND p.post_status = 'publish'
+				WHERE tt.taxonomy = 'product_cat' AND tt.term_id IN ({$in})" );
+			$ids = array_map( 'intval', (array) $ids );
+		} else {
+			$ids = array_map( 'intval', (array) $wpdb->get_col( "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish'" ) );
+		}
+		$ex = self::get_exclusions();
+		if ( empty( $ex['products'] ) && empty( $ex['categories'] ) ) {
+			return array_values( $ids ); // nothing to exclude — skip the per-product check.
+		}
+		return array_values( array_filter( $ids, fn( $id ) => ! $this->is_excluded( (int) $id ) ) );
+	}
+
+	/** Parent product IDs we currently manage a sale on. */
+	private function managed_sale_ids(): array {
+		global $wpdb;
+		return array_map( 'intval', (array) $wpdb->get_col( $wpdb->prepare(
+			"SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = %s",
+			self::META_RULE
+		) ) );
+	}
+
+	private function apply_sale( array $item ): void {
+		$pid = (int) ( $item['id'] ?? 0 );
+		if ( $pid <= 0 || ! function_exists( 'wc_get_product' ) ) {
+			return;
+		}
+		$product = wc_get_product( $pid );
+		if ( ! $product instanceof \WC_Product ) {
+			return;
+		}
+		$pct  = (float) $item['pct'];
+		$rows = $product->is_type( 'variable' ) ? $product->get_children() : [ $pid ];
+		foreach ( $rows as $cid ) {
+			$this->set_row_sale( (int) $cid, $pct );
+		}
+		update_post_meta( $pid, self::META_RULE, (string) ( $item['rule'] ?? '1' ) );
+		if ( function_exists( 'wc_delete_product_transients' ) ) {
+			wc_delete_product_transients( $pid );
+		}
+	}
+
+	private function release_sale( int $pid ): void {
+		if ( $pid <= 0 || ! function_exists( 'wc_get_product' ) ) {
+			return;
+		}
+		$product = wc_get_product( $pid );
+		$rows    = ( $product instanceof \WC_Product && $product->is_type( 'variable' ) ) ? $product->get_children() : [ $pid ];
+		foreach ( $rows as $cid ) {
+			$this->restore_row( (int) $cid );
+		}
+		delete_post_meta( $pid, self::META_RULE );
+		if ( function_exists( 'wc_delete_product_transients' ) ) {
+			wc_delete_product_transients( $pid );
+		}
+	}
+
+	/**
+	 * Writes native sale meta on one product/variation row using RAW stored
+	 * prices (never the getters — our own runtime filters would feed the sale
+	 * price back into itself). Stashes the original sale/price once so it can be
+	 * restored later.
+	 */
+	private function set_row_sale( int $id, float $pct ): void {
+		$regular = (float) get_post_meta( $id, '_regular_price', true );
+		if ( $regular <= 0 ) {
+			return;
+		}
+		$decimals = function_exists( 'wc_get_price_decimals' ) ? wc_get_price_decimals() : 2;
+		$sale     = round( $regular * ( 1 - $pct / 100 ), $decimals );
+		if ( $sale <= 0 || $sale >= $regular ) {
+			return;
+		}
+		if ( get_post_meta( $id, self::META_MANAGED, true ) !== '1' ) {
+			update_post_meta( $id, self::META_MANAGED, '1' );
+			update_post_meta( $id, self::META_PREV, (string) get_post_meta( $id, '_sale_price', true ) );
+			update_post_meta( $id, self::META_PREV_PRICE, (string) get_post_meta( $id, '_price', true ) );
+			update_post_meta( $id, self::META_PREV_FROM, (string) get_post_meta( $id, '_sale_price_dates_from', true ) );
+			update_post_meta( $id, self::META_PREV_TO, (string) get_post_meta( $id, '_sale_price_dates_to', true ) );
+		}
+		update_post_meta( $id, '_sale_price', (string) $sale );
+		update_post_meta( $id, '_price', (string) $sale );
+		// Our promos are active-now; clear any scheduled-sale dates while we manage it.
+		delete_post_meta( $id, '_sale_price_dates_from' );
+		delete_post_meta( $id, '_sale_price_dates_to' );
+	}
+
+	private function restore_row( int $id ): void {
+		if ( get_post_meta( $id, self::META_MANAGED, true ) !== '1' ) {
+			return;
+		}
+		$prev       = (string) get_post_meta( $id, self::META_PREV, true );
+		$prev_price = (string) get_post_meta( $id, self::META_PREV_PRICE, true );
+		$prev_from  = (string) get_post_meta( $id, self::META_PREV_FROM, true );
+		$prev_to    = (string) get_post_meta( $id, self::META_PREV_TO, true );
+		if ( $prev !== '' ) {
+			update_post_meta( $id, '_sale_price', $prev );
+		} else {
+			delete_post_meta( $id, '_sale_price' );
+		}
+		if ( $prev_from !== '' ) {
+			update_post_meta( $id, '_sale_price_dates_from', $prev_from );
+		} else {
+			delete_post_meta( $id, '_sale_price_dates_from' );
+		}
+		if ( $prev_to !== '' ) {
+			update_post_meta( $id, '_sale_price_dates_to', $prev_to );
+		} else {
+			delete_post_meta( $id, '_sale_price_dates_to' );
+		}
+		$regular = (string) get_post_meta( $id, '_regular_price', true );
+		update_post_meta( $id, '_price', $prev_price !== '' ? $prev_price : $regular );
+		delete_post_meta( $id, self::META_MANAGED );
+		delete_post_meta( $id, self::META_PREV );
+		delete_post_meta( $id, self::META_PREV_PRICE );
+		delete_post_meta( $id, self::META_PREV_FROM );
+		delete_post_meta( $id, self::META_PREV_TO );
+	}
+
+	/** Admin: "Resync sale prices now" button. */
+	public function handle_resync(): void {
+		check_admin_referer( 'dze_sale_resync' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
+		}
+		$this->queue_sale_sync();
+		wp_safe_redirect( add_query_arg( [ 'page' => self::MENU_SLUG, 'resynced' => 1 ], admin_url( 'admin.php' ) ) );
+		exit;
+	}
+
+	// =========================================================================
 	// Banners
 	// =========================================================================
 
@@ -1382,6 +1669,7 @@ final class DZE_Discounts {
 
 		$rules[ $id ] = $rule;
 		self::save_rules( $rules );
+		$this->queue_sale_sync();
 
 		// "Save & Push to GMC": sync straight after saving (all configured targets).
 		if ( ! empty( $in['push_gmc'] ) && 'sale' === $type && class_exists( 'DZE_Gmc' ) && DZE_Gmc::instance()->is_configured() ) {
@@ -1412,6 +1700,7 @@ final class DZE_Discounts {
 		$back = ( isset( $rules[ $id ]['type'] ) && in_array( $rules[ $id ]['type'], self::EVENT_TYPES, true ) ) ? self::MENU_SLUG_EVENTS : self::MENU_SLUG;
 		unset( $rules[ $id ] );
 		self::save_rules( $rules );
+		$this->queue_sale_sync();
 		wp_safe_redirect( add_query_arg( [ 'page' => $back, 'deleted' => 1 ], admin_url( 'admin.php' ) ) );
 		exit;
 	}
@@ -1440,6 +1729,7 @@ final class DZE_Discounts {
 			}
 			$rules[ $id ]['enabled'] = $enabling;
 			self::save_rules( $rules );
+			$this->queue_sale_sync();
 		}
 		wp_safe_redirect( add_query_arg( [ 'page' => self::MENU_SLUG ], admin_url( 'admin.php' ) ) );
 		exit;

@@ -835,6 +835,7 @@ final class DZE_Marketing_Ai {
 			if ( isset( $rules[ $rule_id ] ) ) {
 				$rules[ $rule_id ]['enabled'] = true;
 				update_option( DZE_Discounts::OPTION, $rules, false );
+				DZE_Discounts::instance()->queue_sale_sync();
 			}
 			$only     = isset( $_POST['gmc_targets'] ) ? array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['gmc_targets'] ) ) : [];
 			$statuses = DZE_Gmc::instance()->sync_rule( $rule_id, $only );

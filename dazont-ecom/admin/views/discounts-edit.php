@@ -134,7 +134,7 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 						<p class="description"><strong><?php esc_html_e( 'Eligible products:', 'dazont-ecom' ); ?></strong> <?php esc_html_e( 'published products whose units sold in the most recent HALF of the window are higher than in the earlier half (sales accelerating). Ranked by the biggest positive difference, then capped. Flat or declining products are excluded.', 'dazont-ecom' ); ?></p>
 					</div>
 					<p class="description" style="margin-top:6px;border-top:1px solid #eee;padding-top:6px;">
-						<?php esc_html_e( 'In every strategy: only Published products count; the list refreshes automatically twice a day; and any product already covered by an active Marketing Event is skipped (the event always wins). Sales data comes from WooCommerce Analytics.', 'dazont-ecom' ); ?>
+						<?php esc_html_e( 'In every strategy: only Published products count; the list refreshes automatically once a week; and any product already covered by an active Marketing Event is skipped (the event always wins). Sales data comes from WooCommerce Analytics.', 'dazont-ecom' ); ?>
 					</p>
 				</td>
 			</tr>
@@ -149,7 +149,7 @@ $banner_location = (string) $e( 'banner_location', 'top' );
 				<th scope="row"><label for="dze-lookback"><?php esc_html_e( 'Time window (days)', 'dazont-ecom' ); ?></label></th>
 				<td>
 					<input type="number" id="dze-lookback" name="lookback_days" min="1" max="365" step="1" class="small-text" value="<?php echo esc_attr( $e( 'lookback_days', '30' ) ); ?>" />
-					<p class="description"><?php esc_html_e( 'The window used by the strategy (recent sales, or how far back "new arrivals" reaches). The product list refreshes automatically, twice a day.', 'dazont-ecom' ); ?></p>
+					<p class="description"><?php esc_html_e( 'The window used by the strategy (recent sales, or how far back "new arrivals" reaches). The product list refreshes automatically, once a week.', 'dazont-ecom' ); ?></p>
 				</td>
 			</tr>
 			<tr class="dze-field-priority">
