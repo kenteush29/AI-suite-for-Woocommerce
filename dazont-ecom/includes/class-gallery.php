@@ -196,6 +196,16 @@ final class DZE_Gallery {
 			return;
 		}
 		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- read-only list filtering via GET.
+
+		// Replace WooCommerce's native category search with a plain hierarchical
+		// dropdown that shows each category's recursive product count.
+		echo '<style>.wp-admin.post-type-product select[name="product_cat"],.wp-admin.post-type-product select[name="product_cat"]+.select2-container{display:none!important;}</style>';
+		$cur_cat = isset( $_GET['dze_cat'] ) ? (int) $_GET['dze_cat'] : 0;
+		echo '<select name="dze_cat">';
+		echo '<option value="0">' . esc_html__( 'All categories', 'dazont-ecom' ) . '</option>';
+		echo $this->category_options_html( $cur_cat ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- built with esc_* internally.
+		echo '</select> ';
+
 		$orderby = isset( $_GET['orderby'] ) ? sanitize_key( wp_unslash( $_GET['orderby'] ) ) : '';
 		$order   = ( isset( $_GET['order'] ) && 'asc' === strtolower( (string) $_GET['order'] ) ) ? 'asc' : 'desc';
 		$sorts   = [
@@ -232,6 +242,42 @@ final class DZE_Gallery {
 		// phpcs:enable WordPress.Security.NonceVerification.Recommended
 	}
 
+	/**
+	 * Hierarchical <option> list for the category dropdown: indented by depth,
+	 * with each category's recursive product count (own products + every
+	 * sub-category's) in parentheses.
+	 */
+	private function category_options_html( int $current ): string {
+		$terms = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => false ] );
+		if ( is_wp_error( $terms ) || empty( $terms ) ) {
+			return '';
+		}
+		$by_id    = [];
+		$children = [];
+		foreach ( $terms as $t ) {
+			$by_id[ $t->term_id ]        = $t;
+			$children[ $t->parent ][]    = $t->term_id;
+		}
+		$rec_count = function ( int $id ) use ( &$rec_count, $children, $by_id ): int {
+			$c = (int) ( $by_id[ $id ]->count ?? 0 );
+			foreach ( $children[ $id ] ?? [] as $cid ) {
+				$c += $rec_count( $cid );
+			}
+			return $c;
+		};
+		$build = function ( int $parent, int $depth ) use ( &$build, $children, $by_id, $rec_count, $current ): string {
+			$out = '';
+			foreach ( $children[ $parent ] ?? [] as $cid ) {
+				$t     = $by_id[ $cid ];
+				$label = str_repeat( '— ', $depth ) . $t->name . ' (' . $rec_count( $cid ) . ')';
+				$out  .= '<option value="' . esc_attr( $cid ) . '" ' . selected( $current, $cid, false ) . '>' . esc_html( $label ) . '</option>';
+				$out  .= $build( $cid, $depth + 1 );
+			}
+			return $out;
+		};
+		return $build( 0, 0 );
+	}
+
 	/** Applies the sort + attribute filters to the products list query. */
 	public function apply_filters( $query ): void {
 		if ( ! is_admin() || ! $query instanceof WP_Query || ! $query->is_main_query() ) {
@@ -249,8 +295,18 @@ final class DZE_Gallery {
 				case 'date_desc':  $query->set( 'orderby', 'date' );  $query->set( 'order', 'DESC' ); break;
 			}
 		}
+
+		$tax_query = (array) $query->get( 'tax_query' );
+		$before    = count( $tax_query );
+		if ( ! empty( $_GET['dze_cat'] ) ) {
+			$tax_query[] = [
+				'taxonomy'         => 'product_cat',
+				'field'            => 'term_id',
+				'terms'            => (int) $_GET['dze_cat'],
+				'include_children' => true, // selecting a parent shows all its sub-categories.
+			];
+		}
 		if ( ! empty( $_GET['dze_attr'] ) && is_array( $_GET['dze_attr'] ) ) {
-			$tax_query = (array) $query->get( 'tax_query' );
 			foreach ( wp_unslash( $_GET['dze_attr'] ) as $tax => $slug ) {
 				$tax  = sanitize_key( $tax );
 				$slug = sanitize_text_field( $slug );
@@ -258,9 +314,9 @@ final class DZE_Gallery {
 					$tax_query[] = [ 'taxonomy' => $tax, 'field' => 'slug', 'terms' => $slug ];
 				}
 			}
-			if ( count( $tax_query ) ) {
-				$query->set( 'tax_query', $tax_query );
-			}
+		}
+		if ( count( $tax_query ) > $before ) {
+			$query->set( 'tax_query', $tax_query );
 		}
 		// phpcs:enable WordPress.Security.NonceVerification.Recommended
 	}
