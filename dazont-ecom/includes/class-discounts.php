@@ -1024,15 +1024,17 @@ final class DZE_Discounts {
 	}
 
 	// =========================================================================
-	// Sale-price materialisation
+	// Sale-price materialisation (AUTOMATIC product discounts only)
 	//
 	// The runtime filters above keep the storefront correct instantly. This
-	// additionally writes WooCommerce's native _sale_price (+ scheduled-sale
-	// dates for events) into the product data, so data-level consumers — feed
-	// plugins, the weekly WPML/GMC export — see the promotion too. Products we
-	// touch are flagged and their original sale price is stashed, so releasing a
-	// promo restores exactly what was there before. Runs in the background,
-	// chunked, on every rule change and once a week.
+	// additionally writes WooCommerce's native _sale_price into the product data
+	// for AUTOMATIC discounts (slow movers, best-sellers, …) so data-level
+	// consumers — feed plugins, the weekly WPML/GMC export — see them. Marketing
+	// events are intentionally excluded: they go to Google via the promotion API
+	// over the regular feed price, so materialising them would double-count.
+	// Products we touch are flagged and their original sale price/schedule is
+	// stashed, so releasing a discount restores exactly what was there before.
+	// Runs in the background, chunked, on every discount change and once a week.
 	// =========================================================================
 
 	/** Unschedules the weekly sync (called on plugin deactivation). */
@@ -1079,9 +1081,8 @@ final class DZE_Discounts {
 			$desired = $this->materialize_desired();
 			$managed = $this->managed_sale_ids();
 			$set     = [];
-			foreach ( $desired as $pid => $d ) {
-				$d['id'] = $pid;
-				$set[]   = $d;
+			foreach ( $desired as $pid => $pct ) {
+				$set[] = [ 'id' => (int) $pid, 'pct' => (float) $pct ];
 			}
 			$queue = [
 				'set'     => $set,
@@ -1108,72 +1109,48 @@ final class DZE_Discounts {
 	}
 
 	/**
-	 * Desired sale state: [ product_id => ['pct','rule'] ], strongest % wins.
-	 * Only CURRENTLY-active promos are materialised (the runtime filters already
-	 * drive live on-site display); a promo that hasn't started or has ended is
-	 * simply not written, and gets released on the next reconcile.
+	 * Desired sale state: [ product_id => pct ] for AUTOMATIC product discounts
+	 * only (slow movers, best-sellers, new arrivals, trending). Marketing events
+	 * are deliberately NOT materialised: they reach Google via the promotion API
+	 * over the regular feed price, so writing their sale price into the feed too
+	 * would double-count. Their live on-site display is handled by the runtime
+	 * price filters.
 	 */
 	private function materialize_desired(): array {
 		$map = [];
-		$now = time();
-		foreach ( self::get_rules() as $id => $rule ) {
-			if ( ( $rule['type'] ?? '' ) !== 'sale' || empty( $rule['enabled'] ) ) {
-				continue;
-			}
-			$pct = (float) ( $rule['percent'] ?? 0 );
-			if ( $pct <= 0 ) {
-				continue;
-			}
-			[ $from, $to ] = $this->window_ts( $rule );
-			if ( ( PHP_INT_MIN !== $from && $now < $from ) || ( PHP_INT_MAX !== $to && $now > $to ) ) {
-				continue; // not active right now.
-			}
-			foreach ( $this->scope_product_ids( $rule ) as $pid ) {
-				$this->merge_desired( $map, (int) $pid, $pct, (string) $id );
-			}
-		}
-		// Automatic product discounts (evergreen).
 		foreach ( $this->autobest_map() as $pid => $pct ) {
-			$this->merge_desired( $map, (int) $pid, (float) $pct, 'auto' );
+			$pid = (int) $pid;
+			$pct = (float) $pct;
+			if ( $pid <= 0 || $pct <= 0 ) {
+				continue;
+			}
+			// The selection is in the default language; write the sale to every
+			// translation too, so each WPML language feed carries it.
+			foreach ( $this->translations_of( $pid ) as $tid ) {
+				if ( ! isset( $map[ $tid ] ) || $pct > $map[ $tid ] ) {
+					$map[ $tid ] = $pct;
+				}
+			}
 		}
 		return $map;
 	}
 
-	private function merge_desired( array &$map, int $pid, float $pct, string $rule ): void {
-		if ( $pid <= 0 || $pct <= 0 ) {
-			return;
+	/** A product's translation IDs (WPML), or just itself when WPML is inactive. */
+	private function translations_of( int $pid ): array {
+		if ( ! DZE_Wpml::is_active() ) {
+			return [ $pid ];
 		}
-		if ( ! isset( $map[ $pid ] ) || $pct > $map[ $pid ]['pct'] ) {
-			$map[ $pid ] = [ 'pct' => $pct, 'rule' => $rule ];
+		$trid = apply_filters( 'wpml_element_trid', null, $pid, 'post_product' );
+		if ( ! $trid ) {
+			return [ $pid ];
 		}
-	}
-
-	/** Published product IDs in a rule's scope (all languages), minus exclusions. */
-	private function scope_product_ids( array $rule ): array {
-		global $wpdb;
-		$scope = $rule['scope'] ?? 'all';
-		if ( 'products' === $scope ) {
-			$ids = array_map( 'intval', (array) ( $rule['product_ids'] ?? [] ) );
-		} elseif ( 'categories' === $scope ) {
-			$cats = array_map( 'intval', (array) ( $rule['category_ids'] ?? [] ) );
-			if ( empty( $cats ) ) {
-				return [];
+		$out = [];
+		foreach ( (array) apply_filters( 'wpml_get_element_translations', null, $trid, 'post_product' ) as $t ) {
+			if ( ! empty( $t->element_id ) ) {
+				$out[] = (int) $t->element_id;
 			}
-			$in  = implode( ',', $cats );
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $in is a list of ints.
-			$ids = $wpdb->get_col( "SELECT DISTINCT tr.object_id FROM {$wpdb->term_relationships} tr
-				INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
-				INNER JOIN {$wpdb->posts} p ON p.ID = tr.object_id AND p.post_type = 'product' AND p.post_status = 'publish'
-				WHERE tt.taxonomy = 'product_cat' AND tt.term_id IN ({$in})" );
-			$ids = array_map( 'intval', (array) $ids );
-		} else {
-			$ids = array_map( 'intval', (array) $wpdb->get_col( "SELECT ID FROM {$wpdb->posts} WHERE post_type = 'product' AND post_status = 'publish'" ) );
 		}
-		$ex = self::get_exclusions();
-		if ( empty( $ex['products'] ) && empty( $ex['categories'] ) ) {
-			return array_values( $ids ); // nothing to exclude — skip the per-product check.
-		}
-		return array_values( array_filter( $ids, fn( $id ) => ! $this->is_excluded( (int) $id ) ) );
+		return $out ?: [ $pid ];
 	}
 
 	/** Parent product IDs we currently manage a sale on. */
@@ -1199,7 +1176,7 @@ final class DZE_Discounts {
 		foreach ( $rows as $cid ) {
 			$this->set_row_sale( (int) $cid, $pct );
 		}
-		update_post_meta( $pid, self::META_RULE, (string) ( $item['rule'] ?? '1' ) );
+		update_post_meta( $pid, self::META_RULE, 'auto' );
 		if ( function_exists( 'wc_delete_product_transients' ) ) {
 			wc_delete_product_transients( $pid );
 		}

@@ -199,9 +199,9 @@ $gmc_on     = $gmc && $gmc->is_configured();
 		<div class="notice notice-success is-dismissible"><p><?php esc_html_e( 'Sale-price sync queued — it runs in the background.', 'dazont-ecom' ); ?></p></div>
 	<?php endif; ?>
 	<hr style="margin:24px 0;" />
-	<h2><?php esc_html_e( 'Sale prices in product data (for feeds)', 'dazont-ecom' ); ?></h2>
+	<h2><?php esc_html_e( 'Automatic discounts in product data (for feeds)', 'dazont-ecom' ); ?></h2>
 	<p class="description" style="max-width:900px;">
-		<?php esc_html_e( 'Sale and automatic discounts are also written into each product’s native WooCommerce sale price, so weekly feeds/exports (e.g. your GMC WPML export) pick them up, and removed again when a promo ends. This runs automatically whenever you change a promo, and once a week. Use the button to force it now.', 'dazont-ecom' ); ?>
+		<?php esc_html_e( 'Automatic product discounts (slow movers, best-sellers, new arrivals, trending) are written into each product’s native WooCommerce sale price, so weekly feeds/exports (e.g. your GMC WPML export) pick them up — and removed again when the product leaves the selection. Marketing events are NOT written here: they reach Google through the promotion API over your regular feed price, so writing them too would double-count. This reconciles automatically when a discount changes, and once a week. Use the button to force it now.', 'dazont-ecom' ); ?>
 	</p>
 	<form method="post" action="<?php echo esc_url( $admin_post ); ?>">
 		<input type="hidden" name="action" value="dze_sale_resync" />
