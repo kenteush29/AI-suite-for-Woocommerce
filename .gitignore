@@ -1,0 +1,7 @@
+# Build artifacts (installable plugin zips)
+dazont-ecom-*.zip
+*.zip
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
