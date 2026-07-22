@@ -6,6 +6,60 @@
 .dze-x-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 10px; }
 .dze-x-title { font-size: 15px; }
 
+/* Mode tabs */
+.dze-x-tabs { display: inline-flex; gap: 4px; background: #f0f0f1; border-radius: 8px; padding: 3px; }
+.dze-x-tab {
+	border: 0; background: transparent; cursor: pointer; padding: 6px 14px; border-radius: 6px;
+	font-size: 13px; font-weight: 600; color: #50575e;
+}
+.dze-x-tab:hover { color: #1d2327; }
+.dze-x-tab.is-active { background: #fff; color: #1d2327; box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+
+/* ===================== Category performance (director screen) ============ */
+.dze-x-perf {
+	display: flex; flex-direction: column; height: calc(100vh - 150px);
+	border: 1px solid #dcdcde; border-radius: 10px; overflow: hidden; background: #fff;
+}
+.dze-x-perf-toolbar {
+	display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px;
+	padding: 12px 16px; border-bottom: 1px solid #eee; background: #f6f7f7;
+}
+.dze-x-perf-search { min-width: 220px; }
+.dze-x-axes { display: inline-flex; gap: 6px; }
+.dze-x-axis.is-active { background: #2271b1; border-color: #2271b1; color: #fff; }
+.dze-x-perf-ctl { font-size: 12px; color: #646970; display: inline-flex; align-items: center; gap: 6px; }
+
+.dze-x-perf-tablewrap { flex: 1; overflow: auto; }
+.dze-x-perf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dze-x-perf-table thead th {
+	position: sticky; top: 0; z-index: 1; background: #fff; text-align: left;
+	padding: 10px 14px; border-bottom: 2px solid #e2e2e2; white-space: nowrap;
+}
+.dze-x-perf-table td { padding: 9px 14px; border-bottom: 1px solid #f0f0f1; vertical-align: middle; }
+.dze-x-perf-table tbody tr:hover { background: #f6f9fc; }
+.dze-x-num { text-align: right; font-variant-numeric: tabular-nums; }
+.dze-x-sortable { cursor: pointer; user-select: none; }
+.dze-x-sortable:hover { color: #2271b1; }
+.dze-x-sortable::after { content: ''; display: inline-block; width: 0; height: 0; margin-left: 6px; opacity: .4; }
+.dze-x-sortable.is-asc::after  { border-left: 4px solid transparent; border-right: 4px solid transparent; border-bottom: 5px solid currentColor; opacity: 1; }
+.dze-x-sortable.is-desc::after { border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 5px solid currentColor; opacity: 1; }
+.dze-x-path { color: #787c82; }
+.dze-x-leaf { font-weight: 600; color: #1d2327; }
+.dze-x-never { color: #b32d2e; }
+.dze-x-c-act { white-space: nowrap; text-align: right; }
+.dze-x-c-act .button { margin-left: 4px; }
+.dze-x-perf-empty { padding: 24px 16px; color: #646970; }
+
+/* Collapsible filters in Browse */
+.dze-x-filters { margin-bottom: 12px; border: 1px solid #e2e2e2; border-radius: 8px; background: #fff; }
+.dze-x-filters > summary {
+	cursor: pointer; padding: 8px 12px; font-weight: 600; font-size: 13px; color: #1d2327; list-style: none;
+}
+.dze-x-filters > summary::-webkit-details-marker { display: none; }
+.dze-x-filters > summary::before { content: '▸'; margin-right: 8px; color: #787c82; }
+.dze-x-filters[open] > summary::before { content: '▾'; }
+.dze-x-filters-body { padding: 0 12px 12px; }
+
 .dze-x-app {
 	display: flex; gap: 0; height: calc(100vh - 150px);
 	border: 1px solid #dcdcde; border-radius: 10px; overflow: hidden; background: #fff;
@@ -91,7 +145,8 @@ body.dze-x-focus .notice { display: none !important; }
 body.dze-x-focus #wpcontent, body.dze-x-focus #wpbody-content { margin-left: 0 !important; padding-left: 0 !important; padding-top: 0 !important; }
 body.dze-x-focus html.wp-toolbar { padding-top: 0 !important; }
 body.dze-x-focus .dze-x-wrap { margin: 0; }
-body.dze-x-focus .dze-x-app { height: 100vh; border-radius: 0; border: 0; }
+body.dze-x-focus .dze-x-app,
+body.dze-x-focus .dze-x-perf { height: 100vh; border-radius: 0; border: 0; }
 
 /* Focus mode: float the Focus/Exit button so it is always visible, whatever
    the sidebar scroll position. */
