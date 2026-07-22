@@ -19,10 +19,9 @@ $hints = [
 	'custom'    => __( 'Left blank on purpose: the Custom situation always uses the text you type on the product page.', 'dazont-ecom' ),
 ];
 ?>
-<div class="wrap">
-	<h1><?php esc_html_e( 'AI Product Images', 'dazont-ecom' ); ?></h1>
+<div class="dze-img-settings">
 	<p class="description" style="max-width:760px;">
-		<?php esc_html_e( 'Generate new product-page images with Google Gemini 2.5 Flash Image, one product at a time, directly on the product edit screen (in the "AI Product Images" box). This page only holds the API key, model and the editable prompt templates.', 'dazont-ecom' ); ?>
+		<?php esc_html_e( 'Generate new product-page images with Google Gemini 2.5 Flash Image, one product at a time, directly on the product edit screen (in the "AI Product Images" box). This section holds the API key, model and the editable prompt templates.', 'dazont-ecom' ); ?>
 	</p>
 
 	<form method="post" action="options.php">

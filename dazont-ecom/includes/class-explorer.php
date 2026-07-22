@@ -91,8 +91,11 @@ final class DZE_Explorer {
 				'never'      => __( 'never', 'dazont-ecom' ),
 				'justNow'    => __( 'just now', 'dazont-ecom' ),
 				'sold'       => __( 'sold', 'dazont-ecom' ),
+				'products'   => __( 'products', 'dazont-ecom' ),
 				'noCats'     => __( 'No categories match.', 'dazont-ecom' ),
 				'aiThinking' => __( 'Analysing this category…', 'dazont-ecom' ),
+				'sortBy'     => __( 'Sort by', 'dazont-ecom' ),
+				'byId'       => __( 'ID', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -339,6 +342,7 @@ final class DZE_Explorer {
 		$var_count = $is_var ? count( $product->get_children() ) : 0;
 		$edit      = get_edit_post_link( $product->get_id() );
 		$view      = get_permalink( $product->get_id() );
+		$sales     = class_exists( 'DZE_Restock' ) ? DZE_Restock::get_line_sales( $product->get_id() ) : 0;
 
 		ob_start();
 		?>
@@ -351,6 +355,10 @@ final class DZE_Explorer {
 				<span><?php echo wp_kses_post( $product->get_price_html() ); ?></span>
 				<span class="dze-x-id">#<?php echo (int) $product->get_id(); ?></span>
 			</div>
+			<div class="dze-x-sales"><?php
+				/* translators: %s: number of units sold */
+				echo esc_html( sprintf( _n( '%s sold', '%s sold', $sales, 'dazont-ecom' ), number_format_i18n( $sales ) ) );
+			?></div>
 			<div class="dze-x-date"><?php
 				/* translators: %s: product publication date */
 				printf( esc_html__( 'Published: %s', 'dazont-ecom' ), esc_html( get_the_date( '', $product->get_id() ) ) );
@@ -384,21 +392,34 @@ final class DZE_Explorer {
 		if ( ! $product instanceof \WC_Product || ! $product->is_type( 'variable' ) ) {
 			wp_send_json_error( [ 'message' => __( 'Not a variable product.', 'dazont-ecom' ) ] );
 		}
-		$out = [];
+		$out   = [];
+		$attrs = []; // attribute label => true, to expose the available sort keys.
 		foreach ( $product->get_children() as $variation_id ) {
 			$variation = wc_get_product( $variation_id );
 			if ( ! $variation instanceof \WC_Product ) {
 				continue;
 			}
 			$img_id = (int) $variation->get_image_id() ?: (int) get_post_thumbnail_id( $product_id );
-			$out[]  = [
+			$vattrs = [];
+			foreach ( $variation->get_attributes() as $tax => $value ) {
+				if ( '' === $value ) {
+					continue;
+				}
+				$label = wc_attribute_label( $tax, $product );
+				$term  = taxonomy_exists( $tax ) ? get_term_by( 'slug', $value, $tax ) : null;
+				$vattrs[ $label ] = $term && ! is_wp_error( $term ) ? $term->name : (string) $value;
+				$attrs[ $label ]  = true;
+			}
+			$out[] = [
+				'id'    => (int) $variation_id,
 				'title' => wp_strip_all_tags( wc_get_formatted_variation( $variation, true, true, false ) ),
 				'thumb' => $img_id ? ( wp_get_attachment_image_url( $img_id, 'woocommerce_thumbnail' ) ?: wp_get_attachment_image_url( $img_id, 'thumbnail' ) ) : '',
 				'full'  => $img_id ? wp_get_attachment_image_url( $img_id, 'full' ) : '',
+				'attrs' => $vattrs,
 			];
 		}
-		usort( $out, static fn( $a, $b ) => strcasecmp( $a['title'], $b['title'] ) );
-		wp_send_json_success( [ 'images' => $out ] );
+		usort( $out, static fn( $a, $b ) => $a['id'] <=> $b['id'] );
+		wp_send_json_success( [ 'images' => $out, 'attributes' => array_keys( $attrs ) ] );
 	}
 
 	// =========================================================================

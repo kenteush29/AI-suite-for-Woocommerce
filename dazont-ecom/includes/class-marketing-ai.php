@@ -300,19 +300,33 @@ final class DZE_Marketing_Ai {
 	public function register_menu(): void {
 		add_submenu_page(
 			DZE_Restock::MENU_SLUG,
-			__( 'AI Assistant', 'dazont-ecom' ),
-			__( 'AI Assistant', 'dazont-ecom' ),
+			__( 'AI Settings', 'dazont-ecom' ),
+			__( 'AI Settings', 'dazont-ecom' ),
 			'manage_woocommerce',
 			self::MENU_SLUG,
 			[ $this, 'render_settings_page' ]
 		);
 	}
 
-	/** Full-page wrapper for the AI Assistant configuration. */
+	/**
+	 * Central "AI Settings" page. Every AI-powered feature of the plugin has its
+	 * parameters referenced here: the Marketing Assistant + Category AI insights
+	 * (Anthropic) and the Product Images generator (Google Gemini).
+	 */
 	public function render_settings_page(): void {
 		echo '<div class="wrap dze-wrap">';
-		echo '<h1>' . esc_html__( 'AI Marketing Assistant', 'dazont-ecom' ) . '</h1>';
+		echo '<h1>' . esc_html__( 'AI Settings', 'dazont-ecom' ) . '</h1>';
+		echo '<p class="description" style="max-width:820px;">' . esc_html__( 'All AI-powered features of Dazont Ecom are configured here. The Anthropic key below powers the Marketing Assistant and the Category "AI insights" in the Product Explorer; the Google Gemini section powers the AI Product Images generator on the product edit screen. Each key is only ever sent to its own provider.', 'dazont-ecom' ) . '</p>';
+
+		echo '<h2 style="margin-top:24px;">' . esc_html__( 'Marketing Assistant & Category insights (Anthropic)', 'dazont-ecom' ) . '</h2>';
 		$this->render_settings_section();
+
+		// Google Gemini (AI Product Images) parameters live on the same page.
+		if ( class_exists( 'DZE_Product_Images' ) ) {
+			echo '<hr style="margin:28px 0;" />';
+			echo '<h2>' . esc_html__( 'AI Product Images (Google Gemini)', 'dazont-ecom' ) . '</h2>';
+			DZE_Product_Images::instance()->render_settings_section();
+		}
 		echo '</div>';
 	}
 

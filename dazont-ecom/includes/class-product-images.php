@@ -50,7 +50,7 @@ final class DZE_Product_Images {
 		if ( ! is_admin() ) {
 			return;
 		}
-		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
+		// Settings are embedded on the central "AI Settings" page (no own submenu).
 		add_action( 'admin_init',            [ $this, 'register_settings' ] );
 		add_action( 'add_meta_boxes',        [ $this, 'add_meta_box' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
@@ -91,17 +91,6 @@ final class DZE_Product_Images {
 		return $custom !== '' ? $custom : ( self::DEFAULT_PROMPTS[ $situation ] ?? '' );
 	}
 
-	public function register_menu(): void {
-		add_submenu_page(
-			DZE_Restock::MENU_SLUG,
-			__( 'Product Images (AI)', 'dazont-ecom' ),
-			__( 'Product Images (AI)', 'dazont-ecom' ),
-			'manage_woocommerce',
-			self::MENU_SLUG,
-			[ $this, 'render_settings_page' ]
-		);
-	}
-
 	public function register_settings(): void {
 		register_setting( 'dze_img_options', self::OPT_SETTINGS, [ 'sanitize_callback' => [ $this, 'sanitize_settings' ], 'autoload' => false ] );
 	}
@@ -125,9 +114,10 @@ final class DZE_Product_Images {
 		];
 	}
 
-	public function render_settings_page(): void {
+	/** Renders the Gemini settings form. Embedded on the central AI Settings page. */
+	public function render_settings_section(): void {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
-			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
+			return;
 		}
 		$settings   = self::get_settings();
 		$key_locked = defined( 'DZE_GEMINI_API_KEY' );
@@ -144,17 +134,14 @@ final class DZE_Product_Images {
 
 	public function render_meta_box( $post ): void {
 		$has_key    = self::api_key() !== '';
-		$settings_url = add_query_arg( [ 'page' => self::MENU_SLUG ], admin_url( 'admin.php' ) );
+		$settings_slug = class_exists( 'DZE_Marketing_Ai' ) ? DZE_Marketing_Ai::MENU_SLUG : self::MENU_SLUG;
+		$settings_url  = add_query_arg( [ 'page' => $settings_slug ], admin_url( 'admin.php' ) );
 		require DZE_DIR . 'admin/views/product-images-metabox.php';
 	}
 
 	public function enqueue_assets( string $hook ): void {
 		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
 		$on_product = $screen && 'product' === $screen->id;
-		$on_settings = strpos( $hook, self::MENU_SLUG ) !== false;
-		if ( ! $on_product && ! $on_settings ) {
-			return;
-		}
 		if ( $on_product ) {
 			wp_enqueue_media();
 			wp_enqueue_script( 'dze-product-images', DZE_URL . 'admin/js/product-images.js', [ 'jquery' ], DZE_VERSION, true );
@@ -183,7 +170,7 @@ final class DZE_Product_Images {
 			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
 		}
 		if ( self::api_key() === '' ) {
-			wp_send_json_error( [ 'message' => __( 'Add your Google Gemini API key under Product Images (AI) settings first.', 'dazont-ecom' ) ] );
+			wp_send_json_error( [ 'message' => __( 'Add your Google Gemini API key under AI Settings first.', 'dazont-ecom' ) ] );
 		}
 		$product_id = isset( $_POST['product'] ) ? absint( $_POST['product'] ) : 0;
 		$product    = $product_id ? wc_get_product( $product_id ) : null;
