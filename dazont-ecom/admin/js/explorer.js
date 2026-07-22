@@ -167,6 +167,7 @@
 	function openOverlay($r) {
 		state.cat  = parseInt($r.attr('data-cat'), 10) || 0;
 		state.path = $r.attr('data-path') || '';
+		$('#dze-x-overlay').attr('data-cat', state.cat); // read by keywords.js
 		$('#dze-x-ov-title').text(state.path);
 		var thumb = $r.attr('data-thumb') || '';
 		$('#dze-x-ov-thumb').html(thumb ? ('<img src="' + thumb + '" alt="" />') : '');

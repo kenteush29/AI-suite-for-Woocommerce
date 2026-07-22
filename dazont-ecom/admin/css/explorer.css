@@ -115,6 +115,41 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-more { text-align: center; padding: 14px; }
 .dze-x-status { margin-left: 8px; color: #666; font-size: 13px; }
 
+/* ===================== Keyword Workbench ================================ */
+.dze-x-row-kwbadge { display: block; font-size: 11px; color: #7c5cff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dze-x-kwpanel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.dze-x-kw-bar {
+	display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
+	padding: 10px 18px; border-bottom: 1px solid #e2e2e2; background: #fbfbfc;
+}
+.dze-x-kw-metrics { font-size: 12px; color: #50575e; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.dze-x-kw-sep { margin: 0 6px; color: #c3c4c7; }
+.dze-x-kw-dim { color: #8c8f94; }
+.dze-x-kw-gaps { color: #b32d2e; font-weight: 600; }
+.dze-x-kw-tools { display: inline-flex; gap: 6px; align-items: center; }
+.dze-x-kw-tools input[type="search"] { width: 180px; }
+.dze-x-kw-tools input[type="number"] { width: 74px; }
+.dze-x-kw-actions { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; }
+.dze-x-kw-table { flex: 1; overflow: auto; }
+.dze-x-kw-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dze-x-kw-tbl thead th {
+	position: sticky; top: 0; z-index: 1; background: #fff; text-align: left;
+	padding: 8px 12px; border-bottom: 2px solid #e2e2e2; white-space: nowrap; font-size: 11px;
+	text-transform: uppercase; letter-spacing: .04em; color: #646970;
+}
+.dze-x-kw-tbl td { padding: 6px 12px; border-bottom: 1px solid #f0f0f1; }
+.dze-x-kw-tbl tbody tr:hover { background: #f6f9fc; }
+.dze-x-kw-srt { cursor: pointer; user-select: none; }
+.dze-x-kw-srt:hover { color: #2271b1; }
+.dze-x-kw-r { text-align: right; font-variant-numeric: tabular-nums; }
+.dze-x-kw-chk { width: 28px; }
+.dze-x-kw-row.st-covered td { background: rgba(10, 112, 64, .06); }
+.dze-x-kw-row.st-gap td { background: rgba(179, 45, 46, .06); }
+.dze-x-kw-row.st-ignored td { opacity: .5; }
+.dze-x-kw-st { max-width: 120px; }
+.dze-x-kw-map th { text-align: left; padding: 4px 14px 4px 0; font-size: 13px; }
+.dze-x-kw-map td { padding: 4px 0; }
+
 /* ===================== Lightbox + variations modal ====================== */
 .dze-lightbox, .dze-gal-modal {
 	position: fixed; inset: 0; z-index: 100010; background: rgba(0,0,0,.8);

@@ -74,6 +74,49 @@ final class DZE_Explorer {
 
 		wp_enqueue_style( 'dze-explorer', DZE_URL . 'admin/css/explorer.css', [], DZE_VERSION );
 		wp_enqueue_script( 'dze-explorer', DZE_URL . 'admin/js/explorer.js', [ 'jquery' ], DZE_VERSION, true );
+		wp_enqueue_script( 'dze-keywords', DZE_URL . 'admin/js/keywords.js', [ 'jquery', 'dze-explorer' ], DZE_VERSION, true );
+		wp_localize_script( 'dze-keywords', 'dzeKw', [
+			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+			'nonce'   => DZE_Keywords::nonce(),
+			'i18n'    => [
+				'keywords'   => __( 'Keywords', 'dazont-ecom' ),
+				'products'   => __( 'Products', 'dazont-ecom' ),
+				'loading'    => __( 'Loading…', 'dazont-ecom' ),
+				'error'      => __( 'Something went wrong.', 'dazont-ecom' ),
+				'empty'      => __( 'No keywords yet. Import a SEMrush CSV export for this category.', 'dazont-ecom' ),
+				'noMatch'    => __( 'No keywords match these filters.', 'dazont-ecom' ),
+				'imported'   => __( 'keywords imported.', 'dazont-ecom' ),
+				'confirmImp' => __( 'Import will REPLACE the current keyword set of this category. Continue?', 'dazont-ecom' ),
+				'confirmDel' => __( 'Delete the whole keyword set of this category?', 'dazont-ecom' ),
+				'pickKw'     => __( 'Pick which column holds the keyword.', 'dazont-ecom' ),
+				'mapTitle'   => __( 'Confirm column mapping', 'dazont-ecom' ),
+				'mapHelp'    => __( 'Check that each field points to the right CSV column, then import.', 'dazont-ecom' ),
+				'import'     => __( 'Import (replaces existing)', 'dazont-ecom' ),
+				'rowsFound'  => __( 'rows found', 'dazont-ecom' ),
+				'ignore'     => __( '— ignore —', 'dazont-ecom' ),
+				'fKeyword'   => __( 'Keyword', 'dazont-ecom' ),
+				'fVolume'    => __( 'Volume', 'dazont-ecom' ),
+				'fKd'        => __( 'KD', 'dazont-ecom' ),
+				'fCpc'       => __( 'CPC', 'dazont-ecom' ),
+				'fIntent'    => __( 'Intent', 'dazont-ecom' ),
+				'fStatus'    => __( 'Status', 'dazont-ecom' ),
+				'stNone'     => __( '— none —', 'dazont-ecom' ),
+				'stCovered'  => __( 'Covered', 'dazont-ecom' ),
+				'stGap'      => __( 'Gap', 'dazont-ecom' ),
+				'stUncertain'=> __( 'Uncertain', 'dazont-ecom' ),
+				'stIgnored'  => __( 'Ignored', 'dazont-ecom' ),
+				'anyStatus'  => __( 'Any status', 'dazont-ecom' ),
+				'anyIntent'  => __( 'Any intent', 'dazont-ecom' ),
+				'bulk'       => __( 'Set selected to…', 'dazont-ecom' ),
+				'apply'      => __( 'Apply', 'dazont-ecom' ),
+				'mVolume'    => __( 'Volume', 'dazont-ecom' ),
+				'mWcpc'      => __( 'Weighted CPC', 'dazont-ecom' ),
+				'mAvgKd'     => __( 'Avg KD', 'dazont-ecom' ),
+				'mCompletion'=> __( 'Completion', 'dazont-ecom' ),
+				'mGaps'      => __( 'gaps', 'dazont-ecom' ),
+				'mIgnored'   => __( 'ignored', 'dazont-ecom' ),
+			],
+		] );
 		wp_localize_script( 'dze-explorer', 'dzeExplorer', [
 			'ajaxUrl' => admin_url( 'admin-ajax.php' ),
 			'nonce'   => wp_create_nonce( self::NONCE ),
@@ -134,6 +177,7 @@ final class DZE_Explorer {
 			$parent[ $t->term_id ]    = (int) $t->parent;
 		}
 		$sales = $this->category_sales( $parent );
+		$kwc   = class_exists( 'DZE_Keywords' ) ? DZE_Keywords::counts_by_term() : [];
 
 		$rec_count = function ( int $id ) use ( &$rec_count, $children, $by_id ): int {
 			$c = (int) ( $by_id[ $id ]->count ?? 0 );
@@ -142,7 +186,7 @@ final class DZE_Explorer {
 			}
 			return $c;
 		};
-		$build = function ( int $parent_id ) use ( &$build, $children, $by_id, $rec_count, $sales ): array {
+		$build = function ( int $parent_id ) use ( &$build, $children, $by_id, $rec_count, $sales, $kwc ): array {
 			$out = [];
 			foreach ( $children[ $parent_id ] ?? [] as $cid ) {
 				$t      = $by_id[ $cid ];
@@ -157,6 +201,8 @@ final class DZE_Explorer {
 					'sales_qty_direct'  => (float) ( $sales[ $cid ]['qty_direct'] ?? 0 ),
 					'sales_rev_direct'  => (float) ( $sales[ $cid ]['rev_direct'] ?? 0 ),
 					'researched'        => (int) get_term_meta( $cid, self::META_RESEARCHED, true ),
+					'kw'                => (int) ( $kwc[ $cid ]['kw'] ?? 0 ),
+					'gaps'              => (int) ( $kwc[ $cid ]['gaps'] ?? 0 ),
 					'image'             => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
 					'children'          => $build( $cid ),
 				];

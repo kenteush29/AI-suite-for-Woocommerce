@@ -110,6 +110,12 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 							<?php if ( $parents ) : ?>
 								<span class="dze-x-row-path"><?php echo esc_html( implode( ' › ', $parents ) ); ?></span>
 							<?php endif; ?>
+							<span class="dze-x-row-kwbadge"<?php echo empty( $n['kw'] ) ? ' style="display:none;"' : ''; ?>><?php
+								if ( ! empty( $n['kw'] ) ) {
+									/* translators: 1: number of keywords, 2: number of gaps */
+									echo esc_html( sprintf( __( '%1$s kw · %2$s gaps', 'dazont-ecom' ), number_format_i18n( (int) $n['kw'] ), number_format_i18n( (int) $n['gaps'] ) ) );
+								}
+							?></span>
 						</span>
 					</span>
 					<span class="dze-x-num dze-x-row-count"></span>
@@ -132,11 +138,36 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 			<span class="dze-x-ov-title" id="dze-x-ov-title"></span>
 			<span id="dze-x-count" class="dze-x-count"></span>
 			<span class="dze-x-ov-actions">
+				<button type="button" id="dze-x-kw-toggle" class="button">🔑 <?php esc_html_e( 'Keywords', 'dazont-ecom' ); ?></button>
 				<button type="button" id="dze-x-ov-mark" class="button"><?php esc_html_e( 'Mark searched today', 'dazont-ecom' ); ?></button>
 				<button type="button" id="dze-x-ai" class="button button-primary"><?php esc_html_e( '✨ Get AI insights', 'dazont-ecom' ); ?></button>
 			</span>
 		</div>
 		<div id="dze-x-ai-panel" class="dze-x-ai-panel" style="display:none;"></div>
+
+		<!-- Keyword Workbench (SEMrush set of the open category) -->
+		<div id="dze-x-kw" class="dze-x-kwpanel" style="display:none;">
+			<div class="dze-x-kw-bar">
+				<span id="dze-x-kw-metrics" class="dze-x-kw-metrics"></span>
+				<span class="dze-x-kw-tools">
+					<input type="search" id="dze-x-kw-q" placeholder="<?php esc_attr_e( 'Filter keywords…', 'dazont-ecom' ); ?>" />
+					<input type="number" id="dze-x-kw-vmin" min="0" placeholder="<?php esc_attr_e( 'Vol ≥', 'dazont-ecom' ); ?>" />
+					<input type="number" id="dze-x-kw-kdmax" min="0" max="100" placeholder="<?php esc_attr_e( 'KD ≤', 'dazont-ecom' ); ?>" />
+					<select id="dze-x-kw-status"></select>
+					<select id="dze-x-kw-intent"></select>
+				</span>
+				<span class="dze-x-kw-actions">
+					<select id="dze-x-kw-bulk"></select>
+					<button type="button" id="dze-x-kw-apply" class="button"><?php esc_html_e( 'Apply', 'dazont-ecom' ); ?></button>
+					<button type="button" id="dze-x-kw-import" class="button button-primary"><?php esc_html_e( 'Import CSV', 'dazont-ecom' ); ?></button>
+					<button type="button" id="dze-x-kw-export" class="button"><?php esc_html_e( 'Export', 'dazont-ecom' ); ?></button>
+					<button type="button" id="dze-x-kw-delete" class="button-link" style="color:#b32d2e;"><?php esc_html_e( 'Delete set', 'dazont-ecom' ); ?></button>
+					<input type="file" id="dze-x-kw-file" accept=".csv,text/csv,text/plain" style="display:none;" />
+				</span>
+			</div>
+			<div id="dze-x-kw-table" class="dze-x-kw-table"></div>
+		</div>
+
 		<div id="dze-x-grid" class="dze-x-grid"></div>
 		<div class="dze-x-more">
 			<button type="button" id="dze-x-load" class="button" style="display:none;"><?php esc_html_e( 'Load more', 'dazont-ecom' ); ?></button>
