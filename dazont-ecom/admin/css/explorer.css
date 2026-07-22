@@ -1,0 +1,82 @@
+/* Product Explorer */
+.dze-x-wrap { margin: 10px 20px 0 0; }
+.dze-x-app {
+	display: flex; gap: 0; height: calc(100vh - 120px);
+	border: 1px solid #dcdcde; border-radius: 10px; overflow: hidden; background: #fff;
+}
+
+/* Left sidebar */
+.dze-x-side {
+	width: 300px; flex: 0 0 300px; border-right: 1px solid #eee; padding: 14px;
+	overflow: auto; background: #f6f7f7;
+}
+.dze-x-side-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.dze-x-search { width: 100%; margin-bottom: 10px; }
+.dze-x-controls { display: flex; gap: 6px; margin-bottom: 10px; }
+.dze-x-controls select { flex: 1; max-width: 50%; }
+.dze-x-attrs { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.dze-x-attrs select { width: 100%; }
+
+.dze-x-cat-head { border-top: 1px solid #e2e2e2; padding-top: 10px; margin-top: 4px; }
+.dze-x-cats { margin: 4px 0; list-style: none; }
+.dze-x-cats .dze-x-cats { margin-left: 12px; border-left: 1px solid #e6e6e6; padding-left: 6px; }
+.dze-x-cat {
+	display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px;
+	color: #1d2327; text-decoration: none; font-size: 13px;
+}
+.dze-x-cat:hover { background: #eef1f3; }
+.dze-x-cat.is-active { background: #2271b1; color: #fff; }
+.dze-x-cat img, .dze-x-cat .dze-x-cat-noimg {
+	width: 28px; height: 28px; border-radius: 5px; object-fit: cover; background: #e2e4e7; flex: 0 0 28px;
+}
+.dze-x-cat-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dze-x-cat-count { font-size: 11px; opacity: .7; }
+.dze-x-cat-all { font-weight: 600; }
+
+/* Main grid */
+.dze-x-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.dze-x-bar {
+	display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid #eee;
+	font-size: 13px; color: #555;
+}
+.dze-x-crumb { font-weight: 600; color: #1d2327; }
+.dze-x-grid {
+	flex: 1; overflow: auto; padding: 16px;
+	display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+	align-content: start;
+}
+.dze-x-card {
+	background: #fff; border: 1px solid #e2e2e2; border-radius: 10px; padding: 10px;
+	display: flex; flex-direction: column; gap: 6px;
+}
+.dze-x-thumb { aspect-ratio: 1/1; overflow: hidden; border-radius: 8px; background: #f6f7f7; display: flex; align-items: center; justify-content: center; }
+.dze-x-img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; }
+.dze-x-name { font-weight: 600; font-size: 13px; line-height: 1.3; }
+.dze-x-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #555; }
+.dze-x-date { font-size: 11px; color: #787c82; }
+.dze-x-actions { display: flex; gap: 5px; flex-wrap: wrap; margin-top: auto; }
+.dze-x-more { text-align: center; padding: 14px; }
+.dze-x-status { margin-left: 8px; color: #666; font-size: 13px; }
+
+/* Lightbox + variations modal (shared look with the gallery) */
+.dze-lightbox, .dze-gal-modal {
+	position: fixed; inset: 0; z-index: 100000; background: rgba(0,0,0,.8);
+	display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.dze-lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 6px; }
+.dze-gal-modal__inner { background: #fff; border-radius: 10px; width: min(1100px, 94vw); max-height: 88vh; overflow: auto; padding: 18px 22px; }
+.dze-gal-vargrid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); margin-top: 10px; }
+.dze-gal-vargrid figure { margin: 0; text-align: center; }
+.dze-gal-vargrid img { width: 100%; height: auto; border-radius: 6px; cursor: zoom-in; }
+.dze-gal-vargrid figcaption { font-size: 12px; color: #555; margin-top: 6px; line-height: 1.3; word-break: break-word; }
+
+/* Focus mode: hide the WordPress chrome to use the whole screen. */
+body.dze-x-focus #adminmenumain,
+body.dze-x-focus #wpadminbar,
+body.dze-x-focus #wpfooter,
+body.dze-x-focus .update-nag,
+body.dze-x-focus .notice { display: none !important; }
+body.dze-x-focus #wpcontent, body.dze-x-focus #wpbody-content { margin-left: 0 !important; padding-left: 0 !important; padding-top: 0 !important; }
+body.dze-x-focus html.wp-toolbar { padding-top: 0 !important; }
+body.dze-x-focus .dze-x-wrap { margin: 0; }
+body.dze-x-focus .dze-x-app { height: 100vh; border-radius: 0; border: 0; }
