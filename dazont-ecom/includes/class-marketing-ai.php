@@ -212,6 +212,10 @@ final class DZE_Marketing_Ai {
 		$in       = is_array( $value ) ? $value : [];
 		$existing = self::get_settings();
 
+		// The AI Settings page saves per tab: only overwrite the fields the
+		// submitted section actually carries, keep everything else as-is.
+		$section = (string) ( $in['section'] ?? 'all' );
+
 		// Keep the stored key when the field is left blank (so it isn't wiped).
 		$key = trim( (string) ( $in['api_key'] ?? '' ) );
 		if ( $key === '' ) {
@@ -257,6 +261,23 @@ final class DZE_Marketing_Ai {
 		$events_prompt = trim( (string) ( $in['events_prompt'] ?? '' ) );
 		if ( $events_prompt === self::DEFAULT_EVENTS_PROMPT ) {
 			$events_prompt = '';
+		}
+
+		if ( 'general' === $section ) {
+			// Only the key + model live on the General tab.
+			return array_merge( $existing, [
+				'api_key' => sanitize_text_field( $key ),
+				'model'   => $model,
+			] );
+		}
+		if ( 'events' === $section ) {
+			// The Marketing events tab carries everything except key + model.
+			return array_merge( $existing, [
+				'use_catalog'   => ! empty( $in['use_catalog'] ),
+				'tone'          => sanitize_textarea_field( (string) ( $in['tone'] ?? '' ) ),
+				'events_prompt' => sanitize_textarea_field( $events_prompt ),
+				'country_pools' => $pools,
+			] );
 		}
 
 		return [
@@ -309,28 +330,64 @@ final class DZE_Marketing_Ai {
 	}
 
 	/**
-	 * Central "AI Settings" page. Every AI-powered feature of the plugin has its
-	 * parameters referenced here: the Marketing Assistant + Category AI insights
-	 * (Anthropic) and the Product Images generator (Google Gemini).
+	 * Central "AI Settings" page, one tab per AI-powered function:
+	 *   General          — API keys, models, monthly API usage graph.
+	 *   Product content  — upcoming content tools (placeholder).
+	 *   Product images   — Gemini prompt templates.
+	 *   Marketing events — calendar languages, countries, context and prompt.
 	 */
 	public function render_settings_page(): void {
+		$tabs = [
+			'general' => __( 'General', 'dazont-ecom' ),
+			'content' => __( 'Product content', 'dazont-ecom' ),
+			'images'  => __( 'Product images', 'dazont-ecom' ),
+			'events'  => __( 'Marketing events', 'dazont-ecom' ),
+		];
+		$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'general'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- tab navigation only.
+		if ( ! isset( $tabs[ $tab ] ) ) {
+			$tab = 'general';
+		}
+
 		echo '<div class="wrap dze-wrap">';
 		echo '<h1>' . esc_html__( 'AI Settings', 'dazont-ecom' ) . '</h1>';
-		echo '<p class="description" style="max-width:820px;">' . esc_html__( 'All AI-powered features of Dazont Ecom are configured here. The Anthropic key below powers the Marketing Assistant and the Category "AI insights" in the Product Explorer; the Google Gemini section powers the AI Product Images generator on the product edit screen. Each key is only ever sent to its own provider.', 'dazont-ecom' ) . '</p>';
+		echo '<nav class="nav-tab-wrapper" style="margin-bottom:16px;">';
+		foreach ( $tabs as $key => $label ) {
+			printf(
+				'<a href="%1$s" class="nav-tab%2$s">%3$s</a>',
+				esc_url( add_query_arg( [ 'page' => self::MENU_SLUG, 'tab' => $key ], admin_url( 'admin.php' ) ) ),
+				$key === $tab ? ' nav-tab-active' : '',
+				esc_html( $label )
+			);
+		}
+		echo '</nav>';
 
-		echo '<h2 style="margin-top:24px;">' . esc_html__( 'Marketing Assistant & Category insights (Anthropic)', 'dazont-ecom' ) . '</h2>';
-		$this->render_settings_section();
-
-		// Google Gemini (AI Product Images) parameters live on the same page.
-		if ( class_exists( 'DZE_Product_Images' ) ) {
+		if ( 'general' === $tab ) {
+			echo '<p class="description" style="max-width:820px;">' . esc_html__( 'API keys and models for every AI-powered feature of the plugin. The Anthropic key powers the Marketing calendar and the category "AI insights"; the Google Gemini key powers the AI Product Images generator. Each key is only ever sent to its own provider.', 'dazont-ecom' ) . '</p>';
+			echo '<h2>' . esc_html__( 'Anthropic (Claude)', 'dazont-ecom' ) . '</h2>';
+			$this->render_settings_section( 'general' );
+			if ( class_exists( 'DZE_Product_Images' ) ) {
+				echo '<hr style="margin:28px 0;" />';
+				echo '<h2>' . esc_html__( 'Google Gemini', 'dazont-ecom' ) . '</h2>';
+				DZE_Product_Images::instance()->render_settings_section( 'keys' );
+			}
 			echo '<hr style="margin:28px 0;" />';
-			echo '<h2>' . esc_html__( 'AI Product Images (Google Gemini)', 'dazont-ecom' ) . '</h2>';
-			DZE_Product_Images::instance()->render_settings_section();
+			echo '<h2>' . esc_html__( 'API usage per month', 'dazont-ecom' ) . '</h2>';
+			DZE_Ai_Usage::render_graph();
+		} elseif ( 'content' === $tab ) {
+			echo '<h2>' . esc_html__( 'Product content (coming soon)', 'dazont-ecom' ) . '</h2>';
+			echo '<p class="description" style="max-width:820px;">' . esc_html__( 'AI product content tools (descriptions, titles, SEO texts) will be configured here. The brand tone set under Marketing events will be reused by these tools.', 'dazont-ecom' ) . '</p>';
+		} elseif ( 'images' === $tab ) {
+			if ( class_exists( 'DZE_Product_Images' ) ) {
+				DZE_Product_Images::instance()->render_settings_section( 'prompts' );
+			}
+		} else { // events.
+			$this->render_settings_section( 'events' );
 		}
 		echo '</div>';
 	}
 
-	public function render_settings_section(): void {
+	/** @param string $dze_section 'all', 'general' (key+model) or 'events' (the rest). */
+	public function render_settings_section( string $dze_section = 'all' ): void {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
@@ -342,7 +399,7 @@ final class DZE_Marketing_Ai {
 		$key_locked = defined( 'DZE_ANTHROPIC_API_KEY' );
 		$has_key    = $this->api_key() !== '';
 		$languages  = self::active_languages();
-		$context    = $this->shop_context_text();
+		$context    = 'general' === $dze_section ? '' : $this->shop_context_text();
 		require DZE_DIR . 'admin/views/marketing-ai-settings.php';
 	}
 
@@ -704,6 +761,7 @@ final class DZE_Marketing_Ai {
 			$msg = $data['error']['message'] ?? ( 'HTTP ' . $code );
 			throw new RuntimeException( sprintf( __( 'Anthropic API error: %s', 'dazont-ecom' ), $msg ) );
 		}
+		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ) );
 		// Concatenate all returned text blocks.
 		$text = '';
 		foreach ( (array) ( $data['content'] ?? [] ) as $block ) {

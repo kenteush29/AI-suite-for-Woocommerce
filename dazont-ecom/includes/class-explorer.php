@@ -21,7 +21,7 @@ final class DZE_Explorer {
 	private const PER_PAGE  = 30;
 
 	/** Term meta: unix timestamp of the last manual "novelty search" for a category. */
-	private const META_RESEARCHED = '_dze_researched';
+	public const META_RESEARCHED = '_dze_researched';
 
 	private static ?self $instance = null;
 
@@ -47,8 +47,8 @@ final class DZE_Explorer {
 	public function register_menu(): void {
 		add_submenu_page(
 			DZE_Restock::MENU_SLUG,
-			__( 'Product Explorer', 'dazont-ecom' ),
-			__( 'Product Explorer', 'dazont-ecom' ),
+			__( 'Sourcing Assistant', 'dazont-ecom' ),
+			__( 'Sourcing Assistant', 'dazont-ecom' ),
 			'manage_woocommerce',
 			self::MENU_SLUG,
 			[ $this, 'render_page' ]
@@ -96,6 +96,9 @@ final class DZE_Explorer {
 				'aiThinking' => __( 'Analysing this category…', 'dazont-ecom' ),
 				'sortBy'     => __( 'Sort by', 'dazont-ecom' ),
 				'byId'       => __( 'ID', 'dazont-ecom' ),
+				'confirmMark'  => __( 'Mark this category as searched today?', 'dazont-ecom' ),
+				'expandAll'    => __( 'Expand all', 'dazont-ecom' ),
+				'collapseAll'  => __( 'Collapse all', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -535,6 +538,7 @@ final class DZE_Explorer {
 		if ( $code < 200 || $code >= 300 ) {
 			throw new RuntimeException( (string) ( $data['error']['message'] ?? ( 'HTTP ' . $code ) ) );
 		}
+		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ) );
 		$text = '';
 		foreach ( (array) ( $data['content'] ?? [] ) as $block ) {
 			if ( ( $block['type'] ?? '' ) === 'text' ) {

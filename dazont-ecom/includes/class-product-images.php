@@ -99,6 +99,10 @@ final class DZE_Product_Images {
 		$in       = is_array( $value ) ? $value : [];
 		$existing = self::get_settings();
 
+		// The AI Settings page saves per tab ('keys' on General, 'prompts' on
+		// Product images): only overwrite the fields the submitted section carries.
+		$section = (string) ( $in['section'] ?? 'all' );
+
 		$key = trim( (string) ( $in['api_key'] ?? '' ) );
 		if ( $key === '' ) {
 			$key = (string) $existing['api_key']; // keep saved key when blank.
@@ -107,6 +111,17 @@ final class DZE_Product_Images {
 		foreach ( array_keys( self::DEFAULT_PROMPTS ) as $sit ) {
 			$prompts[ $sit ] = sanitize_textarea_field( (string) ( $in['prompts'][ $sit ] ?? '' ) );
 		}
+
+		if ( 'keys' === $section ) {
+			return array_merge( $existing, [
+				'api_key' => sanitize_text_field( $key ),
+				'model'   => sanitize_text_field( (string) ( $in['model'] ?? self::DEFAULT_MODEL ) ) ?: self::DEFAULT_MODEL,
+			] );
+		}
+		if ( 'prompts' === $section ) {
+			return array_merge( $existing, [ 'prompts' => $prompts ] );
+		}
+
 		return [
 			'api_key' => sanitize_text_field( $key ),
 			'model'   => sanitize_text_field( (string) ( $in['model'] ?? self::DEFAULT_MODEL ) ) ?: self::DEFAULT_MODEL,
@@ -114,8 +129,12 @@ final class DZE_Product_Images {
 		];
 	}
 
-	/** Renders the Gemini settings form. Embedded on the central AI Settings page. */
-	public function render_settings_section(): void {
+	/**
+	 * Renders the Gemini settings form, embedded on the central AI Settings page.
+	 *
+	 * @param string $dze_section 'all', 'keys' (API key + model) or 'prompts'.
+	 */
+	public function render_settings_section( string $dze_section = 'all' ): void {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			return;
 		}
@@ -320,6 +339,7 @@ final class DZE_Product_Images {
 		if ( $code < 200 || $code >= 300 ) {
 			throw new RuntimeException( (string) ( $data['error']['message'] ?? ( 'Gemini HTTP ' . $code ) ) );
 		}
+		DZE_Ai_Usage::record( 'gemini', (int) ( $data['usageMetadata']['promptTokenCount'] ?? 0 ), (int) ( $data['usageMetadata']['candidatesTokenCount'] ?? 0 ) );
 		foreach ( (array) ( $data['candidates'][0]['content']['parts'] ?? [] ) as $p ) {
 			$inline = $p['inlineData'] ?? $p['inline_data'] ?? null;
 			if ( $inline && ! empty( $inline['data'] ) ) {

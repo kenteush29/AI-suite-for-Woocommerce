@@ -1,16 +1,17 @@
 <?php
 defined( 'ABSPATH' ) || exit;
 /**
- * Product Explorer.
+ * Sourcing Assistant (Product Explorer).
  *
  * One screen — a hierarchical, sortable LIST of categories (thumbnail, product
  * count, units sold, last "novelty search"), in two views:
- *   - Grouped  : the full site hierarchy (indented); parents include their
- *                sub-categories' products and sales; siblings ranked by the sort.
+ *   - Grouped  : the full site hierarchy (indented, collapsible); parents
+ *                include their sub-categories' products and sales.
  *   - Detailed : flat list of only the categories that have their own products
  *                (empty container parents hidden), ranked on their own figures.
- * Clicking a row opens a full-screen overlay with that category's products and a
- * "Get AI insights" button.
+ * Sorting is done by clicking the column headers. Clicking a row opens a
+ * full-screen overlay with that category's products, a "Mark searched" button
+ * and a "Get AI insights" button.
  *
  * @var array $categories  Nested category tree (id/name/count/count_direct/
  *                         sales_*(direct)/researched/image/children).
@@ -41,7 +42,7 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 <div class="wrap dze-x-wrap">
 
 	<div class="dze-x-topbar">
-		<strong class="dze-x-title"><?php esc_html_e( 'Category performance', 'dazont-ecom' ); ?></strong>
+		<strong class="dze-x-title"><?php esc_html_e( 'Sourcing Assistant — category performance', 'dazont-ecom' ); ?></strong>
 	</div>
 
 	<section id="dze-x-perf" class="dze-x-perf">
@@ -53,21 +54,14 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 				<button type="button" class="dze-x-view-btn" data-view="detailed"><?php esc_html_e( 'Detailed (own products only)', 'dazont-ecom' ); ?></button>
 			</div>
 
-			<label class="dze-x-perf-ctl"><?php esc_html_e( 'Sort', 'dazont-ecom' ); ?>
-				<select id="dze-x-perf-sort">
-					<option value="qty"><?php esc_html_e( 'Units sold', 'dazont-ecom' ); ?></option>
-					<option value="res"><?php esc_html_e( 'Last search', 'dazont-ecom' ); ?></option>
-					<option value="name"><?php esc_html_e( 'Name', 'dazont-ecom' ); ?></option>
-					<option value="seq"><?php esc_html_e( 'Site order', 'dazont-ecom' ); ?></option>
-				</select>
-			</label>
+			<button type="button" id="dze-x-expand" class="button button-small"><?php esc_html_e( 'Expand all', 'dazont-ecom' ); ?></button>
 		</div>
 
 		<div class="dze-x-list-head">
-			<span><?php esc_html_e( 'Category', 'dazont-ecom' ); ?></span>
-			<span class="dze-x-num"><?php esc_html_e( 'Products', 'dazont-ecom' ); ?></span>
-			<span class="dze-x-num"><?php esc_html_e( 'Units sold', 'dazont-ecom' ); ?></span>
-			<span><?php esc_html_e( 'Last search', 'dazont-ecom' ); ?></span>
+			<button type="button" class="dze-x-col" data-key="name"><?php esc_html_e( 'Category', 'dazont-ecom' ); ?><span class="dze-x-arrow"></span></button>
+			<button type="button" class="dze-x-col dze-x-num" data-key="count"><?php esc_html_e( 'Products', 'dazont-ecom' ); ?><span class="dze-x-arrow"></span></button>
+			<button type="button" class="dze-x-col dze-x-num is-desc" data-key="qty"><?php esc_html_e( 'Units sold', 'dazont-ecom' ); ?><span class="dze-x-arrow"></span></button>
+			<button type="button" class="dze-x-col" data-key="res"><?php esc_html_e( 'Last search', 'dazont-ecom' ); ?><span class="dze-x-arrow"></span></button>
 			<span></span>
 		</div>
 
@@ -79,13 +73,16 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 				$leaf    = end( $r['path'] );
 				$parents = array_slice( $r['path'], 0, -1 );
 				$thumb   = (string) ( $n['image'] ?? '' );
+				$haskids = ! empty( $n['children'] );
 				?>
 				<div class="dze-x-row" role="button" tabindex="0"
 					data-cat="<?php echo (int) $n['id']; ?>"
 					data-parent="<?php echo (int) $r['parent']; ?>"
 					data-depth="<?php echo (int) $r['depth']; ?>"
 					data-seq="<?php echo (int) $r['seq']; ?>"
+					data-haschild="<?php echo $haskids ? 1 : 0; ?>"
 					data-name="<?php echo esc_attr( strtolower( implode( ' ', $r['path'] ) ) ); ?>"
+					data-leaf="<?php echo esc_attr( strtolower( (string) $leaf ) ); ?>"
 					data-path="<?php echo esc_attr( implode( ' › ', $r['path'] ) ); ?>"
 					data-thumb="<?php echo esc_url( $thumb ); ?>"
 					data-count="<?php echo (int) ( $n['count'] ?? 0 ); ?>"
@@ -96,6 +93,11 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 					data-res-h="<?php echo esc_attr( $res_h ); ?>">
 					<span class="dze-x-row-cat">
 						<span class="dze-x-row-indent"></span>
+						<?php if ( $haskids ) : ?>
+							<button type="button" class="dze-x-tog" aria-label="<?php esc_attr_e( 'Expand / collapse', 'dazont-ecom' ); ?>">▸</button>
+						<?php else : ?>
+							<span class="dze-x-tog dze-x-tog-sp" aria-hidden="true"></span>
+						<?php endif; ?>
 						<span class="dze-x-row-thumb">
 							<?php if ( $thumb ) : ?>
 								<img src="<?php echo esc_url( $thumb ); ?>" alt="" loading="lazy" />
@@ -129,7 +131,10 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 			<span class="dze-x-ov-thumb" id="dze-x-ov-thumb"></span>
 			<span class="dze-x-ov-title" id="dze-x-ov-title"></span>
 			<span id="dze-x-count" class="dze-x-count"></span>
-			<button type="button" id="dze-x-ai" class="button button-primary"><?php esc_html_e( '✨ Get AI insights', 'dazont-ecom' ); ?></button>
+			<span class="dze-x-ov-actions">
+				<button type="button" id="dze-x-ov-mark" class="button"><?php esc_html_e( 'Mark searched today', 'dazont-ecom' ); ?></button>
+				<button type="button" id="dze-x-ai" class="button button-primary"><?php esc_html_e( '✨ Get AI insights', 'dazont-ecom' ); ?></button>
+			</span>
 		</div>
 		<div id="dze-x-ai-panel" class="dze-x-ai-panel" style="display:none;"></div>
 		<div id="dze-x-grid" class="dze-x-grid"></div>

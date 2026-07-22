@@ -8,15 +8,23 @@ defined( 'ABSPATH' ) || exit;
  * @var bool   $has_key
  * @var array  $languages   Active site languages, from DZE_Marketing_Ai::active_languages().
  * @var string $context     Auto-detected shop context, as sent to the AI.
+ * @var string $dze_section 'all', 'general' (key + model) or 'events' (the rest).
  */
+$dze_section  = isset( $dze_section ) ? $dze_section : 'all';
+$show_general = in_array( $dze_section, [ 'all', 'general' ], true );
+$show_events  = in_array( $dze_section, [ 'all', 'events' ], true );
 ?>
+<?php if ( $show_events ) : ?>
 <p class="description" style="max-width:820px;">
-	<?php esc_html_e( 'The AI Marketing Assistant generates a promotional calendar for your shop. It reads your shop and languages automatically — nothing to describe by hand. Configure the API key and, per language, which countries it should consider below.', 'dazont-ecom' ); ?>
+	<?php esc_html_e( 'The AI Marketing Assistant generates a promotional calendar for your shop. It reads your shop and languages automatically — nothing to describe by hand. Configure, per language, which countries it should consider below. The API key and model live on the General tab.', 'dazont-ecom' ); ?>
 </p>
+<?php endif; ?>
 
 <form method="post" action="options.php">
 	<?php settings_fields( 'dze_mai_options' ); ?>
+	<input type="hidden" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS ); ?>[section]" value="<?php echo esc_attr( $dze_section ); ?>" />
 
+	<?php if ( $show_general ) : ?>
 	<h2 class="title"><?php esc_html_e( 'Anthropic API key', 'dazont-ecom' ); ?></h2>
 	<table class="form-table" role="presentation">
 		<tr>
@@ -66,7 +74,9 @@ defined( 'ABSPATH' ) || exit;
 			</td>
 		</tr>
 	</table>
+	<?php endif; // $show_general ?>
 
+	<?php if ( $show_events ) : ?>
 	<h2 class="title"><?php esc_html_e( 'Languages detected', 'dazont-ecom' ); ?></h2>
 	<p class="description" style="max-width:820px;">
 		<?php echo class_exists( 'DZE_Wpml' ) && DZE_Wpml::is_active()
@@ -162,15 +172,17 @@ defined( 'ABSPATH' ) || exit;
 		if ( btn && ta ) { btn.addEventListener('click', function () { ta.value = def; ta.focus(); }); }
 	}());
 	</script>
+	<?php endif; // $show_events ?>
 
 	<?php submit_button( __( 'Save configuration', 'dazont-ecom' ) ); ?>
 </form>
 
+<?php if ( $show_events ) : ?>
 <hr />
 <h2 class="title"><?php esc_html_e( 'What the AI sees about your shop', 'dazont-ecom' ); ?></h2>
 <p class="description" style="max-width:820px;">
 	<?php esc_html_e( 'The exact text sent to the AI as context. Kept deliberately short.', 'dazont-ecom' ); ?>
-	<a href="<?php echo esc_url( add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG, 'dze_mai_refresh' => 1 ] , admin_url( 'admin.php' ) ) ); ?>">↻ <?php esc_html_e( 'Refresh', 'dazont-ecom' ); ?></a>
+	<a href="<?php echo esc_url( add_query_arg( [ 'page' => DZE_Marketing_Ai::MENU_SLUG, 'tab' => 'events', 'dze_mai_refresh' => 1 ] , admin_url( 'admin.php' ) ) ); ?>">↻ <?php esc_html_e( 'Refresh', 'dazont-ecom' ); ?></a>
 </p>
 <?php if ( $context !== '' ) : ?>
 	<pre style="background:#f6f7f7;border:1px solid #dcdcde;border-radius:4px;padding:12px 16px;max-width:820px;white-space:pre-wrap;font-size:13px;"><?php echo esc_html( $context ); ?></pre>
@@ -192,3 +204,4 @@ defined( 'ABSPATH' ) || exit;
 	<?php esc_html_e( 'To generate the calendar and review suggestions, go to Marketing Events.', 'dazont-ecom' ); ?>
 	<a href="<?php echo esc_url( add_query_arg( [ 'page' => DZE_Discounts::MENU_SLUG_EVENTS ], admin_url( 'admin.php' ) ) ); ?>"><?php esc_html_e( 'Open Marketing Events →', 'dazont-ecom' ); ?></a>
 </p>
+<?php endif; // $show_events ?>
