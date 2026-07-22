@@ -1,7 +1,13 @@
 /* Product Explorer */
 .dze-x-wrap { margin: 10px 20px 0 0; }
+
+/* Top bar — kept above the module (never inside the scrolling sidebar) so the
+   Focus button stays reachable at all times. */
+.dze-x-topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 6px 0 10px; }
+.dze-x-title { font-size: 15px; }
+
 .dze-x-app {
-	display: flex; gap: 0; height: calc(100vh - 120px);
+	display: flex; gap: 0; height: calc(100vh - 150px);
 	border: 1px solid #dcdcde; border-radius: 10px; overflow: hidden; background: #fff;
 }
 
@@ -18,6 +24,8 @@
 .dze-x-attrs select { width: 100%; }
 
 .dze-x-cat-head { border-top: 1px solid #e2e2e2; padding-top: 10px; margin-top: 4px; }
+.dze-x-catsort-lbl { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #646970; margin-bottom: 4px; }
+#dze-x-catsort { width: 100%; margin-bottom: 8px; }
 .dze-x-cats { margin: 4px 0; list-style: none; }
 .dze-x-cats .dze-x-cats { margin-left: 12px; border-left: 1px solid #e6e6e6; padding-left: 6px; }
 .dze-x-cat {
@@ -30,7 +38,7 @@
 	width: 28px; height: 28px; border-radius: 5px; object-fit: cover; background: #e2e4e7; flex: 0 0 28px;
 }
 .dze-x-cat-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dze-x-cat-count { font-size: 11px; opacity: .7; }
+.dze-x-cat-count { font-size: 11px; opacity: .7; flex: 0 0 auto; white-space: nowrap; }
 .dze-x-cat-all { font-weight: 600; }
 
 /* Main grid */
@@ -80,3 +88,11 @@ body.dze-x-focus #wpcontent, body.dze-x-focus #wpbody-content { margin-left: 0 !
 body.dze-x-focus html.wp-toolbar { padding-top: 0 !important; }
 body.dze-x-focus .dze-x-wrap { margin: 0; }
 body.dze-x-focus .dze-x-app { height: 100vh; border-radius: 0; border: 0; }
+
+/* Focus mode: float the Focus/Exit button so it is always visible, whatever
+   the sidebar scroll position. */
+body.dze-x-focus .dze-x-topbar {
+	position: fixed; top: 10px; right: 16px; z-index: 100001; margin: 0; width: auto;
+}
+body.dze-x-focus .dze-x-title { display: none; }
+body.dze-x-focus #dze-x-focus { box-shadow: 0 1px 5px rgba(0,0,0,.35); }

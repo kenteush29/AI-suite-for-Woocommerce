@@ -54,6 +54,37 @@
 		load(true);
 	});
 
+	// ---- Category rail ordering (A→Z / units sold / revenue) ----
+	function catMetric($a, mode) {
+		if (mode === 'qty') { return parseFloat($a.attr('data-qty')) || 0; }
+		if (mode === 'rev') { return parseFloat($a.attr('data-rev')) || 0; }
+		return parseInt($a.attr('data-idx'), 10) || 0;
+	}
+	function orderCats(mode) {
+		$('#dze-explorer .dze-x-cats').each(function () {
+			var $ul = $(this);
+			var lis = $ul.children('li').get();
+			lis.sort(function (la, lb) {
+				var a = $(la).children('.dze-x-cat').first();
+				var b = $(lb).children('.dze-x-cat').first();
+				if (mode === 'az') { return catMetric(a, 'az') - catMetric(b, 'az'); }
+				return catMetric(b, mode) - catMetric(a, mode); // descending
+			});
+			lis.forEach(function (li) { $ul.append(li); });
+		});
+		$('.dze-x-cat').not('.dze-x-cat-all').each(function () {
+			var $c = $(this), $badge = $c.find('.dze-x-cat-count');
+			if (mode === 'qty') {
+				$badge.text(($c.attr('data-qty') || '0') + ' ' + i18n.units);
+			} else if (mode === 'rev') {
+				$badge.text($c.attr('data-revfmt') || '');
+			} else {
+				$badge.text($c.attr('data-count') || '0');
+			}
+		});
+	}
+	$('#dze-x-catsort').on('change', function () { orderCats($(this).val()); });
+
 	// ---- Filters ----
 	$('#dze-x-sort, #dze-x-stock').on('change', function () { load(true); });
 	$(document).on('change', '.dze-x-attr', function () { load(true); });

@@ -82,6 +82,7 @@ final class DZE_Explorer {
 				'focus'      => __( 'Focus mode', 'dazont-ecom' ),
 				'exit'       => __( 'Exit focus', 'dazont-ecom' ),
 				'all'        => __( 'All products', 'dazont-ecom' ),
+				'units'      => __( 'sold', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -99,7 +100,11 @@ final class DZE_Explorer {
 	// Category rail
 	// =========================================================================
 
-	/** Nested product-category tree with image + recursive count. */
+	/**
+	 * Nested product-category tree with image, recursive product count and
+	 * recursive sales (units + revenue) so the rail can be re-ordered by what
+	 * actually sells.
+	 */
 	private function category_tree(): array {
 		$terms = get_terms( [ 'taxonomy' => 'product_cat', 'hide_empty' => false ] );
 		if ( is_wp_error( $terms ) || empty( $terms ) ) {
@@ -107,10 +112,14 @@ final class DZE_Explorer {
 		}
 		$by_id    = [];
 		$children = [];
+		$parent   = [];
 		foreach ( $terms as $t ) {
 			$by_id[ $t->term_id ]     = $t;
 			$children[ $t->parent ][] = $t->term_id;
+			$parent[ $t->term_id ]    = (int) $t->parent;
 		}
+		$sales = $this->category_sales( $parent );
+
 		$rec_count = function ( int $id ) use ( &$rec_count, $children, $by_id ): int {
 			$c = (int) ( $by_id[ $id ]->count ?? 0 );
 			foreach ( $children[ $id ] ?? [] as $cid ) {
@@ -118,22 +127,110 @@ final class DZE_Explorer {
 			}
 			return $c;
 		};
-		$build = function ( int $parent ) use ( &$build, $children, $by_id, $rec_count ): array {
+		$build = function ( int $parent_id ) use ( &$build, $children, $by_id, $rec_count, $sales ): array {
 			$out = [];
-			foreach ( $children[ $parent ] ?? [] as $cid ) {
-				$t       = $by_id[ $cid ];
-				$img_id  = (int) get_term_meta( $cid, 'thumbnail_id', true );
-				$out[]   = [
-					'id'       => $cid,
-					'name'     => $t->name,
-					'count'    => $rec_count( $cid ),
-					'image'    => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
-					'children' => $build( $cid ),
+			foreach ( $children[ $parent_id ] ?? [] as $cid ) {
+				$t      = $by_id[ $cid ];
+				$img_id = (int) get_term_meta( $cid, 'thumbnail_id', true );
+				$out[]  = [
+					'id'         => $cid,
+					'name'       => $t->name,
+					'count'      => $rec_count( $cid ),
+					'sales_qty'  => (float) ( $sales[ $cid ]['qty'] ?? 0 ),
+					'sales_rev'  => (float) ( $sales[ $cid ]['rev'] ?? 0 ),
+					'image'      => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
+					'children'   => $build( $cid ),
 				];
 			}
 			return $out;
 		};
 		return $build( 0 );
+	}
+
+	/**
+	 * Per-category sales rolled up over the whole subtree, from WooCommerce
+	 * Analytics' order-product lookup table. Each product's sales are counted
+	 * once per ancestor category (no double counting). Cached for a few hours
+	 * because this drives ordering, not live figures.
+	 *
+	 * @param array<int,int> $parent term_id => parent term_id map.
+	 * @return array<int,array{qty:float,rev:float}>
+	 */
+	private function category_sales( array $parent ): array {
+		$cached = get_transient( 'dze_x_cat_sales' );
+		if ( is_array( $cached ) ) {
+			return $cached;
+		}
+
+		global $wpdb;
+		$table = $wpdb->prefix . 'wc_order_product_lookup';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return [];
+		}
+
+		// Per-product totals (product_id is the parent product; variations roll up).
+		$rows = $wpdb->get_results(
+			"SELECT product_id, SUM(product_qty) AS qty, SUM(product_net_revenue) AS rev
+			 FROM {$table} GROUP BY product_id", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name only.
+			ARRAY_A
+		);
+		if ( empty( $rows ) ) {
+			set_transient( 'dze_x_cat_sales', [], 3 * HOUR_IN_SECONDS );
+			return [];
+		}
+		$prod = [];
+		foreach ( $rows as $r ) {
+			$prod[ (int) $r['product_id'] ] = [ 'qty' => (float) $r['qty'], 'rev' => (float) $r['rev'] ];
+		}
+
+		// Product → assigned product_cat term ids.
+		$pids         = array_keys( $prod );
+		$placeholders = implode( ',', array_fill( 0, count( $pids ), '%d' ) );
+		$rel = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT tr.object_id, tt.term_id
+				 FROM {$wpdb->term_relationships} tr
+				 INNER JOIN {$wpdb->term_taxonomy} tt ON tt.term_taxonomy_id = tr.term_taxonomy_id
+				 WHERE tt.taxonomy = 'product_cat' AND tr.object_id IN ($placeholders)", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- placeholders built from ints.
+				$pids
+			),
+			ARRAY_A
+		);
+		$prod_terms = [];
+		foreach ( (array) $rel as $r ) {
+			$prod_terms[ (int) $r['object_id'] ][] = (int) $r['term_id'];
+		}
+
+		$ancestors = static function ( int $id ) use ( $parent ): array {
+			$chain = [];
+			$seen  = [];
+			while ( isset( $parent[ $id ] ) && $parent[ $id ] > 0 && empty( $seen[ $id ] ) ) {
+				$seen[ $id ] = true;
+				$id          = $parent[ $id ];
+				$chain[]     = $id;
+			}
+			return $chain;
+		};
+
+		$out = [];
+		foreach ( $prod as $pid => $s ) {
+			$targets = [];
+			foreach ( $prod_terms[ $pid ] ?? [] as $tid ) {
+				$targets[ $tid ] = true;
+				foreach ( $ancestors( $tid ) as $a ) {
+					$targets[ $a ] = true;
+				}
+			}
+			foreach ( array_keys( $targets ) as $tid ) {
+				if ( ! isset( $out[ $tid ] ) ) {
+					$out[ $tid ] = [ 'qty' => 0.0, 'rev' => 0.0 ];
+				}
+				$out[ $tid ]['qty'] += $s['qty'];
+				$out[ $tid ]['rev'] += $s['rev'];
+			}
+		}
+		set_transient( 'dze_x_cat_sales', $out, 3 * HOUR_IN_SECONDS );
+		return $out;
 	}
 
 	// =========================================================================
@@ -223,7 +320,10 @@ final class DZE_Explorer {
 				<span><?php echo wp_kses_post( $product->get_price_html() ); ?></span>
 				<span class="dze-x-id">#<?php echo (int) $product->get_id(); ?></span>
 			</div>
-			<div class="dze-x-date"><?php echo esc_html( get_the_date( '', $product->get_id() ) ); ?></div>
+			<div class="dze-x-date"><?php
+				/* translators: %s: product publication date */
+				printf( esc_html__( 'Published: %s', 'dazont-ecom' ), esc_html( get_the_date( '', $product->get_id() ) ) );
+			?></div>
 			<div class="dze-x-actions">
 				<?php if ( $edit ) : ?><a class="button button-small" href="<?php echo esc_url( $edit ); ?>" target="_blank"><?php esc_html_e( 'Edit', 'dazont-ecom' ); ?></a><?php endif; ?>
 				<?php if ( $view ) : ?><a class="button button-small" href="<?php echo esc_url( $view ); ?>" target="_blank"><?php esc_html_e( 'View', 'dazont-ecom' ); ?></a><?php endif; ?>
