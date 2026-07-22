@@ -59,6 +59,14 @@ final class DZE_Explorer {
 		if ( strpos( $hook, self::MENU_SLUG ) === false ) {
 			return;
 		}
+		// This is a focused, full-screen tool — strip other plugins' admin
+		// notices so nothing steals space or attention.
+		add_action( 'in_admin_header', static function () {
+			remove_all_actions( 'admin_notices' );
+			remove_all_actions( 'all_admin_notices' );
+			remove_all_actions( 'user_admin_notices' );
+		}, 999 );
+
 		wp_enqueue_style( 'dze-explorer', DZE_URL . 'admin/css/explorer.css', [], DZE_VERSION );
 		wp_enqueue_script( 'dze-explorer', DZE_URL . 'admin/js/explorer.js', [ 'jquery' ], DZE_VERSION, true );
 		wp_localize_script( 'dze-explorer', 'dzeExplorer', [
