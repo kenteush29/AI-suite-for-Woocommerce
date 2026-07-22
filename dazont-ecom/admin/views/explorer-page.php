@@ -16,17 +16,28 @@ if ( ! function_exists( 'dze_explorer_cat_list' ) ) {
 		echo '<ul class="dze-x-cats">';
 		foreach ( $nodes as $n ) {
 			$idx++;
-			$rev     = (float) ( $n['sales_rev'] ?? 0 );
-			$revfmt  = function_exists( 'wc_price' ) ? wp_strip_all_tags( wc_price( $rev ) ) : number_format_i18n( $rev, 2 );
+			$rev      = (float) ( $n['sales_rev'] ?? 0 );
+			$rev_dir  = (float) ( $n['sales_rev_direct'] ?? 0 );
+			$fmt      = static function ( float $v ): string {
+				return function_exists( 'wc_price' ) ? wp_strip_all_tags( wc_price( $v ) ) : number_format_i18n( $v, 2 );
+			};
+			$res_ts   = (int) ( $n['researched'] ?? 0 );
+			$res_h    = $res_ts ? sprintf( /* translators: %s: human time difference, e.g. "3 months" */ __( '%s ago', 'dazont-ecom' ), human_time_diff( $res_ts ) ) : '';
 			echo '<li>';
 			printf(
-				'<a href="#" class="dze-x-cat" data-cat="%1$d" data-idx="%2$d" data-count="%3$d" data-qty="%4$d" data-rev="%5$s" data-revfmt="%6$s">%7$s<span class="dze-x-cat-name">%8$s</span><span class="dze-x-cat-count">%3$d</span></a>',
+				'<a href="#" class="dze-x-cat" data-cat="%1$d" data-idx="%2$d" data-count="%3$d" data-count-direct="%4$d" data-qty="%5$d" data-qty-direct="%6$d" data-rev="%7$s" data-rev-direct="%8$s" data-revfmt="%9$s" data-revfmt-direct="%10$s" data-res="%11$d" data-res-h="%12$s">%13$s<span class="dze-x-cat-name">%14$s</span><span class="dze-x-cat-count">%3$d</span></a>',
 				(int) $n['id'],
 				$idx,
 				(int) $n['count'],
+				(int) ( $n['count_direct'] ?? 0 ),
 				(int) round( (float) ( $n['sales_qty'] ?? 0 ) ),
+				(int) round( (float) ( $n['sales_qty_direct'] ?? 0 ) ),
 				esc_attr( (string) $rev ),
-				esc_attr( $revfmt ),
+				esc_attr( (string) $rev_dir ),
+				esc_attr( $fmt( $rev ) ),
+				esc_attr( $fmt( $rev_dir ) ),
+				$res_ts,
+				esc_attr( $res_h ),
 				$n['image'] ? '<img src="' . esc_url( $n['image'] ) . '" alt="" />' : '<span class="dze-x-cat-noimg"></span>',
 				esc_html( $n['name'] )
 			);
@@ -93,6 +104,10 @@ $dze_cat_idx = 0;
 					<option value="qty"><?php esc_html_e( 'By units sold', 'dazont-ecom' ); ?></option>
 					<option value="rev"><?php esc_html_e( 'By revenue', 'dazont-ecom' ); ?></option>
 				</select>
+				<select id="dze-x-catscope">
+					<option value="roll"><?php esc_html_e( 'Incl. sub-categories', 'dazont-ecom' ); ?></option>
+					<option value="direct"><?php esc_html_e( 'This category only', 'dazont-ecom' ); ?></option>
+				</select>
 				<a href="#" class="dze-x-cat dze-x-cat-all is-active" data-cat="0"><?php esc_html_e( 'All products', 'dazont-ecom' ); ?></a>
 			</div>
 			<?php dze_explorer_cat_list( $categories, $dze_cat_idx ); ?>
@@ -102,6 +117,11 @@ $dze_cat_idx = 0;
 			<div class="dze-x-bar">
 				<span id="dze-x-count" class="dze-x-count"></span>
 				<span id="dze-x-crumb" class="dze-x-crumb"></span>
+				<span id="dze-x-research" class="dze-x-research" style="display:none;">
+					<span class="dze-x-research-label"><?php esc_html_e( 'Last novelty search:', 'dazont-ecom' ); ?></span>
+					<strong id="dze-x-research-when"></strong>
+					<button type="button" id="dze-x-research-mark" class="button button-small"><?php esc_html_e( 'Mark searched today', 'dazont-ecom' ); ?></button>
+				</span>
 			</div>
 			<div id="dze-x-grid" class="dze-x-grid"></div>
 			<div class="dze-x-more">

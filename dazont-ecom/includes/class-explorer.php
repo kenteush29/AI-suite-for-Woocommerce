@@ -20,6 +20,9 @@ final class DZE_Explorer {
 	private const NONCE     = 'dze_explorer';
 	private const PER_PAGE  = 30;
 
+	/** Term meta: unix timestamp of the last manual "novelty search" for a category. */
+	private const META_RESEARCHED = '_dze_researched';
+
 	private static ?self $instance = null;
 
 	public static function instance(): self {
@@ -35,8 +38,9 @@ final class DZE_Explorer {
 		}
 		add_action( 'admin_menu',            [ $this, 'register_menu' ] );
 		add_action( 'admin_enqueue_scripts', [ $this, 'enqueue_assets' ] );
-		add_action( 'wp_ajax_dze_explorer_products',   [ $this, 'ajax_products' ] );
-		add_action( 'wp_ajax_dze_explorer_variations', [ $this, 'ajax_variations' ] );
+		add_action( 'wp_ajax_dze_explorer_products',        [ $this, 'ajax_products' ] );
+		add_action( 'wp_ajax_dze_explorer_variations',      [ $this, 'ajax_variations' ] );
+		add_action( 'wp_ajax_dze_explorer_mark_researched', [ $this, 'ajax_mark_researched' ] );
 	}
 
 	public function register_menu(): void {
@@ -83,6 +87,8 @@ final class DZE_Explorer {
 				'exit'       => __( 'Exit focus', 'dazont-ecom' ),
 				'all'        => __( 'All products', 'dazont-ecom' ),
 				'units'      => __( 'sold', 'dazont-ecom' ),
+				'never'      => __( 'never', 'dazont-ecom' ),
+				'justNow'    => __( 'just now', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -133,13 +139,17 @@ final class DZE_Explorer {
 				$t      = $by_id[ $cid ];
 				$img_id = (int) get_term_meta( $cid, 'thumbnail_id', true );
 				$out[]  = [
-					'id'         => $cid,
-					'name'       => $t->name,
-					'count'      => $rec_count( $cid ),
-					'sales_qty'  => (float) ( $sales[ $cid ]['qty'] ?? 0 ),
-					'sales_rev'  => (float) ( $sales[ $cid ]['rev'] ?? 0 ),
-					'image'      => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
-					'children'   => $build( $cid ),
+					'id'                => $cid,
+					'name'              => $t->name,
+					'count'             => $rec_count( $cid ),
+					'count_direct'      => (int) ( $t->count ?? 0 ),
+					'sales_qty'         => (float) ( $sales[ $cid ]['qty'] ?? 0 ),
+					'sales_rev'         => (float) ( $sales[ $cid ]['rev'] ?? 0 ),
+					'sales_qty_direct'  => (float) ( $sales[ $cid ]['qty_direct'] ?? 0 ),
+					'sales_rev_direct'  => (float) ( $sales[ $cid ]['rev_direct'] ?? 0 ),
+					'researched'        => (int) get_term_meta( $cid, self::META_RESEARCHED, true ),
+					'image'             => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
+					'children'          => $build( $cid ),
 				];
 			}
 			return $out;
@@ -148,16 +158,20 @@ final class DZE_Explorer {
 	}
 
 	/**
-	 * Per-category sales rolled up over the whole subtree, from WooCommerce
-	 * Analytics' order-product lookup table. Each product's sales are counted
-	 * once per ancestor category (no double counting). Cached for a few hours
-	 * because this drives ordering, not live figures.
+	 * Per-category sales from WooCommerce Analytics' order-product lookup table,
+	 * in two flavours:
+	 *   - qty / rev              : rolled up over the whole subtree (a product is
+	 *                              counted once per ancestor category).
+	 *   - qty_direct / rev_direct: only products directly assigned to that exact
+	 *                              category (no rollup) — to see precisely what a
+	 *                              single category sells, independently of children.
+	 * Cached for a few hours because this drives ordering, not live figures.
 	 *
 	 * @param array<int,int> $parent term_id => parent term_id map.
-	 * @return array<int,array{qty:float,rev:float}>
+	 * @return array<int,array{qty:float,rev:float,qty_direct:float,rev_direct:float}>
 	 */
 	private function category_sales( array $parent ): array {
-		$cached = get_transient( 'dze_x_cat_sales' );
+		$cached = get_transient( 'dze_x_cat_sales_v2' );
 		if ( is_array( $cached ) ) {
 			return $cached;
 		}
@@ -175,7 +189,7 @@ final class DZE_Explorer {
 			ARRAY_A
 		);
 		if ( empty( $rows ) ) {
-			set_transient( 'dze_x_cat_sales', [], 3 * HOUR_IN_SECONDS );
+			set_transient( 'dze_x_cat_sales_v2', [], 3 * HOUR_IN_SECONDS );
 			return [];
 		}
 		$prod = [];
@@ -213,23 +227,37 @@ final class DZE_Explorer {
 		};
 
 		$out = [];
+		$bump = static function ( array &$out, int $tid, array $s, bool $direct ): void {
+			if ( ! isset( $out[ $tid ] ) ) {
+				$out[ $tid ] = [ 'qty' => 0.0, 'rev' => 0.0, 'qty_direct' => 0.0, 'rev_direct' => 0.0 ];
+			}
+			if ( $direct ) {
+				$out[ $tid ]['qty_direct'] += $s['qty'];
+				$out[ $tid ]['rev_direct'] += $s['rev'];
+			} else {
+				$out[ $tid ]['qty'] += $s['qty'];
+				$out[ $tid ]['rev'] += $s['rev'];
+			}
+		};
 		foreach ( $prod as $pid => $s ) {
+			$tids = array_unique( $prod_terms[ $pid ] ?? [] );
+			// Direct: only the categories the product is actually filed under.
+			foreach ( $tids as $tid ) {
+				$bump( $out, (int) $tid, $s, true );
+			}
+			// Rolled up: those categories plus every ancestor, once each.
 			$targets = [];
-			foreach ( $prod_terms[ $pid ] ?? [] as $tid ) {
+			foreach ( $tids as $tid ) {
 				$targets[ $tid ] = true;
-				foreach ( $ancestors( $tid ) as $a ) {
+				foreach ( $ancestors( (int) $tid ) as $a ) {
 					$targets[ $a ] = true;
 				}
 			}
 			foreach ( array_keys( $targets ) as $tid ) {
-				if ( ! isset( $out[ $tid ] ) ) {
-					$out[ $tid ] = [ 'qty' => 0.0, 'rev' => 0.0 ];
-				}
-				$out[ $tid ]['qty'] += $s['qty'];
-				$out[ $tid ]['rev'] += $s['rev'];
+				$bump( $out, (int) $tid, $s, false );
 			}
 		}
-		set_transient( 'dze_x_cat_sales', $out, 3 * HOUR_IN_SECONDS );
+		set_transient( 'dze_x_cat_sales_v2', $out, 3 * HOUR_IN_SECONDS );
 		return $out;
 	}
 
@@ -368,5 +396,26 @@ final class DZE_Explorer {
 		}
 		usort( $out, static fn( $a, $b ) => strcasecmp( $a['title'], $b['title'] ) );
 		wp_send_json_success( [ 'images' => $out ] );
+	}
+
+	// =========================================================================
+	// AJAX: mark a category as "novelty-searched" today
+	// =========================================================================
+
+	public function ajax_mark_researched(): void {
+		check_ajax_referer( self::NONCE, 'nonce' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
+		}
+		$cat = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		if ( ! $cat || ! term_exists( $cat, 'product_cat' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
+		}
+		$now = time();
+		update_term_meta( $cat, self::META_RESEARCHED, $now );
+		wp_send_json_success( [
+			'ts'   => $now,
+			'date' => date_i18n( get_option( 'date_format' ), $now ),
+		] );
 	}
 }

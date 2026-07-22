@@ -44,6 +44,13 @@
 	}
 
 	// ---- Category rail ----
+	function showResearch($cat) {
+		var cat = parseInt($cat.attr('data-cat'), 10) || 0;
+		if (!cat) { $('#dze-x-research').hide(); return; }
+		var h = $cat.attr('data-res-h') || '';
+		$('#dze-x-research-when').text(h || i18n.never);
+		$('#dze-x-research').data('cat', cat).show();
+	}
 	$(document).on('click', '.dze-x-cat', function (e) {
 		e.preventDefault();
 		$('.dze-x-cat').removeClass('is-active');
@@ -51,39 +58,61 @@
 		state.cat = parseInt($(this).data('cat'), 10) || 0;
 		var name = state.cat ? $.trim($(this).find('.dze-x-cat-name').text() || $(this).text()) : '';
 		$('#dze-x-crumb').text(name);
+		showResearch($(this));
 		load(true);
 	});
 
-	// ---- Category rail ordering (A→Z / units sold / revenue) ----
-	function catMetric($a, mode) {
-		if (mode === 'qty') { return parseFloat($a.attr('data-qty')) || 0; }
-		if (mode === 'rev') { return parseFloat($a.attr('data-rev')) || 0; }
+	// ---- Mark a category as novelty-searched today ----
+	$('#dze-x-research-mark').on('click', function () {
+		var cat = parseInt($('#dze-x-research').data('cat'), 10) || 0;
+		if (!cat) { return; }
+		var $btn = $(this).prop('disabled', true);
+		$.post(cfg.ajaxUrl, { action: 'dze_explorer_mark_researched', nonce: cfg.nonce, cat: cat })
+			.done(function (res) {
+				$btn.prop('disabled', false);
+				if (!res.success) { return; }
+				$('#dze-x-research-when').text(i18n.justNow);
+				// Keep the rail in sync so re-selecting the category shows it too.
+				var $a = $('.dze-x-cat.is-active');
+				$a.attr('data-res', res.data.ts).attr('data-res-h', i18n.justNow);
+			})
+			.fail(function () { $btn.prop('disabled', false); });
+	});
+
+	// ---- Category rail ordering + scope (rolled-up vs this-category-only) ----
+	function catVal($a, mode, scope) {
+		var d = scope === 'direct' ? '-direct' : '';
+		if (mode === 'qty') { return parseFloat($a.attr('data-qty' + d)) || 0; }
+		if (mode === 'rev') { return parseFloat($a.attr('data-rev' + d)) || 0; }
 		return parseInt($a.attr('data-idx'), 10) || 0;
 	}
-	function orderCats(mode) {
+	function applyCatView() {
+		var mode  = $('#dze-x-catsort').val();
+		var scope = $('#dze-x-catscope').val();
 		$('#dze-explorer .dze-x-cats').each(function () {
 			var $ul = $(this);
 			var lis = $ul.children('li').get();
 			lis.sort(function (la, lb) {
 				var a = $(la).children('.dze-x-cat').first();
 				var b = $(lb).children('.dze-x-cat').first();
-				if (mode === 'az') { return catMetric(a, 'az') - catMetric(b, 'az'); }
-				return catMetric(b, mode) - catMetric(a, mode); // descending
+				if (mode === 'az') { return catVal(a, 'az', scope) - catVal(b, 'az', scope); }
+				return catVal(b, mode, scope) - catVal(a, mode, scope); // descending
 			});
 			lis.forEach(function (li) { $ul.append(li); });
 		});
+		var d = scope === 'direct' ? '-direct' : '';
 		$('.dze-x-cat').not('.dze-x-cat-all').each(function () {
 			var $c = $(this), $badge = $c.find('.dze-x-cat-count');
 			if (mode === 'qty') {
-				$badge.text(($c.attr('data-qty') || '0') + ' ' + i18n.units);
+				$badge.text(($c.attr('data-qty' + d) || '0') + ' ' + i18n.units);
 			} else if (mode === 'rev') {
-				$badge.text($c.attr('data-revfmt') || '');
+				$badge.text($c.attr('data-revfmt' + d) || '');
 			} else {
-				$badge.text($c.attr('data-count') || '0');
+				$badge.text($c.attr('data-count' + d) || '0');
 			}
 		});
 	}
-	$('#dze-x-catsort').on('change', function () { orderCats($(this).val()); });
+	$('#dze-x-catsort, #dze-x-catscope').on('change', applyCatView);
 
 	// ---- Filters ----
 	$('#dze-x-sort, #dze-x-stock').on('change', function () { load(true); });
