@@ -41,6 +41,7 @@ final class DZE_Explorer {
 		add_action( 'wp_ajax_dze_explorer_products',        [ $this, 'ajax_products' ] );
 		add_action( 'wp_ajax_dze_explorer_variations',      [ $this, 'ajax_variations' ] );
 		add_action( 'wp_ajax_dze_explorer_mark_researched', [ $this, 'ajax_mark_researched' ] );
+		add_action( 'wp_ajax_dze_explorer_ai_insights',     [ $this, 'ajax_ai_insights' ] );
 	}
 
 	public function register_menu(): void {
@@ -89,6 +90,9 @@ final class DZE_Explorer {
 				'units'      => __( 'sold', 'dazont-ecom' ),
 				'never'      => __( 'never', 'dazont-ecom' ),
 				'justNow'    => __( 'just now', 'dazont-ecom' ),
+				'sold'       => __( 'sold', 'dazont-ecom' ),
+				'noCats'     => __( 'No categories match.', 'dazont-ecom' ),
+				'aiThinking' => __( 'Analysing this category…', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -98,7 +102,6 @@ final class DZE_Explorer {
 			wp_die( esc_html__( 'Permission denied.', 'dazont-ecom' ) );
 		}
 		$categories = $this->category_tree();
-		$attributes = function_exists( 'wc_get_attribute_taxonomies' ) ? wc_get_attribute_taxonomies() : [];
 		require DZE_DIR . 'admin/views/explorer-page.php';
 	}
 
@@ -417,5 +420,106 @@ final class DZE_Explorer {
 			'ts'   => $now,
 			'date' => date_i18n( get_option( 'date_format' ), $now ),
 		] );
+	}
+
+	// =========================================================================
+	// AJAX: short AI recap of the selected category + sourcing hints
+	// =========================================================================
+
+	public function ajax_ai_insights(): void {
+		check_ajax_referer( self::NONCE, 'nonce' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
+		}
+		if ( ! class_exists( 'DZE_Marketing_Ai' ) || DZE_Marketing_Ai::api_key() === '' ) {
+			wp_send_json_error( [ 'message' => __( 'Add your Anthropic API key in the AI Marketing Assistant settings first.', 'dazont-ecom' ) ] );
+		}
+		$cat  = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		$term = $cat ? get_term( $cat, 'product_cat' ) : null;
+		if ( ! $term instanceof WP_Term ) {
+			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
+		}
+
+		// Category path (ancestors → current).
+		$names = [];
+		foreach ( array_reverse( get_ancestors( $cat, 'product_cat', 'taxonomy' ) ) as $aid ) {
+			$anc = get_term( (int) $aid, 'product_cat' );
+			if ( $anc instanceof WP_Term ) {
+				$names[] = $anc->name;
+			}
+		}
+		$names[] = $term->name;
+		$path    = implode( ' > ', $names );
+
+		// A sample of current product titles in the category (incl. sub-categories).
+		$q = new WP_Query( [
+			'post_type'      => 'product',
+			'post_status'    => 'publish',
+			'posts_per_page' => 40,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+			'no_found_rows'  => true,
+			'fields'         => 'ids',
+			'tax_query'      => [ [ 'taxonomy' => 'product_cat', 'field' => 'term_id', 'terms' => $cat, 'include_children' => true ] ],
+		] );
+		$titles = [];
+		foreach ( $q->posts as $pid ) {
+			$titles[] = '- ' . wp_strip_all_tags( get_the_title( (int) $pid ) );
+		}
+
+		$system = 'You are a senior product-sourcing assistant for an e-commerce catalogue. '
+			. 'You are extremely concise, concrete and practical. Never invent facts about the shop.';
+		$user = "Product category: {$path}\n\n";
+		$user .= $titles
+			? ( "A sample of products currently in this category:\n" . implode( "\n", $titles ) . "\n\n" )
+			: "This category currently has no products.\n\n";
+		$user .= "In 3 short sentences maximum and no more than ~70 words total: "
+			. "(1) summarise the kind of products this category is about, "
+			. "(2) give concrete, specific suggestions (product types, styles, search keywords) the operator could source to fit this category well and fill gaps. "
+			. "Write in the same language as the product titles above. Plain prose, no preamble, no bullet points, no headings.";
+
+		try {
+			$text = $this->call_claude( $system, $user );
+		} catch ( \Throwable $e ) {
+			wp_send_json_error( [ 'message' => $e->getMessage() ] );
+		}
+		$text = trim( $text );
+		if ( $text === '' ) {
+			wp_send_json_error( [ 'message' => __( 'The AI returned nothing. Try again.', 'dazont-ecom' ) ] );
+		}
+		wp_send_json_success( [ 'text' => $text ] );
+	}
+
+	/** Minimal Anthropic Messages call, reusing the Marketing AI key + model. */
+	private function call_claude( string $system, string $user ): string {
+		$resp = wp_remote_post( 'https://api.anthropic.com/v1/messages', [
+			'timeout' => 60,
+			'headers' => [
+				'x-api-key'         => DZE_Marketing_Ai::api_key(),
+				'anthropic-version' => '2023-06-01',
+				'content-type'      => 'application/json',
+			],
+			'body'    => wp_json_encode( [
+				'model'      => DZE_Marketing_Ai::chosen_model(),
+				'max_tokens' => 400,
+				'system'     => $system,
+				'messages'   => [ [ 'role' => 'user', 'content' => $user ] ],
+			] ),
+		] );
+		if ( is_wp_error( $resp ) ) {
+			throw new RuntimeException( $resp->get_error_message() );
+		}
+		$code = (int) wp_remote_retrieve_response_code( $resp );
+		$data = json_decode( (string) wp_remote_retrieve_body( $resp ), true );
+		if ( $code < 200 || $code >= 300 ) {
+			throw new RuntimeException( (string) ( $data['error']['message'] ?? ( 'HTTP ' . $code ) ) );
+		}
+		$text = '';
+		foreach ( (array) ( $data['content'] ?? [] ) as $block ) {
+			if ( ( $block['type'] ?? '' ) === 'text' ) {
+				$text .= (string) ( $block['text'] ?? '' );
+			}
+		}
+		return $text;
 	}
 }

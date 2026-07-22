@@ -5,95 +5,60 @@
 	var cfg  = dzeExplorer;
 	var i18n = cfg.i18n;
 
-	var state = { cat: 0, paged: 1, loading: false, hasMore: false, browseLoaded: false };
-	var searchTimer = null;
+	var state = { cat: 0, paged: 1, loading: false, hasMore: false };
 
 	// =====================================================================
-	// Mode switching (Performance ⇄ Browse)
+	// Category cards (the main screen)
 	// =====================================================================
-	function setMode(mode) {
-		$('.dze-x-tab').removeClass('is-active').filter('[data-mode="' + mode + '"]').addClass('is-active');
-		$('#dze-x-perf').toggle(mode === 'perf');
-		$('#dze-explorer').toggle(mode === 'browse');
-	}
-	$('.dze-x-tab').on('click', function () {
-		var mode = $(this).data('mode');
-		setMode(mode);
-		if (mode === 'browse' && !state.browseLoaded) { load(true); }
-	});
+	var perf = { view: 'grouped', sort: 'qty', search: '' };
 
-	// =====================================================================
-	// Category performance table
-	// =====================================================================
-	var perf = { key: 'qty', dir: 'desc', scope: 'direct', level: 'all', search: '' };
-
-	function perfVal($tr, key, scope) {
-		var d = scope === 'direct' ? '-direct' : '';
-		if (key === 'name') { return $tr.attr('data-name') || ''; }
-		if (key === 'res')  { return parseInt($tr.attr('data-res'), 10) || 0; }
-		if (key === 'count') { return parseFloat($tr.attr('data-count' + d)) || 0; }
-		if (key === 'qty')   { return parseFloat($tr.attr('data-qty' + d)) || 0; }
-		if (key === 'rev')   { return parseFloat($tr.attr('data-rev' + d)) || 0; }
-		return 0;
+	function cardQty($c) {
+		return parseInt($c.attr(perf.view === 'detailed' ? 'data-qty-direct' : 'data-qty'), 10) || 0;
 	}
 
 	function applyPerf() {
-		var $body = $('#dze-x-perf-body');
-		var rows  = $body.children('tr').get();
-		var d     = perf.scope === 'direct' ? '-direct' : '';
+		var $wrap = $('#dze-x-ccards');
+		var cards = $wrap.children('.dze-x-ccard').get();
 		var shown = 0;
 
-		rows.forEach(function (tr) {
-			var $tr = $(tr), ok = true;
-			if (perf.search && ($tr.attr('data-name') || '').indexOf(perf.search) < 0) { ok = false; }
-			if (ok && perf.level === 'top' && parseInt($tr.attr('data-depth'), 10) !== 0) { ok = false; }
-			if (ok && perf.level === 'leaf' && $tr.attr('data-leaf') !== '1') { ok = false; }
-			$tr.toggle(ok);
+		cards.forEach(function (c) {
+			var $c = $(c), ok = true;
+			if (perf.search && ($c.attr('data-name') || '').indexOf(perf.search) < 0) { ok = false; }
+			if (ok && perf.view === 'detailed' && (parseInt($c.attr('data-count-direct'), 10) || 0) === 0) { ok = false; }
+			$c.toggle(ok);
 			if (ok) { shown++; }
-			// numbers follow the chosen scope
-			$tr.children('.dze-x-c-count').text($tr.attr('data-count' + d) || '0');
-			$tr.children('.dze-x-c-qty').text($tr.attr('data-qty' + d) || '0');
-			$tr.children('.dze-x-c-rev').text($tr.attr('data-revfmt' + d) || '');
+			$c.find('.dze-x-ccard-qty').text(cardQty($c) + ' ' + i18n.sold);
 		});
 		$('#dze-x-perf-empty').toggle(shown === 0);
 
-		rows.sort(function (a, b) {
+		cards.sort(function (a, b) {
 			var $a = $(a), $b = $(b);
-			var av = perfVal($a, perf.key, perf.scope), bv = perfVal($b, perf.key, perf.scope);
-			var cmp = perf.key === 'name' ? (av < bv ? -1 : (av > bv ? 1 : 0)) : (av - bv);
-			cmp = perf.dir === 'asc' ? cmp : -cmp;
-			if (cmp !== 0) { return cmp; }
-			// Tie-break by units sold, so "sells a lot AND stale" floats to the top.
-			return perfVal($b, 'qty', perf.scope) - perfVal($a, 'qty', perf.scope);
+			if (perf.sort === 'name') {
+				var an = $a.attr('data-name') || '', bn = $b.attr('data-name') || '';
+				return an < bn ? -1 : (an > bn ? 1 : 0);
+			}
+			if (perf.sort === 'res') {
+				var ar = parseInt($a.attr('data-res'), 10) || 0, br = parseInt($b.attr('data-res'), 10) || 0;
+				if (ar !== br) { return ar - br; } // oldest / never searched first
+				return cardQty($b) - cardQty($a);
+			}
+			return cardQty($b) - cardQty($a); // units sold, descending
 		});
-		rows.forEach(function (tr) { $body.append(tr); });
-
-		$('.dze-x-sortable').removeClass('is-asc is-desc');
-		$('.dze-x-sortable[data-key="' + perf.key + '"]').addClass(perf.dir === 'asc' ? 'is-asc' : 'is-desc');
+		cards.forEach(function (c) { $wrap.append(c); });
 	}
 
-	$('.dze-x-sortable').on('click', function () {
-		var key = $(this).data('key');
-		if (perf.key === key) { perf.dir = perf.dir === 'asc' ? 'desc' : 'asc'; }
-		else { perf.key = key; perf.dir = (key === 'name' || key === 'res') ? 'asc' : 'desc'; }
-		$('.dze-x-axis').removeClass('is-active');
-		applyPerf();
-	});
-
-	$('.dze-x-axis').on('click', function () {
-		$('.dze-x-axis').removeClass('is-active');
+	$('.dze-x-view-btn').on('click', function () {
+		$('.dze-x-view-btn').removeClass('is-active');
 		$(this).addClass('is-active');
-		if ($(this).data('axis') === 'best') { perf.key = 'qty'; perf.dir = 'desc'; }
-		else { perf.key = 'res'; perf.dir = 'asc'; } // stale: never / oldest first
+		perf.view = $(this).data('view');
 		applyPerf();
 	});
-
-	$('#dze-x-perf-scope').on('change', function () { perf.scope = $(this).val(); applyPerf(); });
-	$('#dze-x-perf-level').on('change', function () { perf.level = $(this).val(); applyPerf(); });
+	$('#dze-x-perf-sort').on('change', function () { perf.sort = $(this).val(); applyPerf(); });
 	$('#dze-x-perf-search').on('input', function () { perf.search = ($(this).val() || '').toLowerCase(); applyPerf(); });
 
-	// Mark a category researched, straight from the table.
-	$(document).on('click', '.dze-x-mark', function () {
+	// Mark researched (without opening the overlay).
+	$(document).on('click', '.dze-x-mark', function (e) {
+		e.stopPropagation();
 		var $btn = $(this), cat = parseInt($btn.data('cat'), 10) || 0;
 		if (!cat) { return; }
 		$btn.prop('disabled', true);
@@ -101,51 +66,57 @@
 			.done(function (res) {
 				$btn.prop('disabled', false);
 				if (!res.success) { return; }
-				syncResearched(cat, res.data.ts);
+				var $c = $btn.closest('.dze-x-ccard');
+				$c.attr('data-res', res.data.ts).attr('data-res-h', i18n.justNow);
+				$c.find('.dze-x-ccard-res').text(i18n.justNow);
 			})
 			.fail(function () { $btn.prop('disabled', false); });
 	});
 
-	// Jump from a performance row into the Browse grid, filtered to that category.
-	$(document).on('click', '.dze-x-view', function () {
-		var cat = parseInt($(this).data('cat'), 10) || 0;
-		setMode('browse');
-		$('.dze-x-cat').removeClass('is-active');
-		var $a = $('.dze-x-cat[data-cat="' + cat + '"]').addClass('is-active');
-		state.cat = cat;
-		$('#dze-x-crumb').text(cat && $a.length ? $.trim($a.find('.dze-x-cat-name').text()) : '');
-		if ($a.length) { showResearch($a); }
+	// =====================================================================
+	// Products overlay
+	// =====================================================================
+	function openOverlay($c) {
+		state.cat = parseInt($c.attr('data-cat'), 10) || 0;
+		$('#dze-x-ov-title').text($c.attr('data-path') || '');
+		var thumb = $c.attr('data-thumb') || '';
+		$('#dze-x-ov-thumb').html(thumb ? ('<img src="' + thumb + '" alt="" />') : '');
+		$('#dze-x-ai-panel').hide().empty();
+		$('#dze-x-ai').prop('disabled', false);
+		$('#dze-x-overlay').css('display', 'flex');
+		$('body').addClass('dze-x-ov-open');
 		load(true);
+	}
+	function closeOverlay() { $('#dze-x-overlay').hide(); $('body').removeClass('dze-x-ov-open'); }
+
+	$(document).on('click', '.dze-x-ccard', function () { openOverlay($(this)); });
+	$(document).on('keydown', '.dze-x-ccard', function (e) {
+		if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openOverlay($(this)); }
+	});
+	$('#dze-x-ov-close').on('click', closeOverlay);
+
+	// AI insights for the open category.
+	$('#dze-x-ai').on('click', function () {
+		if (!state.cat) { return; }
+		var $btn = $(this).prop('disabled', true);
+		var $panel = $('#dze-x-ai-panel').show().html('<span class="dze-x-ai-spin"></span>' + i18n.aiThinking);
+		$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: state.cat })
+			.done(function (res) {
+				$btn.prop('disabled', false);
+				if (!res.success) { $panel.text((res.data && res.data.message) || i18n.error); return; }
+				$panel.text(res.data.text);
+			})
+			.fail(function () { $btn.prop('disabled', false); $panel.text(i18n.error); });
 	});
 
-	// Keep both the table row and the rail link in sync after a "researched" mark.
-	function syncResearched(cat, ts) {
-		$('.dze-x-prow[data-cat="' + cat + '"]').attr('data-res', ts).children('.dze-x-c-res').text(i18n.justNow);
-		$('.dze-x-cat[data-cat="' + cat + '"]').attr('data-res', ts).attr('data-res-h', i18n.justNow);
-	}
-
 	// =====================================================================
-	// Browse: product grid
+	// Product grid (inside the overlay)
 	// =====================================================================
-	function filters() {
-		var attr = {};
-		$('.dze-x-attr').each(function () {
-			var v = $(this).val();
-			if (v) { attr[$(this).data('tax')] = v; }
-		});
-		return {
-			s: $('#dze-x-search').val() || '',
-			cat: state.cat,
-			sort: $('#dze-x-sort').val(),
-			stock: $('#dze-x-stock').val(),
-			attr: attr
-		};
-	}
+	function filters() { return { cat: state.cat }; }
 
 	function load(reset) {
 		if (state.loading) { return; }
 		state.loading = true;
-		state.browseLoaded = true;
 		if (reset) { state.paged = 1; $('#dze-x-grid').empty(); }
 		$('#dze-x-status').text(i18n.loading);
 		$('#dze-x-load').hide();
@@ -163,62 +134,12 @@
 		}).fail(function () { $('#dze-x-status').text(i18n.error); state.loading = false; });
 	}
 
-	// ---- Category rail ----
-	function showResearch($cat) {
-		var cat = parseInt($cat.attr('data-cat'), 10) || 0;
-		if (!cat) { $('#dze-x-research').hide(); return; }
-		var h = $cat.attr('data-res-h') || '';
-		$('#dze-x-research-when').text(h || i18n.never);
-		$('#dze-x-research').data('cat', cat).show();
-	}
-	$(document).on('click', '.dze-x-cat', function (e) {
-		e.preventDefault();
-		$('.dze-x-cat').removeClass('is-active');
-		$(this).addClass('is-active');
-		state.cat = parseInt($(this).data('cat'), 10) || 0;
-		var name = state.cat ? $.trim($(this).find('.dze-x-cat-name').text() || $(this).text()) : '';
-		$('#dze-x-crumb').text(name);
-		showResearch($(this));
-		load(true);
-	});
-
-	$('#dze-x-research-mark').on('click', function () {
-		var cat = parseInt($('#dze-x-research').data('cat'), 10) || 0;
-		if (!cat) { return; }
-		var $btn = $(this).prop('disabled', true);
-		$.post(cfg.ajaxUrl, { action: 'dze_explorer_mark_researched', nonce: cfg.nonce, cat: cat })
-			.done(function (res) {
-				$btn.prop('disabled', false);
-				if (!res.success) { return; }
-				$('#dze-x-research-when').text(i18n.justNow);
-				syncResearched(cat, res.data.ts);
-			})
-			.fail(function () { $btn.prop('disabled', false); });
-	});
-
-	// ---- Filters ----
-	$('#dze-x-sort, #dze-x-stock').on('change', function () { load(true); });
-	$(document).on('change', '.dze-x-attr', function () { load(true); });
-	$('#dze-x-search').on('input', function () {
-		clearTimeout(searchTimer);
-		searchTimer = setTimeout(function () { load(true); }, 350);
-	});
-
-	// ---- Load more (button + infinite scroll) ----
 	$('#dze-x-load').on('click', function () { state.paged++; load(false); });
-	$('.dze-x-grid').on('scroll', function () {
+	$('#dze-x-grid').on('scroll', function () {
 		if (state.hasMore && !state.loading) {
 			var el = this;
-			if (el.scrollTop + el.clientHeight >= el.scrollHeight - 300) {
-				state.paged++; load(false);
-			}
+			if (el.scrollTop + el.clientHeight >= el.scrollHeight - 300) { state.paged++; load(false); }
 		}
-	});
-
-	// ---- Focus mode ----
-	$('#dze-x-focus').on('click', function () {
-		$('body').toggleClass('dze-x-focus');
-		$(this).text($('body').hasClass('dze-x-focus') ? i18n.exit : i18n.focus);
 	});
 
 	// ---- Image zoom ----
@@ -246,12 +167,16 @@
 		}).fail(function () { openModal('<p>' + i18n.error + '</p>'); });
 	});
 	$(document).on('click', '#dze-x-modal', function (e) { if (e.target === this) { $(this).hide(); } });
-	$(document).on('keydown', function (e) { if (e.key === 'Escape') { $('.dze-lightbox').remove(); $('#dze-x-modal').hide(); } });
 
-	// ---- Init: land on the director screen ----
-	$(function () {
-		setMode('perf');
-		applyPerf();
+	// ---- Escape: close the most specific thing first ----
+	$(document).on('keydown', function (e) {
+		if (e.key !== 'Escape') { return; }
+		if ($('.dze-lightbox').length) { $('.dze-lightbox').remove(); return; }
+		if ($('#dze-x-modal').is(':visible')) { $('#dze-x-modal').hide(); return; }
+		if ($('#dze-x-overlay').is(':visible')) { closeOverlay(); }
 	});
+
+	// ---- Init ----
+	$(function () { applyPerf(); });
 
 }(jQuery));
