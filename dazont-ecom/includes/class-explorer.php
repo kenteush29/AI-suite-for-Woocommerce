@@ -540,8 +540,8 @@ final class DZE_Explorer {
 		// Saved report first: reopening costs nothing.
 		if ( 'get' === $mode ) {
 			$saved = get_term_meta( $cat, '_dze_insights', true );
-			if ( is_array( $saved ) && ! empty( $saved['text'] ) ) {
-				wp_send_json_success( [ 'text' => (string) $saved['text'], 'ts' => (int) ( $saved['ts'] ?? 0 ), 'saved' => true ] );
+			if ( is_array( $saved ) && ! empty( $saved['data'] ) ) {
+				wp_send_json_success( [ 'data' => $saved['data'], 'ts' => (int) ( $saved['ts'] ?? 0 ), 'saved' => true ] );
 			}
 			wp_send_json_success( [ 'saved' => false ] );
 		}
@@ -613,22 +613,26 @@ final class DZE_Explorer {
 			}
 			$user .= "UNCOVERED search queries (gaps) from our keyword research:\n{$glist}\n";
 		}
-		$user .= "Produce a sourcing report in the language of the product titles, in two parts:\n"
-			. "1. KEYWORDS TO TARGET — exhaustive: group EVERY uncovered query above into concrete products to source. One line per product: product to source — the exact queries it would cover — cumulated volume. Sort by cumulated volume, descending. No query may be dropped, no vague advice: each line must be actionable for a purchasing session.\n"
-			. "2. IDEAS BEYOND THE DATA — based on what the catalogue already contains, list specific product ideas shoppers would expect that appear NEITHER in the products NOR in the query list (missing famous models, variants, themes — e.g. a parody line, missing aircraft/rifle models). One line each, concrete enough to search on a supplier site.\n"
-			. "Plain text only, no markdown syntax.";
+		$user .= "Return ONLY a JSON object, no prose, no code fences, with exactly these keys:\n"
+			. "\"summary\": 2-3 sentences in the language of the product titles — what the category contains today and its biggest weaknesses.\n"
+			. "\"source_list\": exhaustive array grouping EVERY uncovered query above into concrete products to source, each item {\"product\": \"name as you would search it on a supplier site\", \"queries\": [the exact queries it covers], \"volume\": cumulated integer}. Sorted by volume descending. No query may be dropped.\n"
+			. "\"ideas\": array of 5-15 product ideas absent from BOTH the catalogue and the query list (missing famous models, variants, themes, POD lines shoppers would expect), each {\"product\": \"...\", \"why\": \"max 10 words\"}.";
 
 		try {
 			$text = $this->call_claude( $system, $user );
 		} catch ( \Throwable $e ) {
 			wp_send_json_error( [ 'message' => $e->getMessage() ] );
 		}
-		$text = trim( $text );
-		if ( $text === '' ) {
-			wp_send_json_error( [ 'message' => __( 'The AI returned nothing. Try again.', 'dazont-ecom' ) ] );
+		$text = trim( (string) preg_replace( '/^```(?:json)?\s*|\s*```$/i', '', trim( $text ) ) );
+		$data = json_decode( $text, true );
+		if ( ! is_array( $data ) && preg_match( '/\{.*\}/s', $text, $mm ) ) {
+			$data = json_decode( $mm[0], true );
 		}
-		update_term_meta( $cat, '_dze_insights', [ 'text' => $text, 'ts' => time() ] );
-		wp_send_json_success( [ 'text' => $text, 'ts' => time(), 'saved' => true ] );
+		if ( ! is_array( $data ) || empty( $data['source_list'] ) && empty( $data['summary'] ) ) {
+			wp_send_json_error( [ 'message' => __( 'The AI returned an unreadable report. Try again.', 'dazont-ecom' ) ] );
+		}
+		update_term_meta( $cat, '_dze_insights', [ 'data' => $data, 'ts' => time() ] );
+		wp_send_json_success( [ 'data' => $data, 'ts' => time(), 'saved' => true ] );
 	}
 
 	/** Insights model: own setting, else the main Marketing AI model (never Haiku unless chosen). */

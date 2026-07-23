@@ -31,7 +31,7 @@ final class DZE_Keywords {
 	 */
 	public const STATUSES = [ 'covered', 'variation', 'gap', 'to_source', 'uncertain', 'ignored' ];
 
-	private const BATCH        = 80;  // keywords judged per AI call.
+	private const BATCH        = 150; // keywords judged per AI call.
 	private const MAX_PRODUCTS = 400; // product titles sent per call.
 	private const MATCH_MODEL  = 'claude-haiku-4-5-20251001';
 
@@ -334,21 +334,53 @@ final class DZE_Keywords {
 		return ( $v === '' || ! preg_match( '/\d/', $v ) ) ? null : self::num( $v );
 	}
 
-	/** Full keyword set of a category (the Workbench renders/filters client-side). */
+	/**
+	 * Paged, SQL-filtered keyword listing (200 rows per page) + whole-set
+	 * metrics. Everything heavy stays on the server: the browser only ever
+	 * holds one page, which keeps 5000-keyword sets instant.
+	 */
 	public function ajax_list(): void {
 		$this->guard();
 		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
 		if ( ! $term_id ) {
 			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
 		}
+		$paged  = max( 1, (int) ( $_POST['paged'] ?? 1 ) );
+		$q      = sanitize_text_field( wp_unslash( $_POST['q'] ?? '' ) );
+		$vmin   = ( $_POST['vmin'] ?? '' ) !== '' ? (int) $_POST['vmin'] : null;
+		$kdmax  = ( $_POST['kdmax'] ?? '' ) !== '' ? (float) $_POST['kdmax'] : null;
+		$status = sanitize_key( wp_unslash( $_POST['status'] ?? '' ) );
+		$intent = sanitize_text_field( wp_unslash( $_POST['intent'] ?? '' ) );
+		$sortk  = sanitize_key( wp_unslash( $_POST['sortk'] ?? 'volume' ) );
+		$sortd  = 'asc' === ( $_POST['sortd'] ?? '' ) ? 'ASC' : 'DESC';
+		$cols   = [ 'keyword' => 'keyword', 'volume' => 'volume', 'kd' => 'kd', 'cpc' => 'cpc', 'intent' => 'intent', 'status' => 'status' ];
+		$orderby = ( $cols[ $sortk ] ?? 'volume' ) . ' ' . $sortd;
+
 		global $wpdb;
 		$table = self::table();
+		$where = $wpdb->prepare( 'term_id = %d', $term_id );
+		if ( $q !== '' ) {
+			$where .= $wpdb->prepare( ' AND keyword LIKE %s', '%' . $wpdb->esc_like( $q ) . '%' );
+		}
+		if ( null !== $vmin ) {
+			$where .= $wpdb->prepare( ' AND volume >= %d', $vmin );
+		}
+		if ( null !== $kdmax ) {
+			$where .= $wpdb->prepare( ' AND (kd IS NULL OR kd <= %f)', $kdmax );
+		}
+		if ( 'none' === $status ) {
+			$where .= " AND status = ''";
+		} elseif ( $status !== '' && in_array( $status, self::STATUSES, true ) ) {
+			$where .= $wpdb->prepare( ' AND status = %s', $status );
+		}
+		if ( $intent !== '' ) {
+			$where .= $wpdb->prepare( ' AND intent LIKE %s', '%' . $wpdb->esc_like( $intent ) . '%' );
+		}
+
+		$per   = 200;
+		$total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE {$where}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- where built with prepare above.
 		$rows  = $wpdb->get_results(
-			$wpdb->prepare(
-				"SELECT id, keyword, volume, kd, cpc, intent, status, kw_type
-				 FROM {$table} WHERE term_id = %d ORDER BY volume DESC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
-				$term_id
-			),
+			"SELECT id, keyword, volume, kd, cpc, intent, status, kw_type FROM {$table} WHERE {$where} ORDER BY {$orderby}, id ASC LIMIT " . ( ( $paged - 1 ) * $per ) . ", {$per}", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- see above; orderby whitelisted.
 			ARRAY_A
 		);
 		$out = [];
@@ -364,7 +396,34 @@ final class DZE_Keywords {
 				't'      => (string) $r['kw_type'],
 			];
 		}
-		wp_send_json_success( [ 'rows' => $out ] );
+
+		// Whole-set metrics (independent of the filters), computed in SQL.
+		$m = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT COUNT(*) AS total,
+					SUM(status = 'ignored') AS ignored,
+					SUM(CASE WHEN status <> 'ignored' THEN volume ELSE 0 END) AS vol,
+					SUM(CASE WHEN status <> 'ignored' AND cpc IS NOT NULL THEN cpc * volume ELSE 0 END) AS cpcw,
+					SUM(CASE WHEN status <> 'ignored' AND cpc IS NOT NULL THEN volume ELSE 0 END) AS cpcv,
+					AVG(CASE WHEN status <> 'ignored' THEN kd ELSE NULL END) AS kd,
+					SUM(status IN ('gap','to_source')) AS gaps,
+					SUM(CASE WHEN kw_type NOT IN ('category','info') AND status <> 'ignored' THEN 1 ELSE 0 END) AS prod_total,
+					SUM(CASE WHEN kw_type NOT IN ('category','info') AND status IN ('covered','variation') THEN 1 ELSE 0 END) AS covered
+				 FROM {$table} WHERE term_id = %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+				$term_id
+			),
+			ARRAY_A
+		);
+		$intents = $wpdb->get_col( $wpdb->prepare( "SELECT DISTINCT intent FROM {$table} WHERE term_id = %d AND intent <> '' LIMIT 40", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+
+		wp_send_json_success( [
+			'rows'    => $out,
+			'total'   => $total,
+			'per'     => $per,
+			'paged'   => $paged,
+			'metrics' => array_map( 'floatval', (array) $m ),
+			'intents' => array_values( array_unique( (array) $intents ) ),
+		] );
 	}
 
 	/** Set the status of one or many keywords ('' clears it). */

@@ -87,9 +87,20 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-ov-head .dze-x-count { color: #646970; font-size: 13px; }
 .dze-x-ov-actions { margin-left: auto; display: inline-flex; gap: 8px; }
 .dze-x-ai-panel {
-	padding: 14px 18px; background: #f0f6fc; border-bottom: 1px solid #cfe0f0;
-	font-size: 14px; line-height: 1.55; color: #1d2327; white-space: pre-wrap;
+	background: #f0f6fc; border-bottom: 1px solid #cfe0f0; font-size: 13px; line-height: 1.5;
+	color: #1d2327; max-height: 55vh; overflow: auto; flex: 0 0 auto;
 }
+.dze-x-ai-bar {
+	position: sticky; top: 0; display: flex; align-items: center; gap: 10px;
+	padding: 8px 18px; background: #e3eefb; border-bottom: 1px solid #cfe0f0; font-size: 12px; color: #50575e;
+}
+.dze-x-ai-bar-btns { margin-left: auto; display: inline-flex; gap: 6px; }
+.dze-x-ai-body { padding: 12px 18px; }
+.dze-x-ai-sum { margin: 0 0 12px; max-width: 900px; }
+.dze-x-ai-q { color: #646970; font-size: 12px; }
+.dze-x-ai-ideas-t { margin: 14px 0 4px; }
+.dze-x-ai-ideas { margin: 0 0 4px 18px; list-style: disc; }
+.dze-x-ai-body .dze-x-kw-tbl thead th { background: #f0f6fc; }
 .dze-x-ai-spin {
 	display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px;
 	border: 2px solid #c3d9ec; border-top-color: #2271b1; border-radius: 50%; animation: dze-x-spin .8s linear infinite;
@@ -147,6 +158,16 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-kw-row.st-gap td { background: rgba(179, 45, 46, .06); }
 .dze-x-kw-row.st-ignored td { opacity: .5; }
 .dze-x-kw-st { max-width: 120px; }
+.dze-x-stb {
+	border: 1px solid transparent; border-radius: 12px; padding: 2px 10px; cursor: pointer;
+	font-size: 12px; background: #f0f0f1; color: #50575e;
+}
+.dze-x-stb.st-covered { background: rgba(10,112,64,.12); color: #0a7040; }
+.dze-x-stb.st-variation { background: rgba(153,104,0,.14); color: #996800; }
+.dze-x-stb.st-gap { background: rgba(179,45,46,.12); color: #b32d2e; }
+.dze-x-stb.st-to_source { background: rgba(34,113,177,.14); color: #2271b1; }
+.dze-x-stb:hover { border-color: #2271b1; }
+.dze-x-kw-pager { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 12px; font-size: 13px; color: #50575e; }
 .dze-x-kw-map th { text-align: left; padding: 4px 14px 4px 0; font-size: 13px; }
 .dze-x-kw-map td { padding: 4px 0; }
 .dze-x-kw-row.st-variation td { background: rgba(153, 104, 0, .07); }

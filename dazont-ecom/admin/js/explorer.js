@@ -212,15 +212,38 @@
 	});
 
 	// AI insights: saved report shown free of charge; regeneration behind a cost preview.
-	function showReport($panel, data) {
-		var head = '';
-		if (data.ts) {
-			head = '<div style="margin-bottom:8px;color:#646970;font-size:12px;">' + escHtml(i18n.generatedOn) + ' ' +
-				new Date(data.ts * 1000).toLocaleString() +
-				' <button type="button" class="button button-small" id="dze-x-ai-regen">' + escHtml(i18n.regen) + '</button></div>';
+	function showReport($panel, d) {
+		var bar = '<div class="dze-x-ai-bar"><strong>🎯</strong><span>' + escHtml(i18n.generatedOn) + ' ' +
+			(d.ts ? new Date(d.ts * 1000).toLocaleString() : '') + '</span>' +
+			'<span class="dze-x-ai-bar-btns">' +
+			'<button type="button" class="button button-small" id="dze-x-ai-regen">' + escHtml(i18n.regen) + '</button>' +
+			'<button type="button" class="button button-small" id="dze-x-ai-hide">✕</button></span></div>';
+		var body = '';
+		var data = d.data || null;
+		if (data) {
+			if (data.summary) { body += '<p class="dze-x-ai-sum">' + escHtml(data.summary) + '</p>'; }
+			if (data.source_list && data.source_list.length) {
+				body += '<table class="dze-x-kw-tbl"><thead><tr><th>#</th><th>Product to source</th><th>Queries covered</th><th style="text-align:right;">Volume</th></tr></thead><tbody>';
+				data.source_list.forEach(function (r, i) {
+					body += '<tr><td>' + (i + 1) + '</td><td><strong>' + escHtml(r.product || '') + '</strong></td>' +
+						'<td class="dze-x-ai-q">' + escHtml((r.queries || []).join(' · ')) + '</td>' +
+						'<td style="text-align:right;font-weight:600;">' + (parseInt(r.volume, 10) || 0).toLocaleString() + '</td></tr>';
+				});
+				body += '</tbody></table>';
+			}
+			if (data.ideas && data.ideas.length) {
+				body += '<p class="dze-x-ai-ideas-t"><strong>💡 Ideas beyond the keyword data</strong></p><ul class="dze-x-ai-ideas">';
+				data.ideas.forEach(function (r) {
+					body += '<li><strong>' + escHtml(r.product || '') + '</strong>' + (r.why ? ' — ' + escHtml(r.why) : '') + '</li>';
+				});
+				body += '</ul>';
+			}
+		} else if (d.text) {
+			body = '<div style="white-space:pre-wrap;">' + escHtml(d.text) + '</div>';
 		}
-		$panel.html(head + '<div style="white-space:pre-wrap;">' + escHtml(data.text) + '</div>');
+		$panel.html(bar + '<div class="dze-x-ai-body">' + body + '</div>');
 	}
+	$(document).on('click', '#dze-x-ai-hide', function () { $('#dze-x-ai-panel').hide(); });
 	function generateInsights($btn, $panel) {
 		$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: state.cat, mode: 'estimate' })
 			.done(function (res) {
