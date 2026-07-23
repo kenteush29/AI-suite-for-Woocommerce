@@ -614,8 +614,9 @@ final class DZE_Explorer {
 			$user .= "UNCOVERED search queries (gaps) from our keyword research:\n{$glist}\n";
 		}
 		$user .= "Produce a sourcing report in the language of the product titles, in two parts:\n"
-			. "SUMMARY — 3 sentences max: what this category is about, and the most striking product gaps you can see from the catalogue itself, INCLUDING obvious gaps that do not appear in the query list above (e.g. missing famous models/variants shoppers would expect).\n"
-			. "SOURCING LIST — exhaustive: group EVERY uncovered query above into concrete products to source. One line per product: product name — the queries it would cover — cumulated volume. Sort by cumulated volume, descending. No query may be dropped. Plain text only, no markdown syntax.";
+			. "1. KEYWORDS TO TARGET — exhaustive: group EVERY uncovered query above into concrete products to source. One line per product: product to source — the exact queries it would cover — cumulated volume. Sort by cumulated volume, descending. No query may be dropped, no vague advice: each line must be actionable for a purchasing session.\n"
+			. "2. IDEAS BEYOND THE DATA — based on what the catalogue already contains, list specific product ideas shoppers would expect that appear NEITHER in the products NOR in the query list (missing famous models, variants, themes — e.g. a parody line, missing aircraft/rifle models). One line each, concrete enough to search on a supplier site.\n"
+			. "Plain text only, no markdown syntax.";
 
 		try {
 			$text = $this->call_claude( $system, $user );
@@ -628,6 +629,12 @@ final class DZE_Explorer {
 		}
 		update_term_meta( $cat, '_dze_insights', [ 'text' => $text, 'ts' => time() ] );
 		wp_send_json_success( [ 'text' => $text, 'ts' => time(), 'saved' => true ] );
+	}
+
+	/** Insights model: own setting, else the main Marketing AI model (never Haiku unless chosen). */
+	private function insights_model(): string {
+		$m = trim( (string) ( DZE_Marketing_Ai::get_settings()['insights_model'] ?? '' ) );
+		return $m !== '' ? $m : DZE_Marketing_Ai::chosen_model();
 	}
 
 	/** Minimal Anthropic Messages call, reusing the Marketing AI key + model. */
@@ -643,8 +650,8 @@ final class DZE_Explorer {
 				'content-type'      => 'application/json',
 			],
 			'body'    => wp_json_encode( [
-				'model'      => DZE_Marketing_Ai::chosen_model(),
-				'max_tokens' => 400,
+				'model'      => $this->insights_model(),
+				'max_tokens' => 4000,
 				'system'     => $system,
 				'messages'   => [ [ 'role' => 'user', 'content' => $user ] ],
 			] ),
@@ -657,7 +664,7 @@ final class DZE_Explorer {
 		if ( $code < 200 || $code >= 300 ) {
 			throw new RuntimeException( (string) ( $data['error']['message'] ?? ( 'HTTP ' . $code ) ) );
 		}
-		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ), DZE_Marketing_Ai::chosen_model() );
+		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ), $this->insights_model() );
 		$text = '';
 		foreach ( (array) ( $data['content'] ?? [] ) as $block ) {
 			if ( ( $block['type'] ?? '' ) === 'text' ) {

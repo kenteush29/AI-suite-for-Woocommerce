@@ -136,6 +136,7 @@ final class DZE_Marketing_Ai {
 			'country_pools' => [], // lang_code => [ ISO-3166 alpha-2, ... ]
 			'budget_month'  => 0,  // USD cap for ALL AI calls per month; 0 = no cap.
 			'match_model'   => '', // keyword-matching model; empty = Haiku default.
+			'insights_model'=> '', // See-opportunities report model; empty = main model.
 		] );
 	}
 
@@ -272,6 +273,7 @@ final class DZE_Marketing_Ai {
 				'model'        => $model,
 				'budget_month' => max( 0, (float) str_replace( ',', '.', (string) ( $in['budget_month'] ?? 0 ) ) ),
 				'match_model'  => sanitize_text_field( (string) ( $in['match_model'] ?? '' ) ),
+				'insights_model' => sanitize_text_field( (string) ( $in['insights_model'] ?? '' ) ),
 			] );
 		}
 		if ( 'events' === $section ) {

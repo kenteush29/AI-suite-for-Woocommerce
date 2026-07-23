@@ -24,7 +24,7 @@
 
 /* List: header + rows share one grid so columns line up. */
 .dze-x-list-head, .dze-x-row {
-	display: grid; grid-template-columns: minmax(0,1fr) 120px 120px 130px 130px; align-items: center; gap: 10px;
+	display: grid; grid-template-columns: minmax(0,1fr) 110px 110px 120px 330px; align-items: center; gap: 12px;
 }
 .dze-x-list-head {
 	padding: 4px 16px; border-bottom: 1px solid #e2e2e2; background: #fbfbfc;
@@ -151,9 +151,11 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-kw-map td { padding: 4px 0; }
 .dze-x-kw-row.st-variation td { background: rgba(153, 104, 0, .07); }
 .dze-x-kw-row.st-to_source td { background: rgba(34, 113, 177, .08); }
-.dze-x-ico { font-size: 13px; cursor: help; margin-right: 2px; }
+.dze-x-ico { font-size: 17px; cursor: help; margin-right: 4px; }
+.dze-x-row-act { display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; }
 .dze-x-ico-kw.is-off { opacity: .35; }
-.dze-x-row-act .button-small { min-width: 30px; padding: 0 6px; }
+.dze-x-row-act .button-small { min-width: 34px; padding: 2px 8px; font-size: 14px; height: auto; }
+.dze-x-row-kwbadge { font-size: 12px; font-weight: 600; margin-top: 2px; }
 .dze-x-kw-prog { font-size: 12px; color: #2271b1; white-space: nowrap; }
 
 /* Product card: covered-keywords badge */

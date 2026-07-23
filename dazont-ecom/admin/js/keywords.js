@@ -265,7 +265,7 @@
 	function refreshBadge() {
 		var gaps = kw.rows.filter(function (r) { return r.status === 'gap'; }).length;
 		var $b = $('.dze-x-row[data-cat="' + kw.cat + '"] .dze-x-row-kwbadge');
-		if (kw.rows.length) { $b.text(kw.rows.length + ' kw · ' + gaps + ' gaps').show(); }
+		if (kw.rows.length) { $b.text(kw.rows.length + ' kw · ' + gaps + ' ' + (i18n.opps || 'opportunities')).show(); }
 		else { $b.hide(); }
 	}
 
