@@ -120,6 +120,10 @@
 		chips.push(esc(i18n.mVolume) + ' <strong>' + (m.vol || 0).toLocaleString() + '</strong>');
 		if (m.cpcv > 0) { chips.push(esc(i18n.mWcpc) + ' <strong>' + (m.cpcw / m.cpcv).toFixed(2) + '</strong>'); }
 		if (m.kd) { chips.push(esc(i18n.mAvgKd) + ' <strong>' + Math.round(m.kd) + '</strong>'); }
+		if (m.total > 0) {
+			var apct = Math.round(100 * (m.analysed || 0) / m.total);
+			chips.push('<span class="dze-x-kw-anz">' + esc(i18n.mAnalysed || 'Analysed') + ' <strong>' + (m.analysed || 0).toLocaleString() + '/' + m.total.toLocaleString() + '</strong> (' + apct + '%)</span>');
+		}
 		if (m.prod_total > 0) { chips.push(esc(i18n.mCompletion) + ' <strong>' + Math.round(100 * (m.covered || 0) / m.prod_total) + '%</strong> (' + (m.covered || 0) + '/' + m.prod_total + ')'); }
 		chips.push('<span class="dze-x-kw-gaps">' + (m.gaps || 0) + ' ' + esc(i18n.mGaps) + '</span>');
 		return chips.join('<span class="dze-x-kw-sep">·</span>');

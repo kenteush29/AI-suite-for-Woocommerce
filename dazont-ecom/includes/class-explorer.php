@@ -121,6 +121,7 @@ final class DZE_Explorer {
 				'mAvgKd'     => __( 'Avg KD', 'dazont-ecom' ),
 				'mCompletion'=> __( 'Completion', 'dazont-ecom' ),
 				'mGaps'      => __( 'gaps', 'dazont-ecom' ),
+				'mAnalysed'  => __( 'Analysed', 'dazont-ecom' ),
 				'mIgnored'   => __( 'ignored', 'dazont-ecom' ),
 				'showMore'   => __( 'Show more', 'dazont-ecom' ),
 				'stVariation'=> __( 'Variation only', 'dazont-ecom' ),
@@ -619,6 +620,13 @@ final class DZE_Explorer {
 			. "\"source_list\": exhaustive array grouping EVERY uncovered query above into concrete products to source, each item {\"product\": \"name as you would search it on a supplier site\", \"queries\": [the exact queries it covers], \"volume\": cumulated integer}. Sorted by volume descending. No query may be dropped.\n"
 			. "\"ideas\": array of 5-15 product ideas absent from BOTH the catalogue and the query list (missing famous models, variants, themes, POD lines shoppers would expect), each {\"product\": \"...\", \"why\": \"max 10 words\"}.";
 
+		// The report is a single long generation — give PHP room so the request
+		// doesn't die at the default 30s and surface as a generic AJAX failure.
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 300 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+		wp_raise_memory_limit( 'admin' );
+
 		try {
 			$text = $this->call_claude( $system, $user );
 		} catch ( \Throwable $e ) {
@@ -672,7 +680,7 @@ final class DZE_Explorer {
 			throw new RuntimeException( DZE_Ai_Usage::budget_message() );
 		}
 		$resp = wp_remote_post( 'https://api.anthropic.com/v1/messages', [
-			'timeout' => 60,
+			'timeout' => 180,
 			'headers' => [
 				'x-api-key'         => DZE_Marketing_Ai::api_key(),
 				'anthropic-version' => '2023-06-01',

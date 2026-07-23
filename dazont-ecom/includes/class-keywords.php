@@ -408,6 +408,7 @@ final class DZE_Keywords {
 			$wpdb->prepare(
 				"SELECT COUNT(*) AS total,
 					SUM(status = 'ignored') AS ignored,
+					SUM(kw_type <> '') AS analysed,
 					SUM(CASE WHEN status <> 'ignored' THEN volume ELSE 0 END) AS vol,
 					SUM(CASE WHEN status <> 'ignored' AND cpc IS NOT NULL THEN cpc * volume ELSE 0 END) AS cpcw,
 					SUM(CASE WHEN status <> 'ignored' AND cpc IS NOT NULL THEN volume ELSE 0 END) AS cpcv,
