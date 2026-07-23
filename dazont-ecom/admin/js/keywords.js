@@ -218,6 +218,19 @@
 		if (!ids.length) { return; }
 		postStatus(ids, status, function () { loadRows(); refreshBadge(); });
 	});
+	$('#dze-x-kw-delsel').on('click', function () {
+		var ids = Object.keys(kw.sel).filter(function (id) { return kw.sel[id]; }).map(Number);
+		if (!ids.length) { return; }
+		if (!window.confirm(ids.length + ' keywords — delete permanently?')) { return; }
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_delete', nonce: cfg.nonce, ids: ids }).done(function () { kw.sel = {}; loadRows(); refreshBadge(); });
+	});
+	$('#dze-x-kw-deladded').on('click', function () {
+		if (!window.confirm(i18n.confirmDelAdded || 'Remove the auto-added product-title keywords?')) { return; }
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_delete', nonce: cfg.nonce, cat: cat(), added: 1 }).done(function (res) {
+			loadRows(); refreshBadge();
+			if (res && res.success) { window.alert((res.data.deleted || 0) + ' removed'); }
+		});
+	});
 
 	// Keep the performance-list badge + metrics in sync (server truth).
 	function refreshBadge() {
@@ -246,8 +259,9 @@
 	function renderProgress(p) {
 		if (p.state === 'running') {
 			var pct = p.total ? Math.round(100 * p.done / p.total) : 0;
+			var cat = p.termName ? '<span class="dze-x-pbar-cat">' + esc(p.termName) + '</span> ' : '';
 			setProg(progressBar(pct) +
-				'<span class="dze-x-pbar-txt">' + esc(i18n.analysing) + ' ' + p.done.toLocaleString() + '/' + p.total.toLocaleString() + ' · ' + pct + '%</span>' +
+				'<span class="dze-x-pbar-txt">' + cat + esc(i18n.analysing) + ' ' + p.done.toLocaleString() + '/' + p.total.toLocaleString() + ' · ' + pct + '%</span>' +
 				'<button type="button" class="button-link dze-x-pstop" title="Stop">✕</button>');
 		} else if (p.state === 'done') {
 			setProg(progressBar(100) + '<span class="dze-x-pbar-txt">' + esc(i18n.analyseDone) + '</span>');
@@ -284,8 +298,10 @@
 		});
 	});
 
+	function minVol() { var v = parseInt($('#dze-x-kw-minvol').val(), 10); return isNaN(v) ? 0 : Math.max(0, v); }
+
 	function startJob(catId) {
-		$.post(cfg.ajaxUrl, { action: 'dze_kw_start', nonce: cfg.nonce, cat: catId })
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_start', nonce: cfg.nonce, cat: catId, minvol: minVol() })
 			.done(function (res) {
 				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
 				startPolling();
@@ -294,7 +310,7 @@
 	}
 	// estimate → confirm cost (or offer reset when already analysed) → start job.
 	function estimateThen(catId) {
-		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: catId })
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: catId, minvol: minVol() })
 			.done(function (res) {
 				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
 				if (res.data.empty) {

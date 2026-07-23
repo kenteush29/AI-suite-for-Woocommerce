@@ -113,16 +113,23 @@ body.dze-x-ov-open { overflow: hidden; }
 
 /* ===================== Product grid (inside the overlay) ================= */
 .dze-x-grid {
-	flex: 1; overflow: auto; padding: 16px;
-	display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); align-content: start;
+	flex: 1; overflow: auto; padding: 16px; --dze-cols: 6;
+	display: grid; gap: 12px; grid-template-columns: repeat(var(--dze-cols), minmax(0, 1fr)); align-content: start;
 }
 .dze-x-card {
-	background: #fff; border: 1px solid #e2e2e2; border-radius: 10px; padding: 10px;
+	background: #fff; border: 1px solid #e2e2e2; border-radius: 10px; padding: 8px;
 	display: flex; flex-direction: column; gap: 6px;
 }
-.dze-x-thumb { aspect-ratio: 1/1; overflow: hidden; border-radius: 8px; background: #f6f7f7; display: flex; align-items: center; justify-content: center; }
+.dze-x-thumb { position: relative; aspect-ratio: 1/1; overflow: hidden; border-radius: 8px; background: #f6f7f7; display: flex; align-items: center; justify-content: center; }
 .dze-x-img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; }
-.dze-x-name { font-weight: 600; font-size: 13px; line-height: 1.3; }
+/* Details are hidden until hover, revealed OVER the image, to fit more products. */
+.dze-x-card-hover {
+	position: absolute; inset: 0; background: rgba(255,255,255,.96); padding: 8px;
+	display: flex; flex-direction: column; gap: 5px; opacity: 0; pointer-events: none; transition: opacity .12s ease;
+	overflow: auto;
+}
+.dze-x-card:hover .dze-x-card-hover { opacity: 1; pointer-events: auto; }
+.dze-x-name { font-weight: 600; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dze-x-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #555; }
 .dze-x-sales { font-size: 12px; font-weight: 600; color: #2271b1; }
 .dze-x-date { font-size: 11px; color: #787c82; }
@@ -131,7 +138,6 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-status { margin-left: 8px; color: #666; font-size: 13px; }
 
 /* ===================== Keyword Workbench ================================ */
-.dze-x-row-kwbadge { display: block; font-size: 11px; color: #7c5cff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dze-x-kwpanel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .dze-x-kw-bar {
 	display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
@@ -178,7 +184,27 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-pbar { display: inline-block; width: 160px; height: 10px; background: #e2e4e7; border-radius: 6px; overflow: hidden; vertical-align: middle; }
 .dze-x-pbar-fill { display: block; height: 100%; background: #2271b1; border-radius: 6px; transition: width .4s ease; }
 .dze-x-pbar-txt { font-size: 12px; color: #2271b1; white-space: nowrap; }
+.dze-x-pbar-cat { font-weight: 600; color: #1d2327; }
 .dze-x-pstop { color: #b32d2e; text-decoration: none; font-size: 13px; }
+
+/* Category-row keyword stats (replaces the old key icon) */
+.dze-x-row-kwbadge { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 12px; margin-top: 2px; }
+.dze-x-kwstat { color: #50575e; }
+.dze-x-kwopp { color: #b32d2e; }
+.dze-x-minvol { font-size: 12px; color: #50575e; display: inline-flex; align-items: center; gap: 4px; }
+.dze-x-kw-sep2 { color: #c3c4c7; }
+
+/* Overlay header: title + sub-line + columns selector */
+.dze-x-ov-headinfo { display: flex; flex-direction: column; min-width: 0; }
+.dze-x-ov-sub { font-size: 12px; color: #646970; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dze-x-ov-opp { color: #b32d2e; font-weight: 600; }
+.dze-x-ov-dot { margin: 0 6px; color: #c3c4c7; }
+.dze-x-ov-cols { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #646970; }
+.dze-x-ov-cols select { width: 52px; }
+
+/* Report: opportunity count line */
+.dze-x-ai-count { font-size: 13px; margin: 4px 0 8px; }
+.dze-x-ai-count strong { color: #2271b1; font-size: 15px; }
 .dze-x-kw-map th { text-align: left; padding: 4px 14px 4px 0; font-size: 13px; }
 .dze-x-kw-map td { padding: 4px 0; }
 .dze-x-kw-row.st-variation td { background: rgba(153, 104, 0, .07); }
@@ -187,7 +213,6 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-row-act { display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; }
 .dze-x-ico-kw.is-off { opacity: .35; }
 .dze-x-row-act .button-small { min-width: 34px; padding: 2px 8px; font-size: 14px; height: auto; }
-.dze-x-row-kwbadge { font-size: 12px; font-weight: 600; margin-top: 2px; }
 .dze-x-kw-prog { font-size: 12px; color: #2271b1; white-space: nowrap; }
 
 /* Product card: covered-keywords badge */

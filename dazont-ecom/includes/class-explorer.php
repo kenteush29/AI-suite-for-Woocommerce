@@ -137,6 +137,9 @@ final class DZE_Explorer {
 				'generatedOn'=> __( 'Report saved on', 'dazont-ecom' ),
 				'regen'      => __( '↻ Regenerate', 'dazont-ecom' ),
 				'reanalyse'  => __( 'Re-analyse all keywords from scratch (clears current verdicts)?', 'dazont-ecom' ),
+				'opps'       => __( 'opportunities', 'dazont-ecom' ),
+				'mAnalysed'  => __( 'Analysed', 'dazont-ecom' ),
+				'confirmDelAdded' => __( 'Remove the auto-added product-title keywords?', 'dazont-ecom' ),
 			],
 		] );
 		wp_localize_script( 'dze-explorer', 'dzeExplorer', [
@@ -157,6 +160,13 @@ final class DZE_Explorer {
 				'justNow'    => __( 'just now', 'dazont-ecom' ),
 				'generatedOn'=> __( 'Report saved on', 'dazont-ecom' ),
 				'regen'      => __( '↻ Regenerate', 'dazont-ecom' ),
+				'opportunities' => __( 'opportunities', 'dazont-ecom' ),
+				'lastSearchShort' => __( 'Last search', 'dazont-ecom' ),
+				'sourcingOpps' => __( 'sourcing opportunities', 'dazont-ecom' ),
+				'productToSource' => __( 'Product to source', 'dazont-ecom' ),
+				'queriesCovered' => __( 'Queries covered', 'dazont-ecom' ),
+				'fVolume'    => __( 'Volume', 'dazont-ecom' ),
+				'ideasBeyond' => __( 'Ideas beyond the keyword data', 'dazont-ecom' ),
 				'sold'       => __( 'sold', 'dazont-ecom' ),
 				'products'   => __( 'products', 'dazont-ecom' ),
 				'noCats'     => __( 'No categories match.', 'dazont-ecom' ),
@@ -228,6 +238,7 @@ final class DZE_Explorer {
 					'kw'                => (int) ( $kwc[ $cid ]['kw'] ?? 0 ),
 					'gaps'              => (int) ( $kwc[ $cid ]['gaps'] ?? 0 ),
 					'pending'           => (int) ( $kwc[ $cid ]['pending'] ?? 0 ),
+					'analysed'          => (int) ( $kwc[ $cid ]['analysed'] ?? 0 ),
 					'image'             => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
 					'children'          => $build( $cid ),
 				];
@@ -424,35 +435,37 @@ final class DZE_Explorer {
 		<div class="dze-x-card">
 			<div class="dze-x-thumb dze-thumb-wrap">
 				<img class="dze-thumb dze-x-img" src="<?php echo esc_url( $thumb ); ?>" data-full="<?php echo esc_url( $full ); ?>" alt="" loading="lazy" />
+				<div class="dze-x-card-hover">
+					<div class="dze-x-meta">
+						<span><?php echo wp_kses_post( $product->get_price_html() ); ?></span>
+						<span class="dze-x-id">#<?php echo (int) $product->get_id(); ?></span>
+					</div>
+					<div class="dze-x-sales"><?php
+						/* translators: %s: number of units sold */
+						echo esc_html( sprintf( _n( '%s sold', '%s sold', $sales, 'dazont-ecom' ), number_format_i18n( $sales ) ) );
+						if ( $kwcov > 0 ) : ?>
+							<button type="button" class="dze-x-kwprod" data-product="<?php echo (int) $product->get_id(); ?>" data-cat="<?php echo (int) $cat; ?>"><?php
+								/* translators: %s: number of covered keywords */
+								echo esc_html( sprintf( __( '🔑 %s kw covered', 'dazont-ecom' ), number_format_i18n( $kwcov ) ) );
+							?></button>
+						<?php endif; ?></div>
+					<div class="dze-x-date"><?php
+						/* translators: %s: product publication date */
+						printf( esc_html__( 'Published: %s', 'dazont-ecom' ), esc_html( get_the_date( '', $product->get_id() ) ) );
+					?></div>
+					<div class="dze-x-actions">
+						<?php if ( $edit ) : ?><a class="button button-small" href="<?php echo esc_url( $edit ); ?>" target="_blank" onclick="event.stopPropagation();"><?php esc_html_e( 'Edit', 'dazont-ecom' ); ?></a><?php endif; ?>
+						<?php if ( $view ) : ?><a class="button button-small" href="<?php echo esc_url( $view ); ?>" target="_blank" onclick="event.stopPropagation();"><?php esc_html_e( 'View', 'dazont-ecom' ); ?></a><?php endif; ?>
+						<?php if ( $is_var && $var_count > 0 ) : ?>
+							<button type="button" class="button button-small dze-x-vars" data-product="<?php echo (int) $product->get_id(); ?>"><?php
+								/* translators: %d: number of variations */
+								echo esc_html( sprintf( __( 'Variations (%d)', 'dazont-ecom' ), $var_count ) );
+							?></button>
+						<?php endif; ?>
+					</div>
+				</div>
 			</div>
-			<div class="dze-x-name"><?php echo esc_html( $product->get_name() ); ?></div>
-			<div class="dze-x-meta">
-				<span><?php echo wp_kses_post( $product->get_price_html() ); ?></span>
-				<span class="dze-x-id">#<?php echo (int) $product->get_id(); ?></span>
-			</div>
-			<div class="dze-x-sales"><?php
-				/* translators: %s: number of units sold */
-				echo esc_html( sprintf( _n( '%s sold', '%s sold', $sales, 'dazont-ecom' ), number_format_i18n( $sales ) ) );
-				if ( $kwcov > 0 ) : ?>
-					<button type="button" class="dze-x-kwprod" data-product="<?php echo (int) $product->get_id(); ?>" data-cat="<?php echo (int) $cat; ?>"><?php
-						/* translators: %s: number of covered keywords */
-						echo esc_html( sprintf( __( '🔑 %s kw covered', 'dazont-ecom' ), number_format_i18n( $kwcov ) ) );
-					?></button>
-				<?php endif; ?></div>
-			<div class="dze-x-date"><?php
-				/* translators: %s: product publication date */
-				printf( esc_html__( 'Published: %s', 'dazont-ecom' ), esc_html( get_the_date( '', $product->get_id() ) ) );
-			?></div>
-			<div class="dze-x-actions">
-				<?php if ( $edit ) : ?><a class="button button-small" href="<?php echo esc_url( $edit ); ?>" target="_blank"><?php esc_html_e( 'Edit', 'dazont-ecom' ); ?></a><?php endif; ?>
-				<?php if ( $view ) : ?><a class="button button-small" href="<?php echo esc_url( $view ); ?>" target="_blank"><?php esc_html_e( 'View', 'dazont-ecom' ); ?></a><?php endif; ?>
-				<?php if ( $is_var && $var_count > 0 ) : ?>
-					<button type="button" class="button button-small dze-x-vars" data-product="<?php echo (int) $product->get_id(); ?>"><?php
-						/* translators: %d: number of variations */
-						echo esc_html( sprintf( __( 'Variations (%d)', 'dazont-ecom' ), $var_count ) );
-					?></button>
-				<?php endif; ?>
-			</div>
+			<div class="dze-x-name" title="<?php echo esc_attr( $product->get_name() ); ?>"><?php echo esc_html( $product->get_name() ); ?></div>
 		</div>
 		<?php
 		return (string) ob_get_clean();

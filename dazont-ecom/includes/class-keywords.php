@@ -65,6 +65,7 @@ final class DZE_Keywords {
 		add_action( 'wp_ajax_dze_kw_for_product', [ $this, 'ajax_for_product' ] );
 		add_action( 'wp_ajax_dze_kw_opps',        [ $this, 'ajax_opportunities' ] );
 		add_action( 'wp_ajax_dze_kw_reset',       [ $this, 'ajax_reset' ] );
+		add_action( 'wp_ajax_dze_kw_delete',      [ $this, 'ajax_delete' ] );
 	}
 
 	public static function table(): string {
@@ -116,13 +117,19 @@ final class DZE_Keywords {
 			return [];
 		}
 		$rows = $wpdb->get_results(
-			"SELECT term_id, COUNT(*) AS kw, SUM(status IN ('gap','to_source')) AS gaps, SUM(kw_type = '') AS pending
+			"SELECT term_id, COUNT(*) AS kw, SUM(status IN ('gap','to_source')) AS gaps,
+				SUM(kw_type = '') AS pending, SUM(kw_type <> '') AS analysed
 			 FROM {$table} GROUP BY term_id", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 			ARRAY_A
 		);
 		$out = [];
 		foreach ( (array) $rows as $r ) {
-			$out[ (int) $r['term_id'] ] = [ 'kw' => (int) $r['kw'], 'gaps' => (int) $r['gaps'], 'pending' => (int) $r['pending'] ];
+			$out[ (int) $r['term_id'] ] = [
+				'kw'       => (int) $r['kw'],
+				'gaps'     => (int) $r['gaps'],
+				'pending'  => (int) $r['pending'],
+				'analysed' => (int) $r['analysed'],
+			];
 		}
 		return $out;
 	}
@@ -507,16 +514,17 @@ final class DZE_Keywords {
 	public function ajax_estimate(): void {
 		$this->guard();
 		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		$minvol  = isset( $_POST['minvol'] ) ? max( 0, (int) $_POST['minvol'] ) : 0;
 		global $wpdb;
-		$table = self::table();
-		if ( $term_id ) {
-			$pending = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
-		} else {
-			$pending = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE kw_type = ''" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
-		}
+		$table   = self::table();
+		$pending = $term_id ? $this->term_pending( $term_id, $minvol ) : $this->all_pending( $minvol );
 		if ( ! $pending ) {
-			// Nothing pending, but the set may already be fully analysed: let the
-			// caller offer a reset + re-analyse (handy after tuning the matching).
+			// Lower-volume keywords still pending? The threshold hid them.
+			$anyPending = $term_id ? $this->term_pending( $term_id, 0 ) : $this->all_pending( 0 );
+			if ( $anyPending > 0 && $minvol > 0 ) {
+				wp_send_json_error( [ 'message' => sprintf( /* translators: %d: threshold */ __( 'No keywords with volume ≥ %d left to analyse. Lower the threshold to include the rest.', 'dazont-ecom' ), $minvol ) ] );
+			}
+			// Fully analysed: let the caller offer a reset + re-analyse.
 			$total = $term_id
 				? (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d", $term_id ) ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 				: (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
@@ -551,20 +559,25 @@ final class DZE_Keywords {
 	// Background analysis job (survives closing the page)
 	// =========================================================================
 
-	private function all_pending(): int {
+	private function all_pending( int $minvol = 0 ): int {
 		global $wpdb;
 		$table = self::table();
-		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE kw_type = ''" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE kw_type = '' AND volume >= %d", $minvol ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 	}
-	private function term_pending( int $term_id ): int {
+	private function term_pending( int $term_id, int $minvol = 0 ): int {
 		global $wpdb;
 		$table = self::table();
-		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = '' AND volume >= %d", $term_id, $minvol ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 	}
-	private function next_pending_term(): int {
+	private function next_pending_term( int $minvol = 0 ): int {
 		global $wpdb;
 		$table = self::table();
-		return (int) $wpdb->get_var( "SELECT term_id FROM {$table} WHERE kw_type = '' ORDER BY term_id LIMIT 1" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT term_id FROM {$table} WHERE kw_type = '' AND volume >= %d ORDER BY term_id LIMIT 1", $minvol ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+	}
+
+	/** Cheap local verdict for obviously off-site queries (marketplaces, how-to). */
+	private function obvious_info( string $kw ): bool {
+		return (bool) preg_match( '/\b(amazon|ebay|etsy|walmart|aliexpress|alibaba|shein|temu|wish|wikipedia|reddit|youtube|pinterest|how to|near me|for sale)\b/i', $kw );
 	}
 
 	/** Enqueue one run of the worker (Action Scheduler preferred, cron fallback). */
@@ -595,16 +608,19 @@ final class DZE_Keywords {
 			wp_send_json_error( [ 'message' => __( 'An analysis is already running. Wait for it to finish.', 'dazont-ecom' ) ] );
 		}
 		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
-		$total   = $term_id ? $this->term_pending( $term_id ) : $this->all_pending();
+		$minvol  = isset( $_POST['minvol'] ) ? max( 0, (int) $_POST['minvol'] ) : 0;
+		$total   = $term_id ? $this->term_pending( $term_id, $minvol ) : $this->all_pending( $minvol );
 		if ( ! $total ) {
-			wp_send_json_error( [ 'message' => __( 'Nothing to analyse.', 'dazont-ecom' ) ] );
+			wp_send_json_error( [ 'message' => __( 'Nothing to analyse at this volume threshold.', 'dazont-ecom' ) ] );
 		}
 		update_option( self::JOB_OPT, [
 			'scope'   => $term_id,
+			'minvol'  => $minvol,
 			'total'   => $total,
 			'done'    => 0,
 			'status'  => 'running',
 			'message' => '',
+			'termName'=> '',
 			'started' => time(),
 			'heartbeat' => time(),
 		], false );
@@ -620,15 +636,16 @@ final class DZE_Keywords {
 			wp_send_json_success( [ 'state' => 'idle' ] );
 		}
 		// Re-kick a stalled running job (e.g. cron missed) so it always finishes.
-		if ( ( $job['status'] ?? '' ) === 'running' && ( time() - (int) ( $job['heartbeat'] ?? 0 ) ) > 90 ) {
+		if ( ( $job['status'] ?? '' ) === 'running' && ( time() - (int) ( $job["heartbeat"] ?? 0 ) ) > 40 ) {
 			$this->kick();
 		}
 		wp_send_json_success( [
-			'state'   => (string) ( $job['status'] ?? 'idle' ),
-			'scope'   => (int) ( $job['scope'] ?? 0 ),
-			'total'   => (int) ( $job['total'] ?? 0 ),
-			'done'    => min( (int) ( $job['done'] ?? 0 ), (int) ( $job['total'] ?? 0 ) ),
-			'message' => (string) ( $job['message'] ?? '' ),
+			'state'    => (string) ( $job['status'] ?? 'idle' ),
+			'scope'    => (int) ( $job['scope'] ?? 0 ),
+			'total'    => (int) ( $job['total'] ?? 0 ),
+			'done'     => min( (int) ( $job['done'] ?? 0 ), (int) ( $job['total'] ?? 0 ) ),
+			'termName' => (string) ( $job['termName'] ?? '' ),
+			'message'  => (string) ( $job['message'] ?? '' ),
 		] );
 	}
 
@@ -644,53 +661,66 @@ final class DZE_Keywords {
 	 * job is complete. Runs server-side, so closing the page does not stop it.
 	 */
 	public function run_job(): void {
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
 		$job = get_option( self::JOB_OPT );
 		if ( ! is_array( $job ) || ( $job['status'] ?? '' ) !== 'running' ) {
 			return;
 		}
-		if ( class_exists( 'DZE_Ai_Usage' ) && DZE_Ai_Usage::over_budget() ) {
-			$job['status']  = 'error';
-			$job['message'] = DZE_Ai_Usage::budget_message();
-			update_option( self::JOB_OPT, $job, false );
-			return;
-		}
-		$scope   = (int) $job['scope'];
-		$term_id = $scope ?: $this->next_pending_term();
-		if ( ! $term_id ) {
-			$job['status'] = 'done';
-			update_option( self::JOB_OPT, $job, false );
-			return;
-		}
-		try {
-			$processed = $this->process_batch( $term_id );
-		} catch ( \Throwable $e ) {
-			$job['status']  = 'error';
-			$job['message'] = $e->getMessage();
-			update_option( self::JOB_OPT, $job, false );
-			return;
-		}
-		$job['done']     += $processed;
-		$job['heartbeat'] = time();
+		$minvol   = (int) ( $job['minvol'] ?? 0 );
+		$scope    = (int) $job['scope'];
+		$deadline = time() + 45; // chain several batches per worker run to cut queue latency.
 
-		// A category just finished: fold in its uncovered product titles.
-		if ( $this->term_pending( $term_id ) === 0 ) {
-			$this->autotitles_term( $term_id );
-		}
-		$remaining = $scope ? $this->term_pending( $scope ) : $this->all_pending();
-		if ( $remaining > 0 && $processed > 0 ) {
-			update_option( self::JOB_OPT, $job, false );
-			$this->kick();
-		} else {
-			$job['status'] = 'done';
-			update_option( self::JOB_OPT, $job, false );
-		}
+		do {
+			if ( class_exists( 'DZE_Ai_Usage' ) && DZE_Ai_Usage::over_budget() ) {
+				$job['status']  = 'error';
+				$job['message'] = DZE_Ai_Usage::budget_message();
+				update_option( self::JOB_OPT, $job, false );
+				return;
+			}
+			$term_id = $scope ?: $this->next_pending_term( $minvol );
+			if ( ! $term_id ) {
+				$job['status'] = 'done';
+				update_option( self::JOB_OPT, $job, false );
+				return;
+			}
+			$term            = get_term( $term_id, 'product_cat' );
+			$job['termName'] = $term instanceof WP_Term ? $term->name : '';
+			try {
+				$processed = $this->process_batch( $term_id, $minvol );
+			} catch ( \Throwable $e ) {
+				$job['status']  = 'error';
+				$job['message'] = $e->getMessage();
+				update_option( self::JOB_OPT, $job, false );
+				return;
+			}
+			$job['done']     += $processed;
+			$job['heartbeat'] = time();
+
+			// A category just finished: fold in its uncovered product titles.
+			if ( $this->term_pending( $term_id, $minvol ) === 0 ) {
+				$this->autotitles_term( $term_id );
+			}
+			update_option( self::JOB_OPT, $job, false ); // persist progress for the poller.
+
+			$remaining = $scope ? $this->term_pending( $scope, $minvol ) : $this->all_pending( $minvol );
+			if ( $remaining <= 0 || $processed <= 0 ) {
+				$job['status'] = 'done';
+				update_option( self::JOB_OPT, $job, false );
+				return;
+			}
+		} while ( time() < $deadline );
+
+		// Time budget spent, work remains: hand off to the next worker run.
+		$this->kick();
 	}
 
 	/**
 	 * Analyses ONE batch of not-yet-analysed keywords of a category and stores
 	 * the verdicts. Returns the number of keywords processed. Throws on failure.
 	 */
-	private function process_batch( int $term_id ): int {
+	private function process_batch( int $term_id, int $minvol = 0 ): int {
 		global $wpdb;
 		$table = self::table();
 		$term  = get_term( $term_id, 'product_cat' );
@@ -698,11 +728,26 @@ final class DZE_Keywords {
 			return 0;
 		}
 		$batch = $wpdb->get_results(
-			$wpdb->prepare( "SELECT id, keyword, volume FROM {$table} WHERE term_id = %d AND kw_type = '' ORDER BY volume DESC LIMIT %d", $term_id, self::BATCH ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			$wpdb->prepare( "SELECT id, keyword, volume FROM {$table} WHERE term_id = %d AND kw_type = '' AND volume >= %d ORDER BY volume DESC LIMIT %d", $term_id, $minvol, self::BATCH ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 			ARRAY_A
 		);
 		if ( empty( $batch ) ) {
 			return 0;
+		}
+
+		// Cheap local pass: obvious marketplace/how-to queries need no AI call.
+		$now     = current_time( 'mysql' );
+		$skipped = 0;
+		$batch   = array_values( array_filter( $batch, function ( $k ) use ( &$skipped, $table, $now, $wpdb ) {
+			if ( $this->obvious_info( (string) $k['keyword'] ) ) {
+				$wpdb->update( $table, [ 'kw_type' => 'info', 'status' => 'ignored', 'updated' => $now ], [ 'id' => (int) $k['id'] ] );
+				$skipped++;
+				return false;
+			}
+			return true;
+		} ) );
+		if ( empty( $batch ) ) {
+			return $skipped;
 		}
 
 		$products = $this->product_lines( $term_id );
@@ -743,7 +788,6 @@ final class DZE_Keywords {
 
 		$valid_ids = array_column( $batch, 'id' );
 		$valid_ids = array_combine( $valid_ids, $valid_ids );
-		$now       = current_time( 'mysql' );
 		$done      = [];
 		foreach ( $decoded as $v ) {
 			$id = (int) ( $v['id'] ?? 0 );
@@ -762,7 +806,7 @@ final class DZE_Keywords {
 				$wpdb->update( $table, [ 'kw_type' => 'product', 'status' => 'uncertain', 'updated' => $now ], [ 'id' => $id ] );
 			}
 		}
-		return count( $valid_ids );
+		return count( $valid_ids ) + $skipped;
 	}
 
 	/** Anthropic call for the matcher: budget-guarded, recorded, Haiku by default. */
@@ -939,6 +983,28 @@ final class DZE_Keywords {
 			$wpdb->query( "UPDATE {$table} SET kw_type = '', status = '', products = ''" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 		}
 		wp_send_json_success();
+	}
+
+	/** Delete keywords by id (bulk), or all AI-added title keywords of a category (added=1). */
+	public function ajax_delete(): void {
+		$this->guard();
+		global $wpdb;
+		$table = self::table();
+		if ( ! empty( $_POST['added'] ) ) {
+			$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+			if ( ! $term_id ) {
+				wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
+			}
+			$n = (int) $wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE term_id = %d AND volume = 0 AND products <> ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			wp_send_json_success( [ 'deleted' => $n ] );
+		}
+		$ids = array_values( array_filter( array_map( 'absint', (array) ( $_POST['ids'] ?? [] ) ) ) );
+		if ( empty( $ids ) ) {
+			wp_send_json_error( [ 'message' => __( 'Nothing selected.', 'dazont-ecom' ) ] );
+		}
+		$ph = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+		$n  = (int) $wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE id IN ($ph)", $ids ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- int placeholders.
+		wp_send_json_success( [ 'deleted' => $n ] );
 	}
 
 	/** Remove the whole keyword set of a category. */

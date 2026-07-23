@@ -183,21 +183,38 @@
 		if ($row.length) { openOverlay($row); }
 	});
 
+	function overlaySub($r) {
+		var count = parseInt($r.attr('data-count'), 10) || 0;
+		var kw    = parseInt($r.attr('data-kw'), 10) || 0;
+		var opp   = parseInt($r.attr('data-kwopp'), 10) || 0;
+		var resh  = $r.attr('data-res-h') || '';
+		var bits = [];
+		bits.push('<strong id="dze-x-ov-prod">' + count.toLocaleString() + '</strong> ' + escHtml(i18n.products || 'products'));
+		if (kw) { bits.push(kw.toLocaleString() + ' kw'); }
+		if (kw) { bits.push('<span class="dze-x-ov-opp">' + opp.toLocaleString() + ' ' + escHtml(i18n.opportunities || 'opportunities') + '</span>'); }
+		bits.push(escHtml(i18n.lastSearchShort || 'Last search') + ': ' + (resh ? escHtml(resh) : escHtml(i18n.never || 'never')));
+		$('#dze-x-ov-sub').html(bits.join('<span class="dze-x-ov-dot">·</span>'));
+	}
 	function openOverlay($r) {
 		state.cat  = parseInt($r.attr('data-cat'), 10) || 0;
 		state.path = $r.attr('data-path') || '';
 		$('#dze-x-overlay').attr('data-cat', state.cat); // read by keywords.js
 		$('#dze-x-ov-title').text(state.path);
+		overlaySub($r);
 		var thumb = $r.attr('data-thumb') || '';
 		$('#dze-x-ov-thumb').html(thumb ? ('<img src="' + thumb + '" alt="" />') : '');
 		$('#dze-x-ai-panel').hide().empty();
 		$('#dze-x-ai, #dze-x-ov-mark').prop('disabled', false);
-		$('#dze-x-ov-add').attr('href', cfg.ajaxUrl.replace('admin-ajax.php', 'post-new.php') + '?post_type=product&dze_cat=' + state.cat);
 		buildSubcats(state.cat);
 		$('#dze-x-overlay').css('display', 'flex');
 		$('body').addClass('dze-x-ov-open');
 		load(true);
 	}
+
+	// Column count for the product grid.
+	function applyCols() { $('#dze-x-grid').css('--dze-cols', $('#dze-x-cols').val() || 6); }
+	$('#dze-x-cols').on('change', applyCols);
+	applyCols();
 	function closeOverlay() { $('#dze-x-overlay').hide(); $('body').removeClass('dze-x-ov-open'); }
 
 	$(document).on('click', '.dze-x-row', function () { openOverlay($(this)); });
@@ -212,18 +229,15 @@
 	});
 
 	// AI insights: saved report shown free of charge; regeneration behind a cost preview.
-	function showReport($panel, d) {
-		var bar = '<div class="dze-x-ai-bar"><strong>🎯</strong><span>' + escHtml(i18n.generatedOn) + ' ' +
-			(d.ts ? new Date(d.ts * 1000).toLocaleString() : '') + '</span>' +
-			'<span class="dze-x-ai-bar-btns">' +
-			'<button type="button" class="button button-small" id="dze-x-ai-regen">' + escHtml(i18n.regen) + '</button>' +
-			'<button type="button" class="button button-small" id="dze-x-ai-hide">✕</button></span></div>';
+	function reportBodyHtml(d) {
 		var body = '';
 		var data = d.data || null;
 		if (data) {
+			var oppN = (data.source_list && data.source_list.length) || 0;
 			if (data.summary) { body += '<p class="dze-x-ai-sum">' + escHtml(data.summary) + '</p>'; }
-			if (data.source_list && data.source_list.length) {
-				body += '<table class="dze-x-kw-tbl"><thead><tr><th>#</th><th>Product to source</th><th>Queries covered</th><th style="text-align:right;">Volume</th></tr></thead><tbody>';
+			if (oppN) {
+				body += '<p class="dze-x-ai-count"><strong>' + oppN + '</strong> ' + escHtml(i18n.sourcingOpps || 'sourcing opportunities') + '</p>';
+				body += '<table class="dze-x-kw-tbl"><thead><tr><th>#</th><th>' + escHtml(i18n.productToSource || 'Product to source') + '</th><th>' + escHtml(i18n.queriesCovered || 'Queries covered') + '</th><th style="text-align:right;">' + escHtml(i18n.fVolume || 'Volume') + '</th></tr></thead><tbody>';
 				data.source_list.forEach(function (r, i) {
 					body += '<tr><td>' + (i + 1) + '</td><td><strong>' + escHtml(r.product || '') + '</strong></td>' +
 						'<td class="dze-x-ai-q">' + escHtml((r.queries || []).join(' · ')) + '</td>' +
@@ -232,7 +246,7 @@
 				body += '</tbody></table>';
 			}
 			if (data.ideas && data.ideas.length) {
-				body += '<p class="dze-x-ai-ideas-t"><strong>💡 Ideas beyond the keyword data</strong></p><ul class="dze-x-ai-ideas">';
+				body += '<p class="dze-x-ai-ideas-t"><strong>💡 ' + escHtml(i18n.ideasBeyond || 'Ideas beyond the keyword data') + '</strong></p><ul class="dze-x-ai-ideas">';
 				data.ideas.forEach(function (r) {
 					body += '<li><strong>' + escHtml(r.product || '') + '</strong>' + (r.why ? ' — ' + escHtml(r.why) : '') + '</li>';
 				});
@@ -241,9 +255,48 @@
 		} else if (d.text) {
 			body = '<div style="white-space:pre-wrap;">' + escHtml(d.text) + '</div>';
 		}
-		$panel.html(bar + '<div class="dze-x-ai-body">' + body + '</div>');
+		return body;
+	}
+	function showReport($panel, d) {
+		var bar = '<div class="dze-x-ai-bar"><strong>🎯</strong><span>' + escHtml(i18n.generatedOn) + ' ' +
+			(d.ts ? new Date(d.ts * 1000).toLocaleString() : '') + '</span>' +
+			'<span class="dze-x-ai-bar-btns">' +
+			'<button type="button" class="button button-small" id="dze-x-ai-regen">' + escHtml(i18n.regen) + '</button>' +
+			'<button type="button" class="button button-small" id="dze-x-ai-hide">✕</button></span></div>';
+		$panel.html(bar + '<div class="dze-x-ai-body">' + reportBodyHtml(d) + '</div>');
 	}
 	$(document).on('click', '#dze-x-ai-hide', function () { $('#dze-x-ai-panel').hide(); });
+
+	// Row 🎯 button — open the saved/generated report in the shared modal.
+	$(document).on('click', '.dze-x-opp-cat', function (e) {
+		e.stopPropagation();
+		var $row = $(this).closest('.dze-x-row');
+		var pcat = parseInt($(this).data('cat'), 10) || 0;
+		var path = $row.attr('data-path') || '';
+		showModal('<h2 style="margin-top:0;">🎯 ' + escHtml(path) + '</h2><p><span class="dze-x-ai-spin"></span>' + escHtml(i18n.loading) + '</p>');
+		$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: pcat, mode: 'get' })
+			.done(function (res) {
+				if (res.success && res.data.saved) {
+					showModal('<h2 style="margin-top:0;">🎯 ' + escHtml(path) + '</h2>' + reportBodyHtml(res.data));
+					return;
+				}
+				// Not generated yet → estimate + confirm + generate.
+				$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: pcat, mode: 'estimate' })
+					.done(function (est) {
+						if (!est.success) { showModal('<p>' + escHtml((est.data && est.data.message) || i18n.error) + '</p>'); return; }
+						if (!window.confirm(est.data.message)) { $('#dze-x-modal').hide(); return; }
+						showModal('<h2 style="margin-top:0;">🎯 ' + escHtml(path) + '</h2><p><span class="dze-x-ai-spin"></span>' + escHtml(i18n.aiThinking) + '</p>');
+						$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: pcat, mode: 'generate' })
+							.done(function (r2) {
+								if (!r2.success) { showModal('<p>' + escHtml((r2.data && r2.data.message) || i18n.error) + '</p>'); return; }
+								showModal('<h2 style="margin-top:0;">🎯 ' + escHtml(path) + '</h2>' + reportBodyHtml(r2.data));
+							})
+							.fail(function () { showModal('<p>' + escHtml(i18n.error) + '</p>'); });
+					})
+					.fail(function () { showModal('<p>' + escHtml(i18n.error) + '</p>'); });
+			})
+			.fail(function () { showModal('<p>' + escHtml(i18n.error) + '</p>'); });
+	});
 	function generateInsights($btn, $panel) {
 		$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: state.cat, mode: 'estimate' })
 			.done(function (res) {
@@ -290,7 +343,7 @@
 			if (!res.success) { $('#dze-x-status').text(i18n.error); state.loading = false; return; }
 			$('#dze-x-grid').append(res.data.html);
 			state.hasMore = res.data.hasMore;
-			$('#dze-x-count').text(res.data.found);
+			$('#dze-x-ov-prod').text((res.data.found || 0).toLocaleString());
 			if (!$('#dze-x-grid').children().length) { $('#dze-x-status').text(i18n.noResults); }
 			else { $('#dze-x-status').text(''); }
 			$('#dze-x-load').toggle(!!state.hasMore);
