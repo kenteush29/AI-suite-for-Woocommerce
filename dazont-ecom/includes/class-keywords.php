@@ -34,6 +34,8 @@ final class DZE_Keywords {
 	private const BATCH        = 150; // keywords judged per AI call.
 	private const MAX_PRODUCTS = 400; // product titles sent per call.
 	private const MATCH_MODEL  = 'claude-haiku-4-5-20251001';
+	private const BG_HOOK      = 'dze_kw_bg';   // Action Scheduler / cron worker hook.
+	private const JOB_OPT      = 'dze_kw_job';  // single active analysis job.
 
 	private static ?self $instance = null;
 
@@ -45,6 +47,8 @@ final class DZE_Keywords {
 	}
 
 	private function __construct() {
+		// The background worker must run in cron / async context too (not admin).
+		add_action( self::BG_HOOK, [ $this, 'run_job' ] );
 		if ( ! is_admin() ) {
 			return;
 		}
@@ -55,8 +59,9 @@ final class DZE_Keywords {
 		add_action( 'wp_ajax_dze_kw_status', [ $this, 'ajax_status' ] );
 		add_action( 'wp_ajax_dze_kw_clear',  [ $this, 'ajax_clear' ] );
 		add_action( 'wp_ajax_dze_kw_estimate',    [ $this, 'ajax_estimate' ] );
-		add_action( 'wp_ajax_dze_kw_analyze',     [ $this, 'ajax_analyze' ] );
-		add_action( 'wp_ajax_dze_kw_autotitles',  [ $this, 'ajax_autotitles' ] );
+		add_action( 'wp_ajax_dze_kw_start',       [ $this, 'ajax_start' ] );
+		add_action( 'wp_ajax_dze_kw_progress',    [ $this, 'ajax_progress' ] );
+		add_action( 'wp_ajax_dze_kw_stop',        [ $this, 'ajax_stop' ] );
 		add_action( 'wp_ajax_dze_kw_for_product', [ $this, 'ajax_for_product' ] );
 		add_action( 'wp_ajax_dze_kw_opps',        [ $this, 'ajax_opportunities' ] );
 		add_action( 'wp_ajax_dze_kw_reset',       [ $this, 'ajax_reset' ] );
@@ -541,36 +546,162 @@ final class DZE_Keywords {
 	 * The browser calls this in a loop until `remaining` hits 0, so progress is
 	 * visible and nothing runs unattended.
 	 */
-	public function ajax_analyze(): void {
-		$this->guard();
-		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
-		$bulk    = ( 0 === $term_id );
+	// =========================================================================
+	// Background analysis job (survives closing the page)
+	// =========================================================================
+
+	private function all_pending(): int {
 		global $wpdb;
 		$table = self::table();
-		if ( $bulk ) {
-			// Bulk mode: pick the next category that still has unanalysed keywords.
-			$term_id = (int) $wpdb->get_var( "SELECT term_id FROM {$table} WHERE kw_type = '' ORDER BY term_id LIMIT 1" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
-			if ( ! $term_id ) {
-				wp_send_json_success( [ 'processed' => 0, 'remaining' => 0 ] );
+		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE kw_type = ''" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+	}
+	private function term_pending( int $term_id ): int {
+		global $wpdb;
+		$table = self::table();
+		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+	}
+	private function next_pending_term(): int {
+		global $wpdb;
+		$table = self::table();
+		return (int) $wpdb->get_var( "SELECT term_id FROM {$table} WHERE kw_type = '' ORDER BY term_id LIMIT 1" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+	}
+
+	/** Enqueue one run of the worker (Action Scheduler preferred, cron fallback). */
+	private function kick(): void {
+		if ( function_exists( 'as_enqueue_async_action' ) ) {
+			if ( ! function_exists( 'as_has_scheduled_action' ) || ! as_has_scheduled_action( self::BG_HOOK ) ) {
+				as_enqueue_async_action( self::BG_HOOK, [], 'dazont-ecom' );
 			}
+			return;
 		}
-		$term = get_term( $term_id, 'product_cat' );
-		if ( ! $term instanceof WP_Term ) {
-			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
+		if ( ! wp_next_scheduled( self::BG_HOOK ) ) {
+			wp_schedule_single_event( time() + 1, self::BG_HOOK );
 		}
+		spawn_cron();
+	}
+
+	/** Start a background analysis for one category (cat>0) or all pending (cat=0). */
+	public function ajax_start(): void {
+		$this->guard();
 		if ( ! class_exists( 'DZE_Marketing_Ai' ) || DZE_Marketing_Ai::api_key() === '' ) {
 			wp_send_json_error( [ 'message' => __( 'Add your Anthropic API key under AI Settings first.', 'dazont-ecom' ) ] );
 		}
 		if ( DZE_Ai_Usage::over_budget() ) {
 			wp_send_json_error( [ 'message' => DZE_Ai_Usage::budget_message() ] );
 		}
+		$job = get_option( self::JOB_OPT );
+		if ( is_array( $job ) && ( $job['status'] ?? '' ) === 'running' ) {
+			wp_send_json_error( [ 'message' => __( 'An analysis is already running. Wait for it to finish.', 'dazont-ecom' ) ] );
+		}
+		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		$total   = $term_id ? $this->term_pending( $term_id ) : $this->all_pending();
+		if ( ! $total ) {
+			wp_send_json_error( [ 'message' => __( 'Nothing to analyse.', 'dazont-ecom' ) ] );
+		}
+		update_option( self::JOB_OPT, [
+			'scope'   => $term_id,
+			'total'   => $total,
+			'done'    => 0,
+			'status'  => 'running',
+			'message' => '',
+			'started' => time(),
+			'heartbeat' => time(),
+		], false );
+		$this->kick();
+		wp_send_json_success( [ 'total' => $total ] );
+	}
 
+	/** Progress poll for the UI. */
+	public function ajax_progress(): void {
+		$this->guard();
+		$job = get_option( self::JOB_OPT );
+		if ( ! is_array( $job ) ) {
+			wp_send_json_success( [ 'state' => 'idle' ] );
+		}
+		// Re-kick a stalled running job (e.g. cron missed) so it always finishes.
+		if ( ( $job['status'] ?? '' ) === 'running' && ( time() - (int) ( $job['heartbeat'] ?? 0 ) ) > 90 ) {
+			$this->kick();
+		}
+		wp_send_json_success( [
+			'state'   => (string) ( $job['status'] ?? 'idle' ),
+			'scope'   => (int) ( $job['scope'] ?? 0 ),
+			'total'   => (int) ( $job['total'] ?? 0 ),
+			'done'    => min( (int) ( $job['done'] ?? 0 ), (int) ( $job['total'] ?? 0 ) ),
+			'message' => (string) ( $job['message'] ?? '' ),
+		] );
+	}
+
+	/** Cancel the running job. */
+	public function ajax_stop(): void {
+		$this->guard();
+		delete_option( self::JOB_OPT );
+		wp_send_json_success();
+	}
+
+	/**
+	 * Background worker: processes ONE batch, then re-enqueues itself until the
+	 * job is complete. Runs server-side, so closing the page does not stop it.
+	 */
+	public function run_job(): void {
+		$job = get_option( self::JOB_OPT );
+		if ( ! is_array( $job ) || ( $job['status'] ?? '' ) !== 'running' ) {
+			return;
+		}
+		if ( class_exists( 'DZE_Ai_Usage' ) && DZE_Ai_Usage::over_budget() ) {
+			$job['status']  = 'error';
+			$job['message'] = DZE_Ai_Usage::budget_message();
+			update_option( self::JOB_OPT, $job, false );
+			return;
+		}
+		$scope   = (int) $job['scope'];
+		$term_id = $scope ?: $this->next_pending_term();
+		if ( ! $term_id ) {
+			$job['status'] = 'done';
+			update_option( self::JOB_OPT, $job, false );
+			return;
+		}
+		try {
+			$processed = $this->process_batch( $term_id );
+		} catch ( \Throwable $e ) {
+			$job['status']  = 'error';
+			$job['message'] = $e->getMessage();
+			update_option( self::JOB_OPT, $job, false );
+			return;
+		}
+		$job['done']     += $processed;
+		$job['heartbeat'] = time();
+
+		// A category just finished: fold in its uncovered product titles.
+		if ( $this->term_pending( $term_id ) === 0 ) {
+			$this->autotitles_term( $term_id );
+		}
+		$remaining = $scope ? $this->term_pending( $scope ) : $this->all_pending();
+		if ( $remaining > 0 && $processed > 0 ) {
+			update_option( self::JOB_OPT, $job, false );
+			$this->kick();
+		} else {
+			$job['status'] = 'done';
+			update_option( self::JOB_OPT, $job, false );
+		}
+	}
+
+	/**
+	 * Analyses ONE batch of not-yet-analysed keywords of a category and stores
+	 * the verdicts. Returns the number of keywords processed. Throws on failure.
+	 */
+	private function process_batch( int $term_id ): int {
+		global $wpdb;
+		$table = self::table();
+		$term  = get_term( $term_id, 'product_cat' );
+		if ( ! $term instanceof WP_Term ) {
+			return 0;
+		}
 		$batch = $wpdb->get_results(
 			$wpdb->prepare( "SELECT id, keyword, volume FROM {$table} WHERE term_id = %d AND kw_type = '' ORDER BY volume DESC LIMIT %d", $term_id, self::BATCH ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 			ARRAY_A
 		);
 		if ( empty( $batch ) ) {
-			wp_send_json_success( [ 'processed' => 0, 'remaining' => 0 ] );
+			return 0;
 		}
 
 		$products = $this->product_lines( $term_id );
@@ -599,18 +730,14 @@ final class DZE_Keywords {
 			. "When unsure between covered and gap, choose gap. Never invent product ids.\n"
 			. 'Output: JSON array of {"id":<query id>,"t":"category|product|info","s":"covered|variation|gap|ignored","p":[product ids]} for every query id listed.';
 
-		try {
-			$raw = $this->call_claude_kw( $system, $user );
-		} catch ( \Throwable $e ) {
-			wp_send_json_error( [ 'message' => $e->getMessage() ] );
-		}
+		$raw     = $this->call_claude_kw( $system, $user );
 		$raw     = preg_replace( '/^```(?:json)?\s*|\s*```$/i', '', trim( $raw ) );
 		$decoded = json_decode( $raw, true );
 		if ( ! is_array( $decoded ) && preg_match( '/\[.*\]/s', $raw, $m ) ) {
 			$decoded = json_decode( $m[0], true );
 		}
 		if ( ! is_array( $decoded ) ) {
-			wp_send_json_error( [ 'message' => __( 'The AI returned an unreadable result. Try again.', 'dazont-ecom' ) ] );
+			throw new RuntimeException( __( 'The AI returned an unreadable result.', 'dazont-ecom' ) );
 		}
 
 		$valid_ids = array_column( $batch, 'id' );
@@ -628,16 +755,13 @@ final class DZE_Keywords {
 			$wpdb->update( $table, [ 'kw_type' => $type, 'status' => $status, 'products' => $pids, 'updated' => $now ], [ 'id' => $id ] );
 			$done[ $id ] = true;
 		}
-		// Anything the model skipped: mark analysed as uncertain so the loop ends.
+		// Anything the model skipped: mark analysed as uncertain so the job ends.
 		foreach ( $valid_ids as $id ) {
 			if ( ! isset( $done[ $id ] ) ) {
 				$wpdb->update( $table, [ 'kw_type' => 'product', 'status' => 'uncertain', 'updated' => $now ], [ 'id' => $id ] );
 			}
 		}
-		$remaining = $bulk
-			? (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE kw_type = ''" ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
-			: (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
-		wp_send_json_success( [ 'processed' => count( $valid_ids ), 'remaining' => $remaining, 'termName' => $term->name ] );
+		return count( $valid_ids );
 	}
 
 	/** Anthropic call for the matcher: budget-guarded, recorded, Haiku by default. */
@@ -680,11 +804,9 @@ final class DZE_Keywords {
 	 * captures supplier-driven products SEMrush can't surface ("F22 Raptor
 	 * Tshirt") without any manual input.
 	 */
-	public function ajax_autotitles(): void {
-		$this->guard();
-		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+	private function autotitles_term( int $term_id ): int {
 		if ( ! $term_id ) {
-			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
+			return 0;
 		}
 		$covered = self::coverage_counts( $term_id );
 		global $wpdb;
@@ -715,7 +837,7 @@ final class DZE_Keywords {
 			] );
 			$added++;
 		}
-		wp_send_json_success( [ 'added' => $added ] );
+		return $added;
 	}
 
 	/** covered/variation keyword count per product id, for one category set. */

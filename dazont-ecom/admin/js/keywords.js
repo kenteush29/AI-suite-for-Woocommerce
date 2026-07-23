@@ -228,49 +228,87 @@
 	}
 
 	// =====================================================================
-	// AI analysis: estimate → confirm → batch loop → auto title keywords
+	// AI analysis — server-side background job + polled progress bar.
+	// Once started it runs to completion even if this page is closed.
 	// =====================================================================
-	function analyseStep() {
-		$.post(cfg.ajaxUrl, { action: 'dze_kw_analyze', nonce: cfg.nonce, cat: kw.cat })
-			.done(function (res) {
-				if (!res.success) {
-					$('#dze-x-kw-ai').prop('disabled', false);
-					$('#dze-x-kw-prog').text((res.data && res.data.message) || i18n.error);
-					return;
-				}
-				if (res.data.remaining > 0) {
-					$('#dze-x-kw-prog').text(esc(i18n.analysing) + ' ' + res.data.remaining + ' ' + esc(i18n.remaining));
-					analyseStep();
-					return;
-				}
-				// Done — add uncovered product titles as covered long-tail keywords.
-				$.post(cfg.ajaxUrl, { action: 'dze_kw_autotitles', nonce: cfg.nonce, cat: kw.cat })
-					.always(function (r2) {
-						$('#dze-x-kw-ai').prop('disabled', false);
-						var added = (r2 && r2.success && r2.data) ? r2.data.added : 0;
-						$('#dze-x-kw-prog').text(i18n.analyseDone + (added ? ' +' + added + ' ' + i18n.titlesAdded : ''));
-						loadRows();
-						setTimeout(refreshBadge, 800);
-					});
-			})
-			.fail(function () {
-				$('#dze-x-kw-ai').prop('disabled', false);
-				$('#dze-x-kw-prog').text(i18n.error);
-			});
+	var poll = null;
+
+	function progressBar(pct) {
+		return '<span class="dze-x-pbar"><span class="dze-x-pbar-fill" style="width:' + pct + '%"></span></span>';
 	}
-	$('#dze-x-kw-ai').on('click', function () {
-		var $btn = $(this);
-		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: cat() })
+	// The main toolbar sits behind the full-screen overlay, so the bar is mirrored
+	// into the workbench bar (#dze-x-kw-prog) as well.
+	function setProg(html) { $('#dze-x-global-prog, #dze-x-kw-prog').html(html); }
+	function renderProgress(p) {
+		if (p.state === 'running') {
+			var pct = p.total ? Math.round(100 * p.done / p.total) : 0;
+			setProg(progressBar(pct) +
+				'<span class="dze-x-pbar-txt">' + esc(i18n.analysing) + ' ' + p.done.toLocaleString() + '/' + p.total.toLocaleString() + ' · ' + pct + '%</span>' +
+				'<button type="button" class="button-link dze-x-pstop" title="Stop">✕</button>');
+		} else if (p.state === 'done') {
+			setProg(progressBar(100) + '<span class="dze-x-pbar-txt">' + esc(i18n.analyseDone) + '</span>');
+			afterJob(p.scope);
+			window.setTimeout(function () { setProg(''); }, 8000);
+		} else if (p.state === 'error') {
+			setProg('<span class="dze-x-pbar-txt" style="color:#b32d2e;">' + esc(p.message || i18n.error) + '</span>');
+		} else {
+			setProg('');
+		}
+	}
+	function afterJob(scope) {
+		// One category: flip its "pending ⏳" icon to "analysed 🔑". Bulk: leave the
+		// per-row icons to refresh on next page load (can't tell which had sets).
+		if (scope) { $('.dze-x-row[data-cat="' + scope + '"]').find('.dze-x-ico-kw').text('🔑').removeClass('is-off'); }
+		if (kw.cat && kw.open) { loadRows(); }
+		refreshBadge();
+	}
+	function pollProgress() {
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_progress', nonce: cfg.nonce }).done(function (res) {
+			if (!res.success) { return; }
+			var p = res.data;
+			if (p.state === 'idle') { stopPolling(); setProg(''); return; }
+			renderProgress(p);
+			if (p.state !== 'running') { stopPolling(); }
+		});
+	}
+	function startPolling() { if (!poll) { poll = window.setInterval(pollProgress, 2500); } pollProgress(); }
+	function stopPolling() { if (poll) { window.clearInterval(poll); poll = null; } }
+
+	$(document).on('click', '.dze-x-pstop', function () {
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_stop', nonce: cfg.nonce }).always(function () {
+			stopPolling(); setProg('');
+		});
+	});
+
+	function startJob(catId) {
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_start', nonce: cfg.nonce, cat: catId })
 			.done(function (res) {
 				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
-				if (!window.confirm(res.data.message)) { return; }
-				kw.cat = cat();
-				$btn.prop('disabled', true);
-				$('#dze-x-kw-prog').text(i18n.analysing);
-				analyseStep();
+				startPolling();
 			})
 			.fail(function () { window.alert(i18n.error); });
-	});
+	}
+	// estimate → confirm cost (or offer reset when already analysed) → start job.
+	function estimateThen(catId) {
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: catId })
+			.done(function (res) {
+				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
+				if (res.data.empty) {
+					if (!window.confirm((i18n.reanalyse || 'Re-analyse all keywords from scratch (clears current verdicts)?') + ' (' + res.data.total + ')')) { return; }
+					$.post(cfg.ajaxUrl, { action: 'dze_kw_reset', nonce: cfg.nonce, cat: catId }).done(function () { estimateThen(catId); });
+					return;
+				}
+				if (!window.confirm(res.data.message)) { return; }
+				startJob(catId);
+			})
+			.fail(function () { window.alert(i18n.error); });
+	}
+	$('#dze-x-kw-ai').on('click', function () { estimateThen(cat()); });
+	$(document).on('click', '.dze-x-an', function (e) { e.stopPropagation(); estimateThen(parseInt($(this).data('cat'), 10) || 0); });
+	$('#dze-x-kw-bulk-ai').on('click', function () { estimateThen(0); });
+
+	// Resume showing a job that is already running (e.g. after reopening the page).
+	$(function () { startPolling(); });
 
 	// ---- Product card "🔑 n kw covered" popup ----
 	$(document).on('click', '.dze-x-kwprod', function (e) {
@@ -383,48 +421,8 @@
 	});
 
 	// =====================================================================
-	// Row / bulk analysis (background loop with global progress + estimate)
+	// Row / bulk analysis is handled by the background-job block above.
 	// =====================================================================
-	function bgLoop(catId) {
-		$.post(cfg.ajaxUrl, { action: 'dze_kw_analyze', nonce: cfg.nonce, cat: catId })
-			.done(function (res) {
-				if (!res.success) { $('#dze-x-global-prog').text((res.data && res.data.message) || i18n.error); return; }
-				if (res.data.remaining > 0) {
-					$('#dze-x-global-prog').text((res.data.termName ? res.data.termName + ' — ' : '') + res.data.remaining + ' ' + i18n.remaining);
-					bgLoop(catId);
-					return;
-				}
-				var finish = function () {
-					$('#dze-x-global-prog').text(i18n.analyseDone);
-					$('.dze-x-row' + (catId ? '[data-cat="' + catId + '"]' : '')).find('.dze-x-ico-kw').text('🔑').end().find('.dze-x-an').hide();
-				};
-				if (catId) { $.post(cfg.ajaxUrl, { action: 'dze_kw_autotitles', nonce: cfg.nonce, cat: catId }).always(finish); }
-				else { finish(); }
-			})
-			.fail(function () { $('#dze-x-global-prog').text(i18n.error); });
-	}
-	function estimateThen(catId) {
-		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: catId })
-			.done(function (res) {
-				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
-				if (res.data.empty) {
-					// Already fully analysed — offer to reset every verdict and re-run.
-					if (!window.confirm((i18n.reanalyse || 'Re-analyse all keywords from scratch (clears current verdicts)?') + ' (' + res.data.total + ')')) { return; }
-					$('#dze-x-global-prog').text(i18n.analysing);
-					$.post(cfg.ajaxUrl, { action: 'dze_kw_reset', nonce: cfg.nonce, cat: catId }).done(function () { estimateThen(catId); });
-					return;
-				}
-				if (!window.confirm(res.data.message)) { return; }
-				$('#dze-x-global-prog').text(i18n.analysing);
-				bgLoop(catId);
-			})
-			.fail(function () { window.alert(i18n.error); });
-	}
-	$(document).on('click', '.dze-x-an', function (e) {
-		e.stopPropagation();
-		estimateThen(parseInt($(this).data('cat'), 10) || 0);
-	});
-	$('#dze-x-kw-bulk-ai').on('click', function () { estimateThen(0); });
 
 	// =====================================================================
 	// Shop-wide opportunities panel
