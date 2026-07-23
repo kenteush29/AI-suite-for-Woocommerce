@@ -73,6 +73,20 @@ $show_events  = in_array( $dze_section, [ 'all', 'events' ], true );
 				<?php endif; ?>
 			</td>
 		</tr>
+		<tr>
+			<th scope="row"><label for="dze-mai-budget"><?php esc_html_e( 'Monthly AI budget (USD)', 'dazont-ecom' ); ?></label></th>
+			<td>
+				<input type="number" id="dze-mai-budget" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[budget_month]' ); ?>" value="<?php echo esc_attr( (float) ( $settings['budget_month'] ?? 0 ) ?: '' ); ?>" min="0" step="0.5" style="width:100px;" placeholder="0" />
+				<p class="description"><?php esc_html_e( 'Hard cap for ALL AI features combined (calendar, category insights, keyword matching, product images). When the estimated month spend reaches it, every AI call is blocked until next month. 0 or empty = no cap. Current month spend shows in the usage graph below.', 'dazont-ecom' ); ?></p>
+			</td>
+		</tr>
+		<tr>
+			<th scope="row"><label for="dze-mai-match-model"><?php esc_html_e( 'Keyword-matching model', 'dazont-ecom' ); ?></label></th>
+			<td>
+				<input type="text" id="dze-mai-match-model" class="regular-text" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[match_model]' ); ?>" value="<?php echo esc_attr( (string) ( $settings['match_model'] ?? '' ) ); ?>" placeholder="claude-haiku-4-5-20251001" />
+				<p class="description"><?php esc_html_e( 'Model used by the Sourcing Assistant keyword analysis (a simple, repetitive task — Haiku is ~10× cheaper and the default when empty).', 'dazont-ecom' ); ?></p>
+			</td>
+		</tr>
 	</table>
 	<?php endif; // $show_general ?>
 

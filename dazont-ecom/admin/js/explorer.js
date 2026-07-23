@@ -164,6 +164,25 @@
 	// =====================================================================
 	// Products overlay
 	// =====================================================================
+	// Sub-category band: shown just before the products when the open category
+	// still has children; clicking a chip switches the overlay onto it.
+	function buildSubcats(cat) {
+		var html = '';
+		$('.dze-x-row[data-parent="' + cat + '"]').each(function () {
+			var $c = $(this);
+			var thumb = $c.attr('data-thumb') || '';
+			html += '<button type="button" class="dze-x-subcat" data-cat="' + $c.attr('data-cat') + '">' +
+				(thumb ? '<img src="' + thumb + '" alt="" />' : '<span class="dze-x-subcat-noimg">🗂️</span>') +
+				'<span>' + escHtml($c.attr('data-leafname') || $c.find('.dze-x-row-name').text()) + '</span>' +
+				'<span class="dze-x-subcat-count">' + ($c.attr('data-count') || '0') + '</span></button>';
+		});
+		$('#dze-x-subcats').html(html).toggle(html !== '');
+	}
+	$(document).on('click', '.dze-x-subcat', function () {
+		var $row = $('.dze-x-row[data-cat="' + $(this).data('cat') + '"]');
+		if ($row.length) { openOverlay($row); }
+	});
+
 	function openOverlay($r) {
 		state.cat  = parseInt($r.attr('data-cat'), 10) || 0;
 		state.path = $r.attr('data-path') || '';
@@ -173,6 +192,7 @@
 		$('#dze-x-ov-thumb').html(thumb ? ('<img src="' + thumb + '" alt="" />') : '');
 		$('#dze-x-ai-panel').hide().empty();
 		$('#dze-x-ai, #dze-x-ov-mark').prop('disabled', false);
+		buildSubcats(state.cat);
 		$('#dze-x-overlay').css('display', 'flex');
 		$('body').addClass('dze-x-ov-open');
 		load(true);

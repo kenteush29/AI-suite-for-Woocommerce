@@ -116,8 +116,13 @@ final class DZE_Explorer {
 				'mGaps'      => __( 'gaps', 'dazont-ecom' ),
 				'mIgnored'   => __( 'ignored', 'dazont-ecom' ),
 				'showMore'   => __( 'Show more', 'dazont-ecom' ),
-				'addKw'      => __( 'Keyword to add (e.g. found on AliExpress):', 'dazont-ecom' ),
-				'addVol'     => __( 'Monthly search volume (0 if unknown):', 'dazont-ecom' ),
+				'stVariation'=> __( 'Variation only', 'dazont-ecom' ),
+				'analysing'  => __( 'Analysing…', 'dazont-ecom' ),
+				'remaining'  => __( 'remaining', 'dazont-ecom' ),
+				'analyseDone'=> __( 'Analysis finished.', 'dazont-ecom' ),
+				'titlesAdded'=> __( 'product titles added as covered long-tail keywords.', 'dazont-ecom' ),
+				'kwCovered'  => __( 'Keywords covered by', 'dazont-ecom' ),
+				'noKw'       => __( 'No covered keywords.', 'dazont-ecom' ),
 			],
 		] );
 		wp_localize_script( 'dze-explorer', 'dzeExplorer', [
@@ -372,11 +377,12 @@ final class DZE_Explorer {
 		}
 
 		$query = new WP_Query( $args );
+		$kwcov = ( $cat > 0 && class_exists( 'DZE_Keywords' ) ) ? DZE_Keywords::coverage_counts( $cat ) : [];
 		$html  = '';
 		foreach ( $query->posts as $post ) {
 			$product = wc_get_product( $post );
 			if ( $product instanceof \WC_Product ) {
-				$html .= $this->card_html( $product );
+				$html .= $this->card_html( $product, (int) ( $kwcov[ $product->get_id() ] ?? 0 ), $cat );
 			}
 		}
 		wp_send_json_success( [
@@ -386,7 +392,7 @@ final class DZE_Explorer {
 		] );
 	}
 
-	private function card_html( \WC_Product $product ): string {
+	private function card_html( \WC_Product $product, int $kwcov = 0, int $cat = 0 ): string {
 		$img_id    = (int) $product->get_image_id();
 		$thumb     = $img_id ? wp_get_attachment_image_url( $img_id, 'woocommerce_thumbnail' ) : wc_placeholder_img_src( 'woocommerce_thumbnail' );
 		$full      = $img_id ? wp_get_attachment_image_url( $img_id, 'full' ) : $thumb;
@@ -410,7 +416,12 @@ final class DZE_Explorer {
 			<div class="dze-x-sales"><?php
 				/* translators: %s: number of units sold */
 				echo esc_html( sprintf( _n( '%s sold', '%s sold', $sales, 'dazont-ecom' ), number_format_i18n( $sales ) ) );
-			?></div>
+				if ( $kwcov > 0 ) : ?>
+					<button type="button" class="dze-x-kwprod" data-product="<?php echo (int) $product->get_id(); ?>" data-cat="<?php echo (int) $cat; ?>"><?php
+						/* translators: %s: number of covered keywords */
+						echo esc_html( sprintf( __( '🔑 %s kw covered', 'dazont-ecom' ), number_format_i18n( $kwcov ) ) );
+					?></button>
+				<?php endif; ?></div>
 			<div class="dze-x-date"><?php
 				/* translators: %s: product publication date */
 				printf( esc_html__( 'Published: %s', 'dazont-ecom' ), esc_html( get_the_date( '', $product->get_id() ) ) );
@@ -565,6 +576,9 @@ final class DZE_Explorer {
 
 	/** Minimal Anthropic Messages call, reusing the Marketing AI key + model. */
 	private function call_claude( string $system, string $user ): string {
+		if ( DZE_Ai_Usage::over_budget() ) {
+			throw new RuntimeException( DZE_Ai_Usage::budget_message() );
+		}
 		$resp = wp_remote_post( 'https://api.anthropic.com/v1/messages', [
 			'timeout' => 60,
 			'headers' => [
@@ -587,7 +601,7 @@ final class DZE_Explorer {
 		if ( $code < 200 || $code >= 300 ) {
 			throw new RuntimeException( (string) ( $data['error']['message'] ?? ( 'HTTP ' . $code ) ) );
 		}
-		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ) );
+		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ), DZE_Marketing_Ai::chosen_model() );
 		$text = '';
 		foreach ( (array) ( $data['content'] ?? [] ) as $block ) {
 			if ( ( $block['type'] ?? '' ) === 'text' ) {

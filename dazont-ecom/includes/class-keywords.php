@@ -25,8 +25,15 @@ final class DZE_Keywords {
 	private const MAX_ROWS       = 5000;   // per category — safety cap.
 	private const MAX_UPLOAD     = 5242880; // 5 MB.
 
-	/** Manual statuses (phase 1). '' = unset. 'variation' arrives with phase 2. */
-	public const STATUSES = [ 'covered', 'gap', 'uncertain', 'ignored' ];
+	/**
+	 * Keyword statuses. '' = unset. 'variation' = covered only by a variation
+	 * value of a grouped product (weak for long-tail SEO — no dedicated page).
+	 */
+	public const STATUSES = [ 'covered', 'variation', 'gap', 'uncertain', 'ignored' ];
+
+	private const BATCH        = 80;  // keywords judged per AI call.
+	private const MAX_PRODUCTS = 400; // product titles sent per call.
+	private const MATCH_MODEL  = 'claude-haiku-4-5-20251001';
 
 	private static ?self $instance = null;
 
@@ -47,7 +54,10 @@ final class DZE_Keywords {
 		add_action( 'wp_ajax_dze_kw_list',   [ $this, 'ajax_list' ] );
 		add_action( 'wp_ajax_dze_kw_status', [ $this, 'ajax_status' ] );
 		add_action( 'wp_ajax_dze_kw_clear',  [ $this, 'ajax_clear' ] );
-		add_action( 'wp_ajax_dze_kw_add',    [ $this, 'ajax_add' ] );
+		add_action( 'wp_ajax_dze_kw_estimate',    [ $this, 'ajax_estimate' ] );
+		add_action( 'wp_ajax_dze_kw_analyze',     [ $this, 'ajax_analyze' ] );
+		add_action( 'wp_ajax_dze_kw_autotitles',  [ $this, 'ajax_autotitles' ] );
+		add_action( 'wp_ajax_dze_kw_for_product', [ $this, 'ajax_for_product' ] );
 	}
 
 	public static function table(): string {
@@ -324,7 +334,7 @@ final class DZE_Keywords {
 		$table = self::table();
 		$rows  = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT id, keyword, volume, kd, cpc, intent, status
+				"SELECT id, keyword, volume, kd, cpc, intent, status, kw_type
 				 FROM {$table} WHERE term_id = %d ORDER BY volume DESC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 				$term_id
 			),
@@ -340,6 +350,7 @@ final class DZE_Keywords {
 				'cpc'    => null === $r['cpc'] ? null : (float) $r['cpc'],
 				'intent' => (string) $r['intent'],
 				'status' => (string) $r['status'],
+				't'      => (string) $r['kw_type'],
 			];
 		}
 		wp_send_json_success( [ 'rows' => $out ] );
@@ -368,43 +379,293 @@ final class DZE_Keywords {
 		wp_send_json_success();
 	}
 
-	/**
-	 * Manually add one keyword to a category — for long-tail terms SEMrush
-	 * can't surface (supplier/AliExpress-driven sourcing, e.g. "f22 raptor
-	 * tshirt"). Volume optional, defaults to 0.
-	 */
-	public function ajax_add(): void {
+	// =========================================================================
+	// AI matching engine (phase 2): products ↔ keywords
+	// =========================================================================
+
+	private static function match_model(): string {
+		$m = trim( (string) ( DZE_Marketing_Ai::get_settings()['match_model'] ?? '' ) );
+		return $m !== '' ? $m : self::MATCH_MODEL;
+	}
+
+	/** Products of a category (children included): [ id, title, attributes ]. */
+	private function product_lines( int $term_id ): array {
+		$q = new WP_Query( [
+			'post_type'      => 'product',
+			'post_status'    => 'publish',
+			'posts_per_page' => self::MAX_PRODUCTS,
+			'fields'         => 'ids',
+			'no_found_rows'  => true,
+			'tax_query'      => [ [ 'taxonomy' => 'product_cat', 'field' => 'term_id', 'terms' => $term_id, 'include_children' => true ] ],
+		] );
+		$lines = [];
+		foreach ( $q->posts as $pid ) {
+			$product = wc_get_product( (int) $pid );
+			if ( ! $product instanceof \WC_Product ) {
+				continue;
+			}
+			$attrs = [];
+			foreach ( $product->get_attributes() as $attr ) {
+				if ( ! is_object( $attr ) ) {
+					continue;
+				}
+				$names = [];
+				if ( $attr->is_taxonomy() ) {
+					foreach ( (array) $attr->get_terms() as $t ) {
+						$names[] = $t->name;
+					}
+				} else {
+					$names = $attr->get_options();
+				}
+				if ( $names ) {
+					$attrs[] = wc_attribute_label( $attr->get_name() ) . ': ' . implode( ', ', array_slice( $names, 0, 12 ) );
+				}
+			}
+			$lines[] = [ 'id' => (int) $pid, 'title' => $product->get_name(), 'attrs' => implode( ' | ', $attrs ) ];
+		}
+		return $lines;
+	}
+
+	/** Cost preview shown before launching the analysis. */
+	public function ajax_estimate(): void {
 		$this->guard();
 		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
-		$kw      = isset( $_POST['keyword'] ) ? sanitize_text_field( wp_unslash( $_POST['keyword'] ) ) : '';
-		$vol     = isset( $_POST['volume'] ) ? (int) round( self::num( wp_unslash( $_POST['volume'] ) ) ) : 0;
-		if ( ! $term_id || ! term_exists( $term_id, 'product_cat' ) ) {
+		global $wpdb;
+		$table   = self::table();
+		$pending = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		if ( ! $pending ) {
+			wp_send_json_error( [ 'message' => __( 'Every keyword of this set is already analysed. Re-import the CSV to start over.', 'dazont-ecom' ) ] );
+		}
+		$products = count( $this->product_lines( $term_id ) );
+		$batches  = (int) ceil( $pending / self::BATCH );
+		// ~2.5k input + ~1.5k output tokens per batch on Haiku pricing.
+		$cost = $batches * ( 2500 * 1.0 + 1500 * 5.0 ) / 1000000;
+		wp_send_json_success( [
+			'message' => sprintf(
+				/* translators: 1: keywords, 2: products, 3: batches, 4: estimated cost, 5: model */
+				__( "AI keyword analysis\n\n%1\$d keywords × %2\$d products, in %3\$d batches.\nEstimated cost: ~$%4\$s (%5\$s).\n\nLaunch?", 'dazont-ecom' ),
+				$pending,
+				$products,
+				$batches,
+				number_format_i18n( max( 0.01, $cost ), 2 ),
+				self::match_model()
+			),
+		] );
+	}
+
+	/**
+	 * Analyses ONE batch of not-yet-analysed keywords and stores the verdicts.
+	 * The browser calls this in a loop until `remaining` hits 0, so progress is
+	 * visible and nothing runs unattended.
+	 */
+	public function ajax_analyze(): void {
+		$this->guard();
+		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		$term    = $term_id ? get_term( $term_id, 'product_cat' ) : null;
+		if ( ! $term instanceof WP_Term ) {
 			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
 		}
-		if ( $kw === '' || mb_strlen( $kw ) > 191 ) {
-			wp_send_json_error( [ 'message' => __( 'Invalid keyword.', 'dazont-ecom' ) ] );
+		if ( ! class_exists( 'DZE_Marketing_Ai' ) || DZE_Marketing_Ai::api_key() === '' ) {
+			wp_send_json_error( [ 'message' => __( 'Add your Anthropic API key under AI Settings first.', 'dazont-ecom' ) ] );
+		}
+		if ( DZE_Ai_Usage::over_budget() ) {
+			wp_send_json_error( [ 'message' => DZE_Ai_Usage::budget_message() ] );
+		}
+
+		global $wpdb;
+		$table = self::table();
+		$batch = $wpdb->get_results(
+			$wpdb->prepare( "SELECT id, keyword, volume FROM {$table} WHERE term_id = %d AND kw_type = '' ORDER BY volume DESC LIMIT %d", $term_id, self::BATCH ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			ARRAY_A
+		);
+		if ( empty( $batch ) ) {
+			wp_send_json_success( [ 'processed' => 0, 'remaining' => 0 ] );
+		}
+
+		$products = $this->product_lines( $term_id );
+		$plist    = '';
+		foreach ( $products as $p ) {
+			$plist .= $p['id'] . ' | ' . $p['title'] . ( $p['attrs'] ? ' | ' . $p['attrs'] : '' ) . "\n";
+		}
+		$klist = '';
+		foreach ( $batch as $k ) {
+			$klist .= $k['id'] . '. ' . $k['keyword'] . ' (vol ' . $k['volume'] . ")\n";
+		}
+
+		$system = 'You are a meticulous e-commerce SEO analyst. You judge whether search queries are answered by a product catalogue. Reply with a JSON array ONLY — no prose, no code fences.';
+		$user = "Product category: {$term->name}\n\n"
+			. "PRODUCTS (id | title | attributes):\n{$plist}\n"
+			. "SEARCH QUERIES (id. query (monthly volume)):\n{$klist}\n"
+			. "For EACH query, decide:\n"
+			. "t (type): \"product\" = shopper looks for a specific product; \"category\" = generic query answered by the category page itself (e.g. \"military t shirts\"); \"info\" = informational/navigational/off-topic (how-to, brand marketplaces like amazon, unrelated).\n"
+			. "s (status): \"covered\" = at least one product clearly answers it (semantic match counts: \"kalashnikov tshirt\" is covered by an \"AK 47 T-shirt\"; spelling/hyphen/plural variants of one need get the same verdict). \"variation\" = only answered by an attribute value of a broader product (e.g. a colour of a grouped product), with no dedicated product. \"gap\" = a shopper would expect such a product and none exists. \"ignored\" = every query with t=info. For t=category use \"covered\" (the category page answers it). \"uncertain\" only when genuinely undecidable.\n"
+			. "p: array of the product ids that cover it ([] when none).\n"
+			. "Be strict: covered requires a real answer to the query's need, not a shared word.\n"
+			. 'Output: JSON array of {"id":<query id>,"t":"...","s":"...","p":[ids]} for every query id listed.';
+
+		try {
+			$raw = $this->call_claude_kw( $system, $user );
+		} catch ( \Throwable $e ) {
+			wp_send_json_error( [ 'message' => $e->getMessage() ] );
+		}
+		$raw     = preg_replace( '/^```(?:json)?\s*|\s*```$/i', '', trim( $raw ) );
+		$decoded = json_decode( $raw, true );
+		if ( ! is_array( $decoded ) && preg_match( '/\[.*\]/s', $raw, $m ) ) {
+			$decoded = json_decode( $m[0], true );
+		}
+		if ( ! is_array( $decoded ) ) {
+			wp_send_json_error( [ 'message' => __( 'The AI returned an unreadable result. Try again.', 'dazont-ecom' ) ] );
+		}
+
+		$valid_ids = array_column( $batch, 'id' );
+		$valid_ids = array_combine( $valid_ids, $valid_ids );
+		$now       = current_time( 'mysql' );
+		$done      = [];
+		foreach ( $decoded as $v ) {
+			$id = (int) ( $v['id'] ?? 0 );
+			if ( ! isset( $valid_ids[ $id ] ) ) {
+				continue;
+			}
+			$type   = in_array( $v['t'] ?? '', [ 'product', 'category', 'info' ], true ) ? $v['t'] : 'product';
+			$status = in_array( $v['s'] ?? '', self::STATUSES, true ) ? $v['s'] : 'uncertain';
+			$pids   = implode( ',', array_filter( array_map( 'intval', (array) ( $v['p'] ?? [] ) ) ) );
+			$wpdb->update( $table, [ 'kw_type' => $type, 'status' => $status, 'products' => $pids, 'updated' => $now ], [ 'id' => $id ] );
+			$done[ $id ] = true;
+		}
+		// Anything the model skipped: mark analysed as uncertain so the loop ends.
+		foreach ( $valid_ids as $id ) {
+			if ( ! isset( $done[ $id ] ) ) {
+				$wpdb->update( $table, [ 'kw_type' => 'product', 'status' => 'uncertain', 'updated' => $now ], [ 'id' => $id ] );
+			}
+		}
+		$remaining = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		wp_send_json_success( [ 'processed' => count( $valid_ids ), 'remaining' => $remaining ] );
+	}
+
+	/** Anthropic call for the matcher: budget-guarded, recorded, Haiku by default. */
+	private function call_claude_kw( string $system, string $user ): string {
+		$resp = wp_remote_post( 'https://api.anthropic.com/v1/messages', [
+			'timeout' => 120,
+			'headers' => [
+				'x-api-key'         => DZE_Marketing_Ai::api_key(),
+				'anthropic-version' => '2023-06-01',
+				'content-type'      => 'application/json',
+			],
+			'body'    => wp_json_encode( [
+				'model'      => self::match_model(),
+				'max_tokens' => 8000,
+				'system'     => $system,
+				'messages'   => [ [ 'role' => 'user', 'content' => $user ] ],
+			] ),
+		] );
+		if ( is_wp_error( $resp ) ) {
+			throw new RuntimeException( $resp->get_error_message() );
+		}
+		$code = (int) wp_remote_retrieve_response_code( $resp );
+		$data = json_decode( (string) wp_remote_retrieve_body( $resp ), true );
+		if ( $code < 200 || $code >= 300 ) {
+			throw new RuntimeException( (string) ( $data['error']['message'] ?? ( 'HTTP ' . $code ) ) );
+		}
+		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ), self::match_model() );
+		$text = '';
+		foreach ( (array) ( $data['content'] ?? [] ) as $block ) {
+			if ( ( $block['type'] ?? '' ) === 'text' ) {
+				$text .= (string) ( $block['text'] ?? '' );
+			}
+		}
+		return $text;
+	}
+
+	/**
+	 * After an analysis: every product of the category that covers NO keyword
+	 * gets its own title added as a covered long-tail keyword (volume 0). This
+	 * captures supplier-driven products SEMrush can't surface ("F22 Raptor
+	 * Tshirt") without any manual input.
+	 */
+	public function ajax_autotitles(): void {
+		$this->guard();
+		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		if ( ! $term_id ) {
+			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
+		}
+		$covered = self::coverage_counts( $term_id );
+		global $wpdb;
+		$table = self::table();
+		$now   = current_time( 'mysql' );
+		$added = 0;
+		foreach ( $this->product_lines( $term_id ) as $p ) {
+			if ( ! empty( $covered[ $p['id'] ] ) ) {
+				continue;
+			}
+			$kw = strtolower( trim( (string) preg_replace( '/\s+/', ' ', $p['title'] ) ) );
+			if ( $kw === '' || mb_strlen( $kw ) > 191 ) {
+				continue;
+			}
+			$exists = $wpdb->get_var( $wpdb->prepare( "SELECT id FROM {$table} WHERE term_id = %d AND LOWER(keyword) = %s", $term_id, $kw ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			if ( $exists ) {
+				continue;
+			}
+			$wpdb->insert( $table, [
+				'term_id' => $term_id,
+				'keyword' => $kw,
+				'volume'  => 0,
+				'intent'  => '',
+				'kw_type' => 'product',
+				'status'  => 'covered',
+				'products'=> (string) $p['id'],
+				'updated' => $now,
+			] );
+			$added++;
+		}
+		wp_send_json_success( [ 'added' => $added ] );
+	}
+
+	/** covered/variation keyword count per product id, for one category set. */
+	public static function coverage_counts( int $term_id ): array {
+		global $wpdb;
+		$table = self::table();
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) !== $table ) {
+			return [];
+		}
+		$rows = $wpdb->get_col(
+			$wpdb->prepare( "SELECT products FROM {$table} WHERE term_id = %d AND status IN ('covered','variation') AND products <> ''", $term_id ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		);
+		$out = [];
+		foreach ( (array) $rows as $list ) {
+			foreach ( explode( ',', (string) $list ) as $pid ) {
+				$pid = (int) $pid;
+				if ( $pid ) {
+					$out[ $pid ] = ( $out[ $pid ] ?? 0 ) + 1;
+				}
+			}
+		}
+		return $out;
+	}
+
+	/** The keywords a given product covers (for the product-card popup). */
+	public function ajax_for_product(): void {
+		$this->guard();
+		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		$pid     = isset( $_POST['product'] ) ? absint( $_POST['product'] ) : 0;
+		if ( ! $term_id || ! $pid ) {
+			wp_send_json_error( [ 'message' => __( 'Unknown product.', 'dazont-ecom' ) ] );
 		}
 		global $wpdb;
-		$table  = self::table();
-		$exists = $wpdb->get_var(
+		$table = self::table();
+		$rows  = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT id FROM {$table} WHERE term_id = %d AND keyword = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+				"SELECT keyword, volume, status FROM {$table}
+				 WHERE term_id = %d AND status IN ('covered','variation') AND FIND_IN_SET(%s, products)
+				 ORDER BY volume DESC", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 				$term_id,
-				$kw
-			)
+				(string) $pid
+			),
+			ARRAY_A
 		);
-		if ( $exists ) {
-			wp_send_json_error( [ 'message' => __( 'This keyword is already in the set.', 'dazont-ecom' ) ] );
-		}
-		$wpdb->insert( $table, [
-			'term_id' => $term_id,
-			'keyword' => $kw,
-			'volume'  => max( 0, $vol ),
-			'intent'  => '',
-			'status'  => '',
-			'updated' => current_time( 'mysql' ),
+		wp_send_json_success( [
+			'title' => get_the_title( $pid ),
+			'rows'  => array_map( static fn( $r ) => [ 'kw' => $r['keyword'], 'vol' => (int) $r['volume'], 's' => $r['status'] ], (array) $rows ),
 		] );
-		wp_send_json_success( [ 'id' => (int) $wpdb->insert_id ] );
 	}
 
 	/** Remove the whole keyword set of a category. */

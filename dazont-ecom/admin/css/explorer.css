@@ -149,6 +149,31 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-kw-st { max-width: 120px; }
 .dze-x-kw-map th { text-align: left; padding: 4px 14px 4px 0; font-size: 13px; }
 .dze-x-kw-map td { padding: 4px 0; }
+.dze-x-kw-row.st-variation td { background: rgba(153, 104, 0, .07); }
+.dze-x-kw-prog { font-size: 12px; color: #2271b1; white-space: nowrap; }
+
+/* Product card: covered-keywords badge */
+.dze-x-kwprod {
+	border: 0; background: transparent; cursor: pointer; padding: 0; margin-left: 8px;
+	font-size: 11px; color: #7c5cff; text-decoration: underline;
+}
+.dze-x-kwprod:hover { color: #2271b1; }
+
+/* Sub-category band at the top of the products overlay */
+.dze-x-subcats {
+	display: flex; gap: 8px; overflow-x: auto; padding: 10px 18px;
+	border-bottom: 1px solid #eee; background: #fbfbfc; flex: 0 0 auto;
+}
+.dze-x-subcat {
+	display: inline-flex; align-items: center; gap: 7px; border: 1px solid #dcdcde; border-radius: 20px;
+	background: #fff; cursor: pointer; padding: 4px 12px 4px 5px; font-size: 12px; color: #1d2327; white-space: nowrap;
+}
+.dze-x-subcat:hover { border-color: #2271b1; color: #2271b1; }
+.dze-x-subcat img, .dze-x-subcat-noimg {
+	width: 26px; height: 26px; border-radius: 50%; object-fit: cover; background: #f0f0f1;
+	display: inline-flex; align-items: center; justify-content: center; font-size: 13px;
+}
+.dze-x-subcat-count { color: #787c82; font-size: 11px; }
 
 /* ===================== Lightbox + variations modal ====================== */
 .dze-lightbox, .dze-gal-modal {

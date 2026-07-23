@@ -134,6 +134,8 @@ final class DZE_Marketing_Ai {
 			'tone'          => '',   // brand voice, reused by future content tools.
 			'events_prompt' => '',   // custom calendar guidance; empty = DEFAULT_EVENTS_PROMPT.
 			'country_pools' => [], // lang_code => [ ISO-3166 alpha-2, ... ]
+			'budget_month'  => 0,  // USD cap for ALL AI calls per month; 0 = no cap.
+			'match_model'   => '', // keyword-matching model; empty = Haiku default.
 		] );
 	}
 
@@ -264,10 +266,12 @@ final class DZE_Marketing_Ai {
 		}
 
 		if ( 'general' === $section ) {
-			// Only the key + model live on the General tab.
+			// Key, model, budget and match model live on the General tab.
 			return array_merge( $existing, [
-				'api_key' => sanitize_text_field( $key ),
-				'model'   => $model,
+				'api_key'      => sanitize_text_field( $key ),
+				'model'        => $model,
+				'budget_month' => max( 0, (float) str_replace( ',', '.', (string) ( $in['budget_month'] ?? 0 ) ) ),
+				'match_model'  => sanitize_text_field( (string) ( $in['match_model'] ?? '' ) ),
 			] );
 		}
 		if ( 'events' === $section ) {
@@ -738,6 +742,9 @@ final class DZE_Marketing_Ai {
 	}
 
 	private function call_claude( string $system, string $user ): string {
+		if ( DZE_Ai_Usage::over_budget() ) {
+			throw new RuntimeException( DZE_Ai_Usage::budget_message() );
+		}
 		$response = wp_remote_post( self::API_URL, [
 			'timeout' => 90,
 			'headers' => [
@@ -761,7 +768,7 @@ final class DZE_Marketing_Ai {
 			$msg = $data['error']['message'] ?? ( 'HTTP ' . $code );
 			throw new RuntimeException( sprintf( __( 'Anthropic API error: %s', 'dazont-ecom' ), $msg ) );
 		}
-		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ) );
+		DZE_Ai_Usage::record( 'anthropic', (int) ( $data['usage']['input_tokens'] ?? 0 ), (int) ( $data['usage']['output_tokens'] ?? 0 ), self::chosen_model() );
 		// Concatenate all returned text blocks.
 		$text = '';
 		foreach ( (array) ( $data['content'] ?? [] ) as $block ) {

@@ -29,6 +29,7 @@
 	var STATUSES = [
 		{ v: '',          l: i18n.stNone },
 		{ v: 'covered',   l: i18n.stCovered },
+		{ v: 'variation', l: i18n.stVariation },
 		{ v: 'gap',       l: i18n.stGap },
 		{ v: 'uncertain', l: i18n.stUncertain },
 		{ v: 'ignored',   l: i18n.stIgnored }
@@ -54,16 +55,18 @@
 		kw.open = open;
 		$('#dze-x-kw').toggle(open);
 		$('#dze-x-grid, .dze-x-more').toggle(!open);
+		$('#dze-x-subcats').toggle(!open && $('#dze-x-subcats').children().length > 0);
 		$('#dze-x-kw-toggle').html(open ? '🖼 ' + esc(i18n.products) : '🔑 ' + esc(i18n.keywords));
 		if (open && (!kw.loaded || kw.cat !== cat())) { loadRows(); }
 	}
 	$('#dze-x-kw-toggle').on('click', function () { setOpen(!kw.open); });
 
-	// A new category was opened (row click) or the overlay closed: reset.
-	$(document).on('click', '.dze-x-row, #dze-x-ov-close', function () {
+	// A new category was opened (row or sub-category chip) or the overlay closed: reset.
+	$(document).on('click', '.dze-x-row, .dze-x-subcat, #dze-x-ov-close', function () {
 		kw.open = false; kw.loaded = false; kw.rows = []; kw.sel = {};
 		$('#dze-x-kw').hide();
 		$('#dze-x-grid, .dze-x-more').show();
+		$('#dze-x-kw-prog').text('');
 		$('#dze-x-kw-toggle').html('🔑 ' + esc(i18n.keywords));
 	});
 
@@ -131,12 +134,17 @@
 	function metricsHtml() {
 		var active = kw.rows.filter(function (r) { return r.status !== 'ignored'; });
 		var ignored = kw.rows.length - active.length;
-		var vol = 0, cpcW = 0, cpcV = 0, kdS = 0, kdN = 0, covered = 0, gaps = 0;
+		var vol = 0, cpcW = 0, cpcV = 0, kdS = 0, kdN = 0, covered = 0, gaps = 0, prodTotal = 0;
 		active.forEach(function (r) {
 			vol += r.vol;
 			if (r.cpc != null) { cpcW += r.cpc * r.vol; cpcV += r.vol; }
 			if (r.kd != null) { kdS += r.kd; kdN++; }
-			if (r.status === 'covered') { covered++; }
+			// Completion counts PRODUCT queries only: category-page and
+			// informational queries are out of the sourcing equation.
+			if (r.t !== 'category' && r.t !== 'info') {
+				prodTotal++;
+				if (r.status === 'covered' || r.status === 'variation') { covered++; }
+			}
 			if (r.status === 'gap') { gaps++; }
 		});
 		var chips = [];
@@ -144,8 +152,8 @@
 		chips.push(esc(i18n.mVolume) + ' <strong>' + vol.toLocaleString() + '</strong>');
 		if (cpcV > 0) { chips.push(esc(i18n.mWcpc) + ' <strong>' + (cpcW / cpcV).toFixed(2) + '</strong>'); }
 		if (kdN > 0) { chips.push(esc(i18n.mAvgKd) + ' <strong>' + (kdS / kdN).toFixed(0) + '</strong>'); }
-		if (active.length > 0) {
-			chips.push(esc(i18n.mCompletion) + ' <strong>' + Math.round(100 * covered / active.length) + '%</strong> (' + covered + '/' + active.length + ')');
+		if (prodTotal > 0) {
+			chips.push(esc(i18n.mCompletion) + ' <strong>' + Math.round(100 * covered / prodTotal) + '%</strong> (' + covered + '/' + prodTotal + ')');
 		}
 		chips.push('<span class="dze-x-kw-gaps">' + gaps + ' ' + esc(i18n.mGaps) + '</span>');
 		return chips.join('<span class="dze-x-kw-sep">·</span>');
@@ -260,19 +268,71 @@
 		else { $b.hide(); }
 	}
 
-	// ---- Manual add: long-tail terms SEMrush can't surface (AliExpress finds) ----
-	$('#dze-x-kw-add').on('click', function () {
-		var keyword = window.prompt(i18n.addKw);
-		if (!keyword || !$.trim(keyword)) { return; }
-		var volume = window.prompt(i18n.addVol, '0') || '0';
-		$.post(cfg.ajaxUrl, { action: 'dze_kw_add', nonce: cfg.nonce, cat: cat(), keyword: $.trim(keyword), volume: volume })
+	// =====================================================================
+	// AI analysis: estimate → confirm → batch loop → auto title keywords
+	// =====================================================================
+	function analyseStep() {
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_analyze', nonce: cfg.nonce, cat: kw.cat })
+			.done(function (res) {
+				if (!res.success) {
+					$('#dze-x-kw-ai').prop('disabled', false);
+					$('#dze-x-kw-prog').text((res.data && res.data.message) || i18n.error);
+					return;
+				}
+				if (res.data.remaining > 0) {
+					$('#dze-x-kw-prog').text(esc(i18n.analysing) + ' ' + res.data.remaining + ' ' + esc(i18n.remaining));
+					analyseStep();
+					return;
+				}
+				// Done — add uncovered product titles as covered long-tail keywords.
+				$.post(cfg.ajaxUrl, { action: 'dze_kw_autotitles', nonce: cfg.nonce, cat: kw.cat })
+					.always(function (r2) {
+						$('#dze-x-kw-ai').prop('disabled', false);
+						var added = (r2 && r2.success && r2.data) ? r2.data.added : 0;
+						$('#dze-x-kw-prog').text(i18n.analyseDone + (added ? ' +' + added + ' ' + i18n.titlesAdded : ''));
+						loadRows();
+						setTimeout(refreshBadge, 800);
+					});
+			})
+			.fail(function () {
+				$('#dze-x-kw-ai').prop('disabled', false);
+				$('#dze-x-kw-prog').text(i18n.error);
+			});
+	}
+	$('#dze-x-kw-ai').on('click', function () {
+		var $btn = $(this);
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: cat() })
 			.done(function (res) {
 				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
-				kw.rows.unshift({ id: res.data.id, kw: $.trim(keyword), vol: parseInt(volume, 10) || 0, kd: null, cpc: null, intent: '', status: '' });
-				render();
-				refreshBadge();
+				if (!window.confirm(res.data.message)) { return; }
+				kw.cat = cat();
+				$btn.prop('disabled', true);
+				$('#dze-x-kw-prog').text(i18n.analysing);
+				analyseStep();
 			})
 			.fail(function () { window.alert(i18n.error); });
+	});
+
+	// ---- Product card "🔑 n kw covered" popup ----
+	$(document).on('click', '.dze-x-kwprod', function (e) {
+		e.stopPropagation();
+		var pid = $(this).data('product'), pcat = $(this).data('cat');
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_for_product', nonce: cfg.nonce, cat: pcat, product: pid })
+			.done(function (res) {
+				if (!res.success) { return; }
+				var html = '<h2 style="margin-top:0;">' + esc(i18n.kwCovered) + ' — ' + esc(res.data.title) + '</h2>';
+				if (!res.data.rows.length) {
+					html += '<p>' + esc(i18n.noKw) + '</p>';
+				} else {
+					html += '<table class="dze-x-kw-tbl"><thead><tr><th>' + esc(i18n.fKeyword) + '</th><th class="dze-x-kw-r">' + esc(i18n.fVolume) + '</th><th>' + esc(i18n.fStatus) + '</th></tr></thead><tbody>';
+					res.data.rows.forEach(function (r) {
+						html += '<tr><td>' + esc(r.kw) + '</td><td class="dze-x-kw-r">' + r.vol.toLocaleString() + '</td><td>' + esc(r.s === 'variation' ? i18n.stVariation : i18n.stCovered) + '</td></tr>';
+					});
+					html += '</tbody></table>';
+				}
+				$('#dze-x-modal').find('.dze-gal-modal__inner').html(html);
+				$('#dze-x-modal').css('display', 'flex');
+			});
 	});
 
 	// =====================================================================

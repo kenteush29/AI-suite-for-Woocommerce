@@ -159,8 +159,9 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 				<span class="dze-x-kw-actions">
 					<select id="dze-x-kw-bulk"></select>
 					<button type="button" id="dze-x-kw-apply" class="button"><?php esc_html_e( 'Apply', 'dazont-ecom' ); ?></button>
-					<button type="button" id="dze-x-kw-add" class="button"><?php esc_html_e( '+ Add', 'dazont-ecom' ); ?></button>
-					<button type="button" id="dze-x-kw-import" class="button button-primary"><?php esc_html_e( 'Import CSV', 'dazont-ecom' ); ?></button>
+					<button type="button" id="dze-x-kw-ai" class="button button-primary"><?php esc_html_e( '✨ Analyse with AI', 'dazont-ecom' ); ?></button>
+					<span id="dze-x-kw-prog" class="dze-x-kw-prog"></span>
+					<button type="button" id="dze-x-kw-import" class="button"><?php esc_html_e( 'Import CSV', 'dazont-ecom' ); ?></button>
 					<button type="button" id="dze-x-kw-export" class="button"><?php esc_html_e( 'Export', 'dazont-ecom' ); ?></button>
 					<button type="button" id="dze-x-kw-delete" class="button-link" style="color:#b32d2e;"><?php esc_html_e( 'Delete set', 'dazont-ecom' ); ?></button>
 					<input type="file" id="dze-x-kw-file" accept=".csv,text/csv,text/plain" style="display:none;" />
@@ -169,6 +170,7 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 			<div id="dze-x-kw-table" class="dze-x-kw-table"></div>
 		</div>
 
+		<div id="dze-x-subcats" class="dze-x-subcats" style="display:none;"></div>
 		<div id="dze-x-grid" class="dze-x-grid"></div>
 		<div class="dze-x-more">
 			<button type="button" id="dze-x-load" class="button" style="display:none;"><?php esc_html_e( 'Load more', 'dazont-ecom' ); ?></button>

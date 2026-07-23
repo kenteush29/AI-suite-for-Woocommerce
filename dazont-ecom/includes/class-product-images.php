@@ -314,6 +314,9 @@ final class DZE_Product_Images {
 	 * image part in the response.
 	 */
 	private function generate_image( string $prompt, array $inline_images ): array {
+		if ( class_exists( 'DZE_Ai_Usage' ) && DZE_Ai_Usage::over_budget() ) {
+			throw new RuntimeException( DZE_Ai_Usage::budget_message() );
+		}
 		$model = $this->model();
 		$url   = 'https://generativelanguage.googleapis.com/v1beta/models/' . rawurlencode( $model ) . ':generateContent?key=' . rawurlencode( self::api_key() );
 
@@ -339,7 +342,7 @@ final class DZE_Product_Images {
 		if ( $code < 200 || $code >= 300 ) {
 			throw new RuntimeException( (string) ( $data['error']['message'] ?? ( 'Gemini HTTP ' . $code ) ) );
 		}
-		DZE_Ai_Usage::record( 'gemini', (int) ( $data['usageMetadata']['promptTokenCount'] ?? 0 ), (int) ( $data['usageMetadata']['candidatesTokenCount'] ?? 0 ) );
+		DZE_Ai_Usage::record( 'gemini', (int) ( $data['usageMetadata']['promptTokenCount'] ?? 0 ), (int) ( $data['usageMetadata']['candidatesTokenCount'] ?? 0 ), $model );
 		foreach ( (array) ( $data['candidates'][0]['content']['parts'] ?? [] ) as $p ) {
 			$inline = $p['inlineData'] ?? $p['inline_data'] ?? null;
 			if ( $inline && ! empty( $inline['data'] ) ) {
