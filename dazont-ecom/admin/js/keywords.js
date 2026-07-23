@@ -325,7 +325,31 @@
 	}
 	$('#dze-x-kw-ai').on('click', function () { estimateThen(cat()); });
 	$(document).on('click', '.dze-x-an', function (e) { e.stopPropagation(); estimateThen(parseInt($(this).data('cat'), 10) || 0); });
-	$('#dze-x-kw-bulk-ai').on('click', function () { estimateThen(0); });
+
+	// Count categories that hold products but have no keyword file imported.
+	function noFileCount() {
+		var n = 0;
+		$('.dze-x-row').each(function () {
+			var $r = $(this);
+			if ((parseInt($r.attr('data-count'), 10) || 0) > 0 && (parseInt($r.attr('data-ownkw'), 10) || 0) === 0) { n++; }
+		});
+		return n;
+	}
+	// Bulk = analyse only what is still pending across every category. Never resets:
+	// starting from scratch is a per-category action (its own page/row).
+	$('#dze-x-kw-bulk-ai').on('click', function () {
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: 0, minvol: minVol() })
+			.done(function (res) {
+				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
+				if (res.data.empty) { window.alert(i18n.bulkAllAnalysed); return; }
+				var msg = res.data.message;
+				var nf = noFileCount();
+				if (nf > 0) { msg += '\n\n' + i18n.bulkNoFile; }
+				if (!window.confirm(msg)) { return; }
+				startJob(0);
+			})
+			.fail(function () { window.alert(i18n.error); });
+	});
 
 	// Resume showing a job that is already running (e.g. after reopening the page).
 	$(function () { startPolling(); });
@@ -334,9 +358,12 @@
 	$(document).on('click', '.dze-x-kwprod', function (e) {
 		e.stopPropagation();
 		var pid = $(this).data('product'), pcat = $(this).data('cat');
+		// Open the modal immediately with a spinner — the lookup can take a moment.
+		$('#dze-x-modal').find('.dze-gal-modal__inner').html('<div class="dze-x-ai-body"><span class="dze-x-ai-spin"></span>' + esc(i18n.loading) + '</div>');
+		$('#dze-x-modal').css('display', 'flex');
 		$.post(cfg.ajaxUrl, { action: 'dze_kw_for_product', nonce: cfg.nonce, cat: pcat, product: pid })
 			.done(function (res) {
-				if (!res.success) { return; }
+				if (!res.success) { $('#dze-x-modal').find('.dze-gal-modal__inner').html('<p>' + esc(i18n.error) + '</p>'); return; }
 				var html = '<h2 style="margin-top:0;">' + esc(i18n.kwCovered) + ' — ' + esc(res.data.title) + '</h2>';
 				if (!res.data.rows.length) {
 					html += '<p>' + esc(i18n.noKw) + '</p>';
@@ -349,7 +376,8 @@
 				}
 				$('#dze-x-modal').find('.dze-gal-modal__inner').html(html);
 				$('#dze-x-modal').css('display', 'flex');
-			});
+			})
+			.fail(function () { $('#dze-x-modal').find('.dze-gal-modal__inner').html('<p>' + esc(i18n.error) + '</p>'); });
 	});
 
 	// =====================================================================
@@ -445,31 +473,65 @@
 	// =====================================================================
 
 	// =====================================================================
-	// Shop-wide opportunities panel
+	// Shop-wide opportunities panel — a COMPILATION of every saved sourcing
+	// report. Categories that have gaps but no report yet are listed apart,
+	// with a nudge to generate their report.
 	// =====================================================================
-	var opps = { open: false, loaded: false };
+	var opps = { open: false };
+	// This endpoint lives in the Explorer module, so it expects the explorer nonce.
+	function exNonce() { return (window.dzeExplorer && window.dzeExplorer.nonce) || cfg.nonce; }
+
+	function renderAllOpps(d) {
+		var html = '';
+		var n = (d.opps || []).length;
+		if (!n && !(d.missing || []).length) {
+			$('#dze-x-opps').html('<p style="padding:14px;" class="description">' + esc(i18n.allOppsEmpty) + '</p>');
+			return;
+		}
+		html += '<p class="description dze-x-opps-note">' + esc(i18n.allOppsCompiled.replace('%s', d.reports || 0)) + '</p>';
+		if (n) {
+			html += '<table class="dze-x-kw-tbl"><thead><tr>' +
+				'<th>' + esc(i18n.oppProduct) + '</th>' +
+				'<th>' + esc(i18n.oppQueries) + '</th>' +
+				'<th class="dze-x-kw-r">' + esc(i18n.fVolume) + '</th>' +
+				'<th>' + esc(i18n.oppCat) + '</th><th></th></tr></thead><tbody>';
+			d.opps.forEach(function (r) {
+				var q = Array.isArray(r.queries) ? r.queries.join(', ') : (r.queries || '');
+				html += '<tr class="dze-x-kw-row">' +
+					'<td><strong>' + esc(r.product || '—') + '</strong></td>' +
+					'<td>' + esc(q) + '</td>' +
+					'<td class="dze-x-kw-r">' + (r.volume ? Number(r.volume).toLocaleString() : '—') + '</td>' +
+					'<td>' + esc(r.catName || '') + '</td>' +
+					'<td><button type="button" class="button button-small dze-x-opp-go" data-cat="' + r.cat + '">' + esc(i18n.oppOpen) + ' →</button></td></tr>';
+			});
+			html += '</tbody></table>';
+		}
+		if ((d.missing || []).length) {
+			html += '<div class="dze-x-opps-missing"><strong>' + esc(i18n.missingReportsTitle) + '</strong>' +
+				'<p class="description">' + esc(i18n.missingReportsHelp) + '</p><ul>';
+			d.missing.forEach(function (m) {
+				html += '<li><button type="button" class="button button-small dze-x-opp-go" data-cat="' + m.cat + '">' +
+					esc(m.name) + '</button> <span class="dze-x-kw-gaps">' + m.gaps + ' ' + esc(i18n.gapsWord) + '</span></li>';
+			});
+			html += '</ul></div>';
+		}
+		$('#dze-x-opps').html(html);
+	}
+
 	$('#dze-x-opps-toggle').on('click', function () {
 		opps.open = !opps.open;
 		$('#dze-x-opps').toggle(opps.open);
 		$('#dze-x-list, .dze-x-list-head').toggle(!opps.open);
 		$(this).toggleClass('button-primary', opps.open);
-		if (opps.open && !opps.loaded) {
-			$('#dze-x-opps').html('<p style="padding:14px;">' + esc(i18n.loading) + '</p>');
-			$.post(cfg.ajaxUrl, { action: 'dze_kw_opps', nonce: cfg.nonce }).done(function (res) {
-				opps.loaded = true;
-				if (!res.success || !res.data.rows.length) { $('#dze-x-opps').html('<p style="padding:14px;" class="description">' + esc(i18n.noOpps) + '</p>'); return; }
-				var html = '<table class="dze-x-kw-tbl"><thead><tr><th>' + esc(i18n.fKeyword) + '</th><th class="dze-x-kw-r">' + esc(i18n.fVolume) + '</th><th class="dze-x-kw-r">' + esc(i18n.fKd) + '</th><th class="dze-x-kw-r">' + esc(i18n.fCpc) + '</th><th>' + esc(i18n.fStatus) + '</th><th></th></tr></thead><tbody>';
-				res.data.rows.forEach(function (r) {
-					html += '<tr class="dze-x-kw-row st-' + r.status + '"><td>' + esc(r.kw) + '</td>' +
-						'<td class="dze-x-kw-r">' + r.vol.toLocaleString() + '</td>' +
-						'<td class="dze-x-kw-r">' + (r.kd == null ? '—' : Math.round(r.kd)) + '</td>' +
-						'<td class="dze-x-kw-r">' + (r.cpc == null ? '—' : r.cpc.toFixed(2)) + '</td>' +
-						'<td>' + esc(r.status === 'to_source' ? i18n.stToSource : i18n.stGap) + '</td>' +
-						'<td><button type="button" class="button button-small dze-x-opp-go" data-cat="' + r.cat + '">' + esc(r.catName) + ' →</button></td></tr>';
-				});
-				$('#dze-x-opps').html(html + '</tbody></table>');
-			});
-		}
+		if (!opps.open) { return; }
+		// Always refresh — reports may have been generated since last open.
+		$('#dze-x-opps').html('<div class="dze-x-ai-body"><span class="dze-x-ai-spin"></span>' + esc(i18n.loading) + '</div>');
+		$.post(cfg.ajaxUrl, { action: 'dze_explorer_all_opps', nonce: exNonce() })
+			.done(function (res) {
+				if (!res.success) { $('#dze-x-opps').html('<p style="padding:14px;">' + esc(i18n.error) + '</p>'); return; }
+				renderAllOpps(res.data);
+			})
+			.fail(function () { $('#dze-x-opps').html('<p style="padding:14px;">' + esc(i18n.error) + '</p>'); });
 	});
 	$(document).on('click', '.dze-x-opp-go', function () {
 		var $row = $('.dze-x-row[data-cat="' + $(this).data('cat') + '"]');

@@ -79,11 +79,18 @@
 		}
 
 		var d = view === 'detailed' ? '-direct' : '';
+		var show = $('#dze-x-show').val() || 'all';
 		var seen = {}, shown = 0;
 		entries.forEach(function (e) {
 			var r = e.row, $r = $(r);
 			seen[r.getAttribute('data-cat')] = true;
-			var ok = !e.hidden && (!perf.search || (r.getAttribute('data-name') || '').indexOf(perf.search) >= 0);
+			var cnt = parseInt(r.getAttribute('data-count'), 10) || 0;
+			var own = parseInt(r.getAttribute('data-ownkw'), 10) || 0;
+			var passShow = show === 'all'
+				|| (show === 'live' && cnt > 0)
+				|| (show === 'empty' && cnt === 0)
+				|| (show === 'noset' && own === 0 && cnt > 0);
+			var ok = passShow && !e.hidden && (!perf.search || (r.getAttribute('data-name') || '').indexOf(perf.search) >= 0);
 			r.style.display = ok ? '' : 'none';
 			if (ok) { shown++; }
 			var depth = view === 'grouped' ? (parseInt(r.getAttribute('data-depth'), 10) || 0) : 0;
@@ -124,6 +131,7 @@
 		applyPerf();
 	});
 	$('#dze-x-perf-search').on('input', function () { perf.search = ($(this).val() || '').toLowerCase(); applyPerf(); });
+	$('#dze-x-show').on('change', applyPerf);
 
 	// Collapse / expand one branch.
 	$(document).on('click', '.dze-x-tog', function (e) {
@@ -313,16 +321,26 @@
 			})
 			.fail(function () { $btn.prop('disabled', false); $panel.text(i18n.error); });
 	}
+	// Toggle the report panel. Opening never triggers a long AI call on its own:
+	// a saved report shows instantly; otherwise a "Generate report" button waits.
 	$('#dze-x-ai').on('click', function () {
 		if (!state.cat) { return; }
+		var $panel = $('#dze-x-ai-panel');
+		if ($panel.is(':visible')) { $panel.hide(); return; }
 		var $btn = $(this).prop('disabled', true);
-		var $panel = $('#dze-x-ai-panel').show().html('<span class="dze-x-ai-spin"></span>' + escHtml(i18n.aiThinking));
+		$panel.show().html('<div class="dze-x-ai-body"><span class="dze-x-ai-spin"></span>' + escHtml(i18n.loading) + '</div>');
 		$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: state.cat, mode: 'get' })
 			.done(function (res) {
-				if (res.success && res.data.saved) { $btn.prop('disabled', false); showReport($panel, res.data); return; }
-				generateInsights($btn, $panel);
+				$btn.prop('disabled', false);
+				if (res.success && res.data.saved) { showReport($panel, res.data); return; }
+				$panel.html('<div class="dze-x-ai-body"><p>' + escHtml(i18n.noReportYet || 'No report generated yet for this category.') + '</p>' +
+					'<button type="button" class="button button-primary" id="dze-x-ai-gen">' + escHtml(i18n.genReport || 'Generate report') + '</button>' +
+					' <button type="button" class="button" id="dze-x-ai-hide">' + escHtml(i18n.close || 'Close') + '</button></div>');
 			})
-			.fail(function () { $btn.prop('disabled', false); $panel.text(i18n.error); });
+			.fail(function () { $btn.prop('disabled', false); $panel.html('<div class="dze-x-ai-body">' + escHtml(i18n.error) + '</div>'); });
+	});
+	$(document).on('click', '#dze-x-ai-gen', function () {
+		generateInsights($('#dze-x-ai').prop('disabled', true), $('#dze-x-ai-panel'));
 	});
 	$(document).on('click', '#dze-x-ai-regen', function () {
 		generateInsights($('#dze-x-ai').prop('disabled', true), $('#dze-x-ai-panel'));

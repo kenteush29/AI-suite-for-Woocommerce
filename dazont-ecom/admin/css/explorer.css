@@ -143,13 +143,22 @@ body.dze-x-ov-open { overflow: hidden; }
 /* ===================== Keyword Workbench ================================ */
 .dze-x-kwpanel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .dze-x-kw-bar {
-	display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px;
-	padding: 10px 18px; border-bottom: 1px solid #e2e2e2; background: #fbfbfc;
+	display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px;
+	padding: 8px 18px; border-bottom: 1px solid #e2e2e2; background: #fbfbfc;
 }
-.dze-x-kw-metrics { font-size: 12px; color: #50575e; display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+/* Metrics get their own line above the controls for readability. */
+.dze-x-kw-metrics {
+	font-size: 12px; color: #50575e; display: flex; align-items: center; flex-wrap: wrap; gap: 4px;
+	padding: 9px 18px; border-bottom: 1px solid #eee; background: #fff;
+}
 .dze-x-kw-sep { margin: 0 6px; color: #c3c4c7; }
 .dze-x-kw-dim { color: #8c8f94; }
 .dze-x-kw-gaps { color: #b32d2e; font-weight: 600; }
+.dze-x-opps-note { padding: 10px 14px 0; margin: 0; }
+.dze-x-opps-missing { margin: 14px; padding: 12px 16px; background: #fcf9e8; border: 1px solid #f0e6a6; border-radius: 4px; }
+.dze-x-opps-missing p { margin: 4px 0 10px; }
+.dze-x-opps-missing ul { margin: 0; display: flex; flex-wrap: wrap; gap: 8px; list-style: none; }
+.dze-x-opps-missing li { display: inline-flex; align-items: center; gap: 6px; }
 .dze-x-kw-tools { display: inline-flex; gap: 6px; align-items: center; }
 .dze-x-kw-tools input[type="search"] { width: 180px; }
 .dze-x-kw-tools input[type="number"] { width: 74px; }
@@ -215,7 +224,14 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-ico { font-size: 17px; cursor: help; margin-right: 4px; }
 .dze-x-row-act { display: inline-flex; align-items: center; justify-content: flex-end; gap: 7px; }
 .dze-x-ico-kw.is-off { opacity: .35; }
-.dze-x-row-act .button-small { min-width: 34px; padding: 2px 8px; font-size: 14px; height: auto; }
+/* Sober, uniform row action buttons (WP-native, no emoji, compact). */
+.dze-x-row-act .button-small { font-size: 11px; padding: 0 7px; min-height: 24px; line-height: 22px; }
+.dze-x-row-act .dze-x-opp-cat.has-report { border-color: #46b450; color: #1e7e34; font-weight: 600; }
+.dze-x-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: 0 0 auto; }
+.dze-x-dot.is-live { background: #46b450; }
+.dze-x-dot.is-empty { background: #dcdcde; box-shadow: inset 0 0 0 1px #c3c4c7; }
+.dze-x-toolbar-sep { width: 1px; height: 20px; background: #dcdcde; margin: 0 2px; }
+.dze-x-show { font-size: 12px; }
 .dze-x-kw-prog { font-size: 12px; color: #2271b1; white-space: nowrap; }
 
 /* Product card: covered-keywords badge */

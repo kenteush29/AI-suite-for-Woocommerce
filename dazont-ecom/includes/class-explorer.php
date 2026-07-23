@@ -42,6 +42,7 @@ final class DZE_Explorer {
 		add_action( 'wp_ajax_dze_explorer_variations',      [ $this, 'ajax_variations' ] );
 		add_action( 'wp_ajax_dze_explorer_mark_researched', [ $this, 'ajax_mark_researched' ] );
 		add_action( 'wp_ajax_dze_explorer_ai_insights',     [ $this, 'ajax_ai_insights' ] );
+		add_action( 'wp_ajax_dze_explorer_all_opps',        [ $this, 'ajax_all_opps' ] );
 		// "+ Add product" from a category overlay: pre-tick that category on the new-product screen.
 		add_action( 'admin_footer-post-new.php', static function () {
 			$cat = isset( $_GET['dze_cat'] ) ? absint( $_GET['dze_cat'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- UI convenience only.
@@ -140,6 +141,18 @@ final class DZE_Explorer {
 				'opps'       => __( 'opportunities', 'dazont-ecom' ),
 				'mAnalysed'  => __( 'Analysed', 'dazont-ecom' ),
 				'confirmDelAdded' => __( 'Remove the auto-added product-title keywords?', 'dazont-ecom' ),
+				'oppProduct' => __( 'Product to source', 'dazont-ecom' ),
+				'oppQueries' => __( 'Queries covered', 'dazont-ecom' ),
+				'oppCat'     => __( 'Category', 'dazont-ecom' ),
+				'oppOpen'    => __( 'Open', 'dazont-ecom' ),
+				'allOppsCompiled' => __( 'Compiled from %s category report(s).', 'dazont-ecom' ),
+				'allOppsEmpty'    => __( 'No sourcing report generated yet. Open a category and generate its report, then it will be compiled here.', 'dazont-ecom' ),
+				'missingReportsTitle' => __( 'These categories have opportunities but no sourcing report yet', 'dazont-ecom' ),
+				'missingReportsHelp'  => __( 'Open each one and generate its report to add its opportunities to this list.', 'dazont-ecom' ),
+				'gapsWord'   => __( 'opportunities', 'dazont-ecom' ),
+				'genReport'  => __( 'Generate report', 'dazont-ecom' ),
+				'bulkAllAnalysed' => __( 'All imported keywords are already analysed. Reset a single category from its own page if you want to re-run it.', 'dazont-ecom' ),
+				'bulkNoFile' => __( 'Note: some categories have products but no keyword file imported yet. Import their SEMrush export first if you want them included.', 'dazont-ecom' ),
 			],
 		] );
 		wp_localize_script( 'dze-explorer', 'dzeExplorer', [
@@ -176,6 +189,9 @@ final class DZE_Explorer {
 				'confirmMark'  => __( 'Mark this category as searched today?', 'dazont-ecom' ),
 				'expandAll'    => __( 'Expand all', 'dazont-ecom' ),
 				'collapseAll'  => __( 'Collapse all', 'dazont-ecom' ),
+				'noReportYet'  => __( 'No report generated yet for this category.', 'dazont-ecom' ),
+				'genReport'    => __( 'Generate report', 'dazont-ecom' ),
+				'close'        => __( 'Close', 'dazont-ecom' ),
 			],
 		] );
 	}
@@ -259,6 +275,7 @@ final class DZE_Explorer {
 					'pending'           => $rec_kw( $cid )['pending'],
 					'analysed'          => $rec_kw( $cid )['analysed'],
 					'own_kw'            => (int) ( $kwc[ $cid ]['kw'] ?? 0 ),
+					'has_report'        => (bool) get_term_meta( $cid, '_dze_insights', true ),
 					'image'             => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
 					'children'          => $build( $cid ),
 				];
@@ -677,6 +694,58 @@ final class DZE_Explorer {
 		}
 		update_term_meta( $cat, '_dze_insights', [ 'data' => $data, 'ts' => time() ] );
 		wp_send_json_success( [ 'data' => $data, 'ts' => time(), 'saved' => true ] );
+	}
+
+	/**
+	 * Shop-wide opportunities: compiles the source_list of every SAVED category
+	 * report into one volume-ranked list, and flags categories that have gaps
+	 * but no report yet so the UI can offer to generate them.
+	 */
+	public function ajax_all_opps(): void {
+		check_ajax_referer( self::NONCE, 'nonce' );
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
+		}
+		global $wpdb;
+		$reported = [];
+		$opps     = [];
+		$ids = $wpdb->get_col( $wpdb->prepare( "SELECT term_id FROM {$wpdb->termmeta} WHERE meta_key = %s", '_dze_insights' ) );
+		foreach ( array_map( 'intval', (array) $ids ) as $tid ) {
+			$meta = get_term_meta( $tid, '_dze_insights', true );
+			$data = is_array( $meta ) ? ( $meta['data'] ?? null ) : null;
+			if ( ! is_array( $data ) || empty( $data['source_list'] ) ) {
+				continue;
+			}
+			$term = get_term( $tid, 'product_cat' );
+			$name = $term instanceof WP_Term ? $term->name : ( '#' . $tid );
+			$reported[ $tid ] = true;
+			foreach ( (array) $data['source_list'] as $row ) {
+				$opps[] = [
+					'cat'     => $tid,
+					'catName' => $name,
+					'product' => (string) ( $row['product'] ?? '' ),
+					'queries' => array_map( 'strval', (array) ( $row['queries'] ?? [] ) ),
+					'volume'  => (int) ( $row['volume'] ?? 0 ),
+				];
+			}
+		}
+		usort( $opps, static fn( $a, $b ) => $b['volume'] <=> $a['volume'] );
+		$opps = array_slice( $opps, 0, 500 );
+
+		// Categories with gaps but no saved report yet.
+		$missing = [];
+		if ( class_exists( 'DZE_Keywords' ) ) {
+			foreach ( DZE_Keywords::counts_by_term() as $tid => $c ) {
+				if ( ( $c['gaps'] ?? 0 ) > 0 && empty( $reported[ $tid ] ) ) {
+					$term = get_term( (int) $tid, 'product_cat' );
+					if ( $term instanceof WP_Term ) {
+						$missing[] = [ 'cat' => (int) $tid, 'name' => $term->name, 'gaps' => (int) $c['gaps'] ];
+					}
+				}
+			}
+			usort( $missing, static fn( $a, $b ) => $b['gaps'] <=> $a['gaps'] );
+		}
+		wp_send_json_success( [ 'opps' => $opps, 'missing' => $missing, 'reports' => count( $reported ) ] );
 	}
 
 	/**

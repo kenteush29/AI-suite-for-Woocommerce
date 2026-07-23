@@ -136,7 +136,8 @@ final class DZE_Marketing_Ai {
 			'country_pools' => [], // lang_code => [ ISO-3166 alpha-2, ... ]
 			'budget_month'  => 0,  // USD cap for ALL AI calls per month; 0 = no cap.
 			'match_model'   => '', // keyword-matching model; empty = Haiku default.
-			'insights_model'=> '', // See-opportunities report model; empty = main model.
+			'insights_model'=> '', // Sourcing report model; empty = main model.
+			'sourcing_minvol' => 10, // default "analyse vol ≥" threshold in the Sourcing Assistant.
 		] );
 	}
 
@@ -267,13 +268,18 @@ final class DZE_Marketing_Ai {
 		}
 
 		if ( 'general' === $section ) {
-			// Key, model, budget and match model live on the General tab.
+			// Key, model and budget live on the General tab.
 			return array_merge( $existing, [
 				'api_key'      => sanitize_text_field( $key ),
 				'model'        => $model,
 				'budget_month' => max( 0, (float) str_replace( ',', '.', (string) ( $in['budget_month'] ?? 0 ) ) ),
-				'match_model'  => sanitize_text_field( (string) ( $in['match_model'] ?? '' ) ),
-				'insights_model' => sanitize_text_field( (string) ( $in['insights_model'] ?? '' ) ),
+			] );
+		}
+		if ( 'sourcing' === $section ) {
+			return array_merge( $existing, [
+				'match_model'     => sanitize_text_field( (string) ( $in['match_model'] ?? '' ) ),
+				'insights_model'  => sanitize_text_field( (string) ( $in['insights_model'] ?? '' ) ),
+				'sourcing_minvol' => max( 0, (int) ( $in['sourcing_minvol'] ?? 10 ) ),
 			] );
 		}
 		if ( 'events' === $section ) {
@@ -344,10 +350,11 @@ final class DZE_Marketing_Ai {
 	 */
 	public function render_settings_page(): void {
 		$tabs = [
-			'general' => __( 'General', 'dazont-ecom' ),
-			'content' => __( 'Product content', 'dazont-ecom' ),
-			'images'  => __( 'Product images', 'dazont-ecom' ),
-			'events'  => __( 'Marketing events', 'dazont-ecom' ),
+			'general'  => __( 'General', 'dazont-ecom' ),
+			'sourcing' => __( 'Sourcing Assistant', 'dazont-ecom' ),
+			'content'  => __( 'Product content', 'dazont-ecom' ),
+			'images'   => __( 'Product images', 'dazont-ecom' ),
+			'events'   => __( 'Marketing events', 'dazont-ecom' ),
 		];
 		$tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'general'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- tab navigation only.
 		if ( ! isset( $tabs[ $tab ] ) ) {
@@ -379,6 +386,8 @@ final class DZE_Marketing_Ai {
 			echo '<hr style="margin:28px 0;" />';
 			echo '<h2>' . esc_html__( 'API usage per month', 'dazont-ecom' ) . '</h2>';
 			DZE_Ai_Usage::render_graph();
+		} elseif ( 'sourcing' === $tab ) {
+			$this->render_sourcing_settings();
 		} elseif ( 'content' === $tab ) {
 			echo '<h2>' . esc_html__( 'Product content (coming soon)', 'dazont-ecom' ) . '</h2>';
 			echo '<p class="description" style="max-width:820px;">' . esc_html__( 'AI product content tools (descriptions, titles, SEO texts) will be configured here. The brand tone set under Marketing events will be reused by these tools.', 'dazont-ecom' ) . '</p>';
@@ -390,6 +399,50 @@ final class DZE_Marketing_Ai {
 			$this->render_settings_section( 'events' );
 		}
 		echo '</div>';
+	}
+
+	/** Settings for the Sourcing Assistant module (keyword analysis + report). */
+	public function render_sourcing_settings(): void {
+		if ( ! current_user_can( 'manage_woocommerce' ) ) {
+			return;
+		}
+		$s   = self::get_settings();
+		$opt = self::OPT_SETTINGS;
+		$explorer_url = class_exists( 'DZE_Explorer' ) ? add_query_arg( [ 'page' => DZE_Explorer::MENU_SLUG ], admin_url( 'admin.php' ) ) : '';
+		?>
+		<p class="description" style="max-width:820px;">
+			<?php esc_html_e( 'Controls for the Sourcing Assistant: which models judge keyword coverage and write the sourcing report, and the default volume threshold for the keyword analysis.', 'dazont-ecom' ); ?>
+			<?php if ( $explorer_url ) : ?><a href="<?php echo esc_url( $explorer_url ); ?>"><?php esc_html_e( 'Open the Sourcing Assistant →', 'dazont-ecom' ); ?></a><?php endif; ?>
+		</p>
+		<form method="post" action="options.php">
+			<?php settings_fields( 'dze_mai_options' ); ?>
+			<input type="hidden" name="<?php echo esc_attr( $opt ); ?>[section]" value="sourcing" />
+			<table class="form-table" role="presentation">
+				<tr>
+					<th scope="row"><label for="dze-mai-match-model"><?php esc_html_e( 'Keyword-matching model', 'dazont-ecom' ); ?></label></th>
+					<td>
+						<input type="text" id="dze-mai-match-model" class="regular-text" name="<?php echo esc_attr( $opt ); ?>[match_model]" value="<?php echo esc_attr( (string) ( $s['match_model'] ?? '' ) ); ?>" placeholder="claude-haiku-4-5-20251001" />
+						<p class="description"><?php esc_html_e( 'Judges which product/category covers each keyword — a simple, repetitive task. Haiku is ~10× cheaper and is the default when left empty.', 'dazont-ecom' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="dze-mai-ins-model"><?php esc_html_e( 'Sourcing report model', 'dazont-ecom' ); ?></label></th>
+					<td>
+						<input type="text" id="dze-mai-ins-model" class="regular-text" name="<?php echo esc_attr( $opt ); ?>[insights_model]" value="<?php echo esc_attr( (string) ( $s['insights_model'] ?? '' ) ); ?>" placeholder="<?php echo esc_attr( self::chosen_model() ); ?>" />
+						<p class="description"><?php esc_html_e( 'Writes the "sourcing opportunities" report — needs quality. Empty = the main Claude model from the General tab.', 'dazont-ecom' ); ?></p>
+					</td>
+				</tr>
+				<tr>
+					<th scope="row"><label for="dze-mai-minvol"><?php esc_html_e( 'Default volume threshold', 'dazont-ecom' ); ?></label></th>
+					<td>
+						<input type="number" id="dze-mai-minvol" name="<?php echo esc_attr( $opt ); ?>[sourcing_minvol]" value="<?php echo esc_attr( (int) ( $s['sourcing_minvol'] ?? 10 ) ); ?>" min="0" style="width:90px;" />
+						<p class="description"><?php esc_html_e( 'Keywords below this monthly search volume are skipped by the analysis by default (faster, cheaper). You can still change it per run in the Sourcing Assistant. 0 = analyse everything.', 'dazont-ecom' ); ?></p>
+					</td>
+				</tr>
+			</table>
+			<?php submit_button(); ?>
+		</form>
+		<?php
 	}
 
 	/** @param string $dze_section 'all', 'general' (key+model) or 'events' (the rest). */

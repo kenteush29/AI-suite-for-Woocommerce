@@ -80,20 +80,6 @@ $show_events  = in_array( $dze_section, [ 'all', 'events' ], true );
 				<p class="description"><?php esc_html_e( 'Hard cap for ALL AI features combined (calendar, category insights, keyword matching, product images). When the estimated month spend reaches it, every AI call is blocked until next month. 0 or empty = no cap. Current month spend shows in the usage graph below.', 'dazont-ecom' ); ?></p>
 			</td>
 		</tr>
-		<tr>
-			<th scope="row"><label for="dze-mai-match-model"><?php esc_html_e( 'Keyword-matching model', 'dazont-ecom' ); ?></label></th>
-			<td>
-				<input type="text" id="dze-mai-match-model" class="regular-text" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[match_model]' ); ?>" value="<?php echo esc_attr( (string) ( $settings['match_model'] ?? '' ) ); ?>" placeholder="claude-haiku-4-5-20251001" />
-				<p class="description"><?php esc_html_e( 'Model used by the Sourcing Assistant keyword analysis (a simple, repetitive task — Haiku is ~10× cheaper and the default when empty).', 'dazont-ecom' ); ?></p>
-			</td>
-		</tr>
-		<tr>
-			<th scope="row"><label for="dze-mai-ins-model"><?php esc_html_e( 'Opportunities report model', 'dazont-ecom' ); ?></label></th>
-			<td>
-				<input type="text" id="dze-mai-ins-model" class="regular-text" name="<?php echo esc_attr( DZE_Marketing_Ai::OPT_SETTINGS . '[insights_model]' ); ?>" value="<?php echo esc_attr( (string) ( $settings['insights_model'] ?? '' ) ); ?>" placeholder="<?php echo esc_attr( DZE_Marketing_Ai::chosen_model() ); ?>" />
-				<p class="description"><?php esc_html_e( 'Model behind "See opportunities" in the Sourcing Assistant. Empty = the main Claude model above (recommended — this task needs quality, not Haiku).', 'dazont-ecom' ); ?></p>
-			</td>
-		</tr>
 	</table>
 	<?php endif; // $show_general ?>
 
