@@ -220,7 +220,26 @@ final class DZE_Explorer {
 			}
 			return $c;
 		};
-		$build = function ( int $parent_id ) use ( &$build, $children, $by_id, $rec_count, $sales, $kwc ): array {
+		// Keyword figures rolled up over the whole subtree: container/parent
+		// categories rarely get their own CSV, so they aggregate their children.
+		$rec_kw = function ( int $id ) use ( &$rec_kw, $children, $kwc ): array {
+			$k = $kwc[ $id ] ?? [];
+			$sum = [
+				'kw'       => (int) ( $k['kw'] ?? 0 ),
+				'gaps'     => (int) ( $k['gaps'] ?? 0 ),
+				'pending'  => (int) ( $k['pending'] ?? 0 ),
+				'analysed' => (int) ( $k['analysed'] ?? 0 ),
+			];
+			foreach ( $children[ $id ] ?? [] as $cid ) {
+				$c = $rec_kw( $cid );
+				$sum['kw']       += $c['kw'];
+				$sum['gaps']     += $c['gaps'];
+				$sum['pending']  += $c['pending'];
+				$sum['analysed'] += $c['analysed'];
+			}
+			return $sum;
+		};
+		$build = function ( int $parent_id ) use ( &$build, $children, $by_id, $rec_count, $rec_kw, $sales, $kwc ): array {
 			$out = [];
 			foreach ( $children[ $parent_id ] ?? [] as $cid ) {
 				$t      = $by_id[ $cid ];
@@ -235,10 +254,11 @@ final class DZE_Explorer {
 					'sales_qty_direct'  => (float) ( $sales[ $cid ]['qty_direct'] ?? 0 ),
 					'sales_rev_direct'  => (float) ( $sales[ $cid ]['rev_direct'] ?? 0 ),
 					'researched'        => (int) get_term_meta( $cid, self::META_RESEARCHED, true ),
-					'kw'                => (int) ( $kwc[ $cid ]['kw'] ?? 0 ),
-					'gaps'              => (int) ( $kwc[ $cid ]['gaps'] ?? 0 ),
-					'pending'           => (int) ( $kwc[ $cid ]['pending'] ?? 0 ),
-					'analysed'          => (int) ( $kwc[ $cid ]['analysed'] ?? 0 ),
+					'kw'                => $rec_kw( $cid )['kw'],
+					'gaps'              => $rec_kw( $cid )['gaps'],
+					'pending'           => $rec_kw( $cid )['pending'],
+					'analysed'          => $rec_kw( $cid )['analysed'],
+					'own_kw'            => (int) ( $kwc[ $cid ]['kw'] ?? 0 ),
 					'image'             => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
 					'children'          => $build( $cid ),
 				];
@@ -564,13 +584,19 @@ final class DZE_Explorer {
 			wp_send_json_error( [ 'message' => __( 'Add your Anthropic API key under AI Settings first.', 'dazont-ecom' ) ] );
 		}
 
-		// Gap list from the keyword set (top 250 by volume), for the exhaustive part.
+		// Gap list from the keyword set (top by volume), for the exhaustive part.
+		// Container categories rarely have their own set, so aggregate this
+		// category AND all its descendants — the report rolls up too.
 		$gaps = [];
 		if ( class_exists( 'DZE_Keywords' ) ) {
 			global $wpdb;
 			$ktable = DZE_Keywords::table();
+			$tids   = array_map( 'intval', (array) get_term_children( $cat, 'product_cat' ) );
+			$tids[] = $cat;
+			$tids   = array_values( array_unique( array_filter( $tids ) ) );
+			$ph     = implode( ',', array_fill( 0, count( $tids ), '%d' ) );
 			$gaps   = $wpdb->get_results(
-				$wpdb->prepare( "SELECT keyword, volume FROM {$ktable} WHERE term_id = %d AND status IN ('gap','to_source') ORDER BY volume DESC LIMIT 150", $cat ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table.
+				$wpdb->prepare( "SELECT keyword, volume FROM {$ktable} WHERE term_id IN ($ph) AND status IN ('gap','to_source') ORDER BY volume DESC LIMIT 150", $tids ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- int placeholders.
 				ARRAY_A
 			);
 		}

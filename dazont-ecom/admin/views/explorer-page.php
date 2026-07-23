@@ -136,8 +136,9 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 					<span class="dze-x-row-res"><?php echo $res_h ? esc_html( $res_h ) : '<span class="dze-x-never">—</span>'; ?></span>
 					<span class="dze-x-row-act">
 						<span class="dze-x-ico" title="<?php echo (int) ( $n['count'] ?? 0 ) > 0 ? esc_attr__( 'Category live (has products)', 'dazont-ecom' ) : esc_attr__( 'Category empty — not visible on the storefront yet', 'dazont-ecom' ); ?>"><?php echo (int) ( $n['count'] ?? 0 ) > 0 ? '🟢' : '⚪'; ?></span>
+						<?php $own_kw = (int) ( $n['own_kw'] ?? 0 ); ?>
 						<button type="button" class="button button-small dze-x-imp" data-cat="<?php echo (int) $n['id']; ?>" title="<?php esc_attr_e( 'Import a SEMrush CSV for this category', 'dazont-ecom' ); ?>">📥</button>
-						<button type="button" class="button button-small dze-x-an" data-cat="<?php echo (int) $n['id']; ?>" title="<?php esc_attr_e( 'Launch keyword analysis (AI)', 'dazont-ecom' ); ?>" <?php echo $kw_n ? '' : 'style="display:none;"'; ?>>🚀</button>
+						<button type="button" class="button button-small dze-x-an" data-cat="<?php echo (int) $n['id']; ?>" title="<?php esc_attr_e( 'Launch keyword analysis (AI)', 'dazont-ecom' ); ?>" <?php echo $own_kw ? '' : 'style="display:none;"'; ?>>🚀</button>
 						<button type="button" class="button button-small dze-x-opp-cat" data-cat="<?php echo (int) $n['id']; ?>" title="<?php esc_attr_e( 'See sourcing opportunities', 'dazont-ecom' ); ?>" <?php echo $kw_n ? '' : 'style="display:none;"'; ?>>🎯</button>
 						<a class="button button-small" href="<?php echo esc_url( get_edit_term_link( (int) $n['id'], 'product_cat' ) ?: '#' ); ?>" title="<?php esc_attr_e( 'Edit the WooCommerce category', 'dazont-ecom' ); ?>" target="_blank" rel="noopener" onclick="event.stopPropagation();">✏️</a>
 						<button type="button" class="button button-small dze-x-mark" data-cat="<?php echo (int) $n['id']; ?>" title="<?php esc_attr_e( 'Mark novelty search done today', 'dazont-ecom' ); ?>">🔎</button>
