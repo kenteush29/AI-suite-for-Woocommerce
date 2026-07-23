@@ -159,6 +159,7 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 				<span class="dze-x-kw-actions">
 					<select id="dze-x-kw-bulk"></select>
 					<button type="button" id="dze-x-kw-apply" class="button"><?php esc_html_e( 'Apply', 'dazont-ecom' ); ?></button>
+					<button type="button" id="dze-x-kw-add" class="button"><?php esc_html_e( '+ Add', 'dazont-ecom' ); ?></button>
 					<button type="button" id="dze-x-kw-import" class="button button-primary"><?php esc_html_e( 'Import CSV', 'dazont-ecom' ); ?></button>
 					<button type="button" id="dze-x-kw-export" class="button"><?php esc_html_e( 'Export', 'dazont-ecom' ); ?></button>
 					<button type="button" id="dze-x-kw-delete" class="button-link" style="color:#b32d2e;"><?php esc_html_e( 'Delete set', 'dazont-ecom' ); ?></button>

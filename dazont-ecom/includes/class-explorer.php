@@ -115,6 +115,9 @@ final class DZE_Explorer {
 				'mCompletion'=> __( 'Completion', 'dazont-ecom' ),
 				'mGaps'      => __( 'gaps', 'dazont-ecom' ),
 				'mIgnored'   => __( 'ignored', 'dazont-ecom' ),
+				'showMore'   => __( 'Show more', 'dazont-ecom' ),
+				'addKw'      => __( 'Keyword to add (e.g. found on AliExpress):', 'dazont-ecom' ),
+				'addVol'     => __( 'Monthly search volume (0 if unknown):', 'dazont-ecom' ),
 			],
 		] );
 		wp_localize_script( 'dze-explorer', 'dzeExplorer', [

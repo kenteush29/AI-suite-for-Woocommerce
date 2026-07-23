@@ -47,6 +47,7 @@ final class DZE_Keywords {
 		add_action( 'wp_ajax_dze_kw_list',   [ $this, 'ajax_list' ] );
 		add_action( 'wp_ajax_dze_kw_status', [ $this, 'ajax_status' ] );
 		add_action( 'wp_ajax_dze_kw_clear',  [ $this, 'ajax_clear' ] );
+		add_action( 'wp_ajax_dze_kw_add',    [ $this, 'ajax_add' ] );
 	}
 
 	public static function table(): string {
@@ -137,12 +138,34 @@ final class DZE_Keywords {
 		if ( $raw === '' ) {
 			wp_send_json_error( [ 'message' => __( 'Empty file.', 'dazont-ecom' ) ] );
 		}
+		$parsed = self::parse_csv( $raw );
+		if ( null === $parsed ) {
+			wp_send_json_error( [ 'message' => __( 'Could not read any data rows in this file.', 'dazont-ecom' ) ] );
+		}
 
-		// Encoding: strip BOMs, fall back from UTF-16/Windows-1252 to UTF-8.
+		$token = wp_generate_uuid4();
+		set_transient( 'dze_kw_up_' . $token, [ 'headers' => $parsed['headers'], 'rows' => $parsed['rows'] ], HOUR_IN_SECONDS );
+
+		wp_send_json_success( [
+			'token'   => $token,
+			'headers' => $parsed['headers'],
+			'guess'   => self::guess_map( $parsed['headers'] ),
+			'sample'  => array_slice( $parsed['rows'], 0, 5 ),
+			'total'   => count( $parsed['rows'] ),
+		] );
+	}
+
+	/**
+	 * Parses a raw CSV export: auto-detects encoding (BOM/UTF-16/Windows-1252)
+	 * and delimiter (, ; tab). Returns [ 'headers' => [...], 'rows' => [...] ]
+	 * or null when nothing readable. Pure function — no WordPress dependency —
+	 * so the import pipeline is testable outside WP.
+	 */
+	public static function parse_csv( string $raw ): ?array {
 		if ( strncmp( $raw, "\xFF\xFE", 2 ) === 0 || strncmp( $raw, "\xFE\xFF", 2 ) === 0 ) {
 			$raw = (string) mb_convert_encoding( $raw, 'UTF-8', 'UTF-16' );
 		}
-		$raw = preg_replace( '/^\xEF\xBB\xBF/', '', $raw );
+		$raw = (string) preg_replace( '/^\xEF\xBB\xBF/', '', $raw );
 		if ( ! mb_check_encoding( $raw, 'UTF-8' ) ) {
 			$raw = (string) mb_convert_encoding( $raw, 'UTF-8', 'Windows-1252' );
 		}
@@ -174,39 +197,48 @@ final class DZE_Keywords {
 		}
 		fclose( $fh ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		if ( count( $lines ) < 2 ) {
-			wp_send_json_error( [ 'message' => __( 'Could not read any data rows in this file.', 'dazont-ecom' ) ] );
+			return null;
 		}
-
 		$headers = array_shift( $lines );
+		return [ 'headers' => $headers, 'rows' => $lines ];
+	}
 
-		// Guess the mapping from common SEMrush header names.
-		$guess  = [ 'keyword' => -1, 'volume' => -1, 'kd' => -1, 'cpc' => -1, 'intent' => -1 ];
-		$needle = [
-			'keyword' => [ 'keyword' ],
-			'volume'  => [ 'volume', 'search volume' ],
-			'kd'      => [ 'keyword difficulty', 'kd', 'difficulty' ],
-			'cpc'     => [ 'cpc' ],
-			'intent'  => [ 'intent' ],
-		];
-		foreach ( $headers as $i => $h ) {
-			$h = strtolower( $h );
-			foreach ( $needle as $field => $names ) {
-				if ( $guess[ $field ] === -1 && in_array( $h, $names, true ) ) {
-					$guess[ $field ] = $i;
+	/**
+	 * Guesses which column holds each field. Exact header match first, then a
+	 * contains-based pass so variants like "CPC (USD)" or "Search Volume" map
+	 * themselves ("Keyword Difficulty" is excluded from the keyword search).
+	 *
+	 * @return array{keyword:int,volume:int,kd:int,cpc:int,intent:int} -1 = not found.
+	 */
+	public static function guess_map( array $headers ): array {
+		$find = static function ( array $exact, array $contains, array $not = [] ) use ( $headers ): int {
+			foreach ( $headers as $i => $h ) {
+				if ( in_array( strtolower( trim( (string) $h ) ), $exact, true ) ) {
+					return $i;
 				}
 			}
-		}
-
-		$token = wp_generate_uuid4();
-		set_transient( 'dze_kw_up_' . $token, [ 'headers' => $headers, 'rows' => $lines ], HOUR_IN_SECONDS );
-
-		wp_send_json_success( [
-			'token'   => $token,
-			'headers' => $headers,
-			'guess'   => $guess,
-			'sample'  => array_slice( $lines, 0, 5 ),
-			'total'   => count( $lines ),
-		] );
+			foreach ( $headers as $i => $h ) {
+				$h = strtolower( (string) $h );
+				foreach ( $not as $n ) {
+					if ( strpos( $h, $n ) !== false ) {
+						continue 2;
+					}
+				}
+				foreach ( $contains as $c ) {
+					if ( strpos( $h, $c ) !== false ) {
+						return $i;
+					}
+				}
+			}
+			return -1;
+		};
+		return [
+			'keyword' => $find( [ 'keyword' ], [ 'keyword' ], [ 'difficulty', 'intent' ] ),
+			'volume'  => $find( [ 'volume', 'search volume' ], [ 'volume' ] ),
+			'kd'      => $find( [ 'keyword difficulty', 'kd', 'difficulty' ], [ 'difficulty' ] ),
+			'cpc'     => $find( [ 'cpc' ], [ 'cpc' ] ),
+			'intent'  => $find( [ 'intent' ], [ 'intent' ] ),
+		];
 	}
 
 	/** Step 2: user confirmed the mapping — replace the category's keyword set. */
@@ -243,9 +275,9 @@ final class DZE_Keywords {
 			$wpdb->insert( $table, [
 				'term_id' => $term_id,
 				'keyword' => $kw,
-				'volume'  => (int) round( $this->num( $row[ $map['volume'] ?? -1 ] ?? '' ) ),
-				'kd'      => $this->num_or_null( $row[ $map['kd'] ?? -1 ] ?? '' ),
-				'cpc'     => $this->num_or_null( $row[ $map['cpc'] ?? -1 ] ?? '' ),
+				'volume'  => (int) round( self::num( $row[ $map['volume'] ?? -1 ] ?? '' ) ),
+				'kd'      => self::num_or_null( $row[ $map['kd'] ?? -1 ] ?? '' ),
+				'cpc'     => self::num_or_null( $row[ $map['cpc'] ?? -1 ] ?? '' ),
 				'intent'  => sanitize_text_field( (string) ( $row[ $map['intent'] ?? -1 ] ?? '' ) ),
 				'status'  => '',
 				'updated' => $now,
@@ -260,7 +292,7 @@ final class DZE_Keywords {
 	}
 
 	/** Tolerant number parse: "1 300", "39,5", "0.56", "1.300,5". */
-	private function num( $v ): float {
+	public static function num( $v ): float {
 		$v = str_replace( [ ' ', "\xC2\xA0", '%', '$', '€' ], '', (string) $v );
 		if ( $v === '' || ! preg_match( '/\d/', $v ) ) {
 			return 0.0;
@@ -276,9 +308,9 @@ final class DZE_Keywords {
 		return (float) $v;
 	}
 
-	private function num_or_null( $v ): ?float {
+	public static function num_or_null( $v ): ?float {
 		$v = trim( (string) $v );
-		return ( $v === '' || ! preg_match( '/\d/', $v ) ) ? null : $this->num( $v );
+		return ( $v === '' || ! preg_match( '/\d/', $v ) ) ? null : self::num( $v );
 	}
 
 	/** Full keyword set of a category (the Workbench renders/filters client-side). */
@@ -334,6 +366,45 @@ final class DZE_Keywords {
 			)
 		);
 		wp_send_json_success();
+	}
+
+	/**
+	 * Manually add one keyword to a category — for long-tail terms SEMrush
+	 * can't surface (supplier/AliExpress-driven sourcing, e.g. "f22 raptor
+	 * tshirt"). Volume optional, defaults to 0.
+	 */
+	public function ajax_add(): void {
+		$this->guard();
+		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		$kw      = isset( $_POST['keyword'] ) ? sanitize_text_field( wp_unslash( $_POST['keyword'] ) ) : '';
+		$vol     = isset( $_POST['volume'] ) ? (int) round( self::num( wp_unslash( $_POST['volume'] ) ) ) : 0;
+		if ( ! $term_id || ! term_exists( $term_id, 'product_cat' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
+		}
+		if ( $kw === '' || mb_strlen( $kw ) > 191 ) {
+			wp_send_json_error( [ 'message' => __( 'Invalid keyword.', 'dazont-ecom' ) ] );
+		}
+		global $wpdb;
+		$table  = self::table();
+		$exists = $wpdb->get_var(
+			$wpdb->prepare(
+				"SELECT id FROM {$table} WHERE term_id = %d AND keyword = %s", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+				$term_id,
+				$kw
+			)
+		);
+		if ( $exists ) {
+			wp_send_json_error( [ 'message' => __( 'This keyword is already in the set.', 'dazont-ecom' ) ] );
+		}
+		$wpdb->insert( $table, [
+			'term_id' => $term_id,
+			'keyword' => $kw,
+			'volume'  => max( 0, $vol ),
+			'intent'  => '',
+			'status'  => '',
+			'updated' => current_time( 'mysql' ),
+		] );
+		wp_send_json_success( [ 'id' => (int) $wpdb->insert_id ] );
 	}
 
 	/** Remove the whole keyword set of a category. */

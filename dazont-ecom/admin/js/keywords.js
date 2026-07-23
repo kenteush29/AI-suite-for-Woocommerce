@@ -10,6 +10,8 @@
 	var cfg  = dzeKw;
 	var i18n = cfg.i18n;
 
+	var PAGE = 400; // rows rendered at once — keeps a 4000-row set instant.
+
 	var kw = {
 		cat: 0,
 		open: false,
@@ -17,6 +19,7 @@
 		rows: [],
 		sort: { key: 'vol', dir: 'desc' },
 		sel: {},
+		limit: PAGE,
 		upload: null // pending {token, headers, guess, sample, total}
 	};
 
@@ -74,6 +77,7 @@
 				kw.rows = res.data.rows || [];
 				kw.loaded = true;
 				kw.sel = {};
+				kw.limit = PAGE;
 				buildIntentFilter();
 				render();
 			})
@@ -161,7 +165,8 @@
 			$('#dze-x-kw-table').html('<p style="padding:14px;" class="description">' + esc(i18n.empty) + '</p>');
 			return;
 		}
-		var rows = sortRows(filtered());
+		var all  = sortRows(filtered());
+		var rows = all.slice(0, kw.limit);
 		var arrow = function (k) {
 			if (kw.sort.key !== k) { return ''; }
 			return kw.sort.dir === 'asc' ? ' ▲' : ' ▼';
@@ -190,11 +195,23 @@
 				'</tr>';
 		});
 		html += '</tbody></table>';
+		if (all.length > rows.length) {
+			html += '<p style="text-align:center;padding:12px;"><button type="button" class="button" id="dze-x-kw-more">' +
+				esc(i18n.showMore) + ' (' + rows.length + ' / ' + all.length + ')</button></p>';
+		}
 		$('#dze-x-kw-table').html(html);
 	}
 
-	$('#dze-x-kw-q, #dze-x-kw-vmin, #dze-x-kw-kdmax').on('input', render);
-	$('#dze-x-kw-status, #dze-x-kw-intent').on('change', render);
+	$(document).on('click', '#dze-x-kw-more', function () { kw.limit += PAGE; render(); });
+
+	// Debounced filters: typing must never re-render 4000 rows per keystroke.
+	var filterTimer = null;
+	function filterChanged() {
+		clearTimeout(filterTimer);
+		filterTimer = setTimeout(function () { kw.limit = PAGE; render(); }, 250);
+	}
+	$('#dze-x-kw-q, #dze-x-kw-vmin, #dze-x-kw-kdmax').on('input', filterChanged);
+	$('#dze-x-kw-status, #dze-x-kw-intent').on('change', filterChanged);
 	$(document).on('click', '.dze-x-kw-srt', function () {
 		var k = $(this).data('k');
 		if (kw.sort.key === k) { kw.sort.dir = kw.sort.dir === 'asc' ? 'desc' : 'asc'; }
@@ -242,6 +259,21 @@
 		if (kw.rows.length) { $b.text(kw.rows.length + ' kw · ' + gaps + ' gaps').show(); }
 		else { $b.hide(); }
 	}
+
+	// ---- Manual add: long-tail terms SEMrush can't surface (AliExpress finds) ----
+	$('#dze-x-kw-add').on('click', function () {
+		var keyword = window.prompt(i18n.addKw);
+		if (!keyword || !$.trim(keyword)) { return; }
+		var volume = window.prompt(i18n.addVol, '0') || '0';
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_add', nonce: cfg.nonce, cat: cat(), keyword: $.trim(keyword), volume: volume })
+			.done(function (res) {
+				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
+				kw.rows.unshift({ id: res.data.id, kw: $.trim(keyword), vol: parseInt(volume, 10) || 0, kd: null, cpc: null, intent: '', status: '' });
+				render();
+				refreshBadge();
+			})
+			.fail(function () { window.alert(i18n.error); });
+	});
 
 	// =====================================================================
 	// Import (upload → mapping confirmation → import)
