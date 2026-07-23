@@ -42,12 +42,12 @@
 .dze-x-col.is-asc  .dze-x-arrow::after { content: '▲'; font-size: 9px; margin-left: 3px; }
 .dze-x-col.is-desc .dze-x-arrow::after { content: '▼'; font-size: 9px; margin-left: 3px; }
 
-/* Collapse chevrons (grouped view only) */
+/* Collapse chevrons (grouped view only) — generous hit area, misclicks hurt. */
 .dze-x-tog {
-	flex: 0 0 18px; width: 18px; border: 0; background: transparent; cursor: pointer;
-	color: #787c82; font-size: 12px; padding: 0; text-align: center;
+	flex: 0 0 30px; width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent;
+	cursor: pointer; color: #50575e; font-size: 15px; padding: 0; text-align: center; line-height: 30px;
 }
-.dze-x-tog:hover { color: #2271b1; }
+.dze-x-tog:hover { color: #fff; background: #2271b1; }
 .dze-x-tog-sp { cursor: default; }
 .dze-x-list.is-detailed .dze-x-tog { visibility: hidden; }
 
@@ -150,6 +150,10 @@ body.dze-x-ov-open { overflow: hidden; }
 .dze-x-kw-map th { text-align: left; padding: 4px 14px 4px 0; font-size: 13px; }
 .dze-x-kw-map td { padding: 4px 0; }
 .dze-x-kw-row.st-variation td { background: rgba(153, 104, 0, .07); }
+.dze-x-kw-row.st-to_source td { background: rgba(34, 113, 177, .08); }
+.dze-x-ico { font-size: 13px; cursor: help; margin-right: 2px; }
+.dze-x-ico-kw.is-off { opacity: .35; }
+.dze-x-row-act .button-small { min-width: 30px; padding: 0 6px; }
 .dze-x-kw-prog { font-size: 12px; color: #2271b1; white-space: nowrap; }
 
 /* Product card: covered-keywords badge */

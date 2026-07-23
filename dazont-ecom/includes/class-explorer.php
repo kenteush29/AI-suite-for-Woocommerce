@@ -42,6 +42,13 @@ final class DZE_Explorer {
 		add_action( 'wp_ajax_dze_explorer_variations',      [ $this, 'ajax_variations' ] );
 		add_action( 'wp_ajax_dze_explorer_mark_researched', [ $this, 'ajax_mark_researched' ] );
 		add_action( 'wp_ajax_dze_explorer_ai_insights',     [ $this, 'ajax_ai_insights' ] );
+		// "+ Add product" from a category overlay: pre-tick that category on the new-product screen.
+		add_action( 'admin_footer-post-new.php', static function () {
+			$cat = isset( $_GET['dze_cat'] ) ? absint( $_GET['dze_cat'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- UI convenience only.
+			if ( $cat && 'product' === ( $_GET['post_type'] ?? '' ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				printf( '<script>jQuery(function($){$("#in-product_cat-%d").prop("checked",true);});</script>', $cat );
+			}
+		} );
 	}
 
 	public function register_menu(): void {
@@ -123,6 +130,11 @@ final class DZE_Explorer {
 				'titlesAdded'=> __( 'product titles added as covered long-tail keywords.', 'dazont-ecom' ),
 				'kwCovered'  => __( 'Keywords covered by', 'dazont-ecom' ),
 				'noKw'       => __( 'No covered keywords.', 'dazont-ecom' ),
+				'stToSource' => __( 'To source 🛒', 'dazont-ecom' ),
+				'updated'    => __( 'updated', 'dazont-ecom' ),
+				'noOpps'     => __( 'No open opportunities. Import keyword sets and run the analysis.', 'dazont-ecom' ),
+				'generatedOn'=> __( 'Report saved on', 'dazont-ecom' ),
+				'regen'      => __( '↻ Regenerate', 'dazont-ecom' ),
 			],
 		] );
 		wp_localize_script( 'dze-explorer', 'dzeExplorer', [
@@ -141,6 +153,8 @@ final class DZE_Explorer {
 				'units'      => __( 'sold', 'dazont-ecom' ),
 				'never'      => __( 'never', 'dazont-ecom' ),
 				'justNow'    => __( 'just now', 'dazont-ecom' ),
+				'generatedOn'=> __( 'Report saved on', 'dazont-ecom' ),
+				'regen'      => __( '↻ Regenerate', 'dazont-ecom' ),
 				'sold'       => __( 'sold', 'dazont-ecom' ),
 				'products'   => __( 'products', 'dazont-ecom' ),
 				'noCats'     => __( 'No categories match.', 'dazont-ecom' ),
@@ -211,6 +225,7 @@ final class DZE_Explorer {
 					'researched'        => (int) get_term_meta( $cid, self::META_RESEARCHED, true ),
 					'kw'                => (int) ( $kwc[ $cid ]['kw'] ?? 0 ),
 					'gaps'              => (int) ( $kwc[ $cid ]['gaps'] ?? 0 ),
+					'pending'           => (int) ( $kwc[ $cid ]['pending'] ?? 0 ),
 					'image'             => $img_id ? wp_get_attachment_image_url( $img_id, 'thumbnail' ) : '',
 					'children'          => $build( $cid ),
 				];
@@ -515,13 +530,47 @@ final class DZE_Explorer {
 		if ( ! current_user_can( 'manage_woocommerce' ) ) {
 			wp_send_json_error( [ 'message' => __( 'Permission denied.', 'dazont-ecom' ) ], 403 );
 		}
-		if ( ! class_exists( 'DZE_Marketing_Ai' ) || DZE_Marketing_Ai::api_key() === '' ) {
-			wp_send_json_error( [ 'message' => __( 'Add your Anthropic API key in the AI Marketing Assistant settings first.', 'dazont-ecom' ) ] );
-		}
 		$cat  = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
 		$term = $cat ? get_term( $cat, 'product_cat' ) : null;
 		if ( ! $term instanceof WP_Term ) {
 			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
+		}
+		$mode = isset( $_POST['mode'] ) ? sanitize_key( wp_unslash( $_POST['mode'] ) ) : 'get';
+
+		// Saved report first: reopening costs nothing.
+		if ( 'get' === $mode ) {
+			$saved = get_term_meta( $cat, '_dze_insights', true );
+			if ( is_array( $saved ) && ! empty( $saved['text'] ) ) {
+				wp_send_json_success( [ 'text' => (string) $saved['text'], 'ts' => (int) ( $saved['ts'] ?? 0 ), 'saved' => true ] );
+			}
+			wp_send_json_success( [ 'saved' => false ] );
+		}
+		if ( ! class_exists( 'DZE_Marketing_Ai' ) || DZE_Marketing_Ai::api_key() === '' ) {
+			wp_send_json_error( [ 'message' => __( 'Add your Anthropic API key under AI Settings first.', 'dazont-ecom' ) ] );
+		}
+
+		// Gap list from the keyword set (top 250 by volume), for the exhaustive part.
+		$gaps = [];
+		if ( class_exists( 'DZE_Keywords' ) ) {
+			global $wpdb;
+			$ktable = DZE_Keywords::table();
+			$gaps   = $wpdb->get_results(
+				$wpdb->prepare( "SELECT keyword, volume FROM {$ktable} WHERE term_id = %d AND status IN ('gap','to_source') ORDER BY volume DESC LIMIT 250", $cat ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table.
+				ARRAY_A
+			);
+		}
+
+		if ( 'estimate' === $mode ) {
+			$in_tok = 1500 + count( $gaps ) * 12;
+			$cost   = ( $in_tok * 15 + 2500 * 75 ) / 1000000; // main-model pricing, upper bound.
+			wp_send_json_success( [
+				'message' => sprintf(
+					/* translators: 1: gap count, 2: estimated cost */
+					__( "AI insights report\n\n%1\$d gap keywords will be analysed and grouped, plus a qualitative recap of the category.\nEstimated cost: up to ~$%2\$s.\n\nGenerate?", 'dazont-ecom' ),
+					count( $gaps ),
+					number_format_i18n( max( 0.01, $cost ), 2 )
+				),
+			] );
 		}
 
 		// Category path (ancestors → current).
@@ -552,15 +601,21 @@ final class DZE_Explorer {
 		}
 
 		$system = 'You are a senior product-sourcing assistant for an e-commerce catalogue. '
-			. 'You are extremely concise, concrete and practical. Never invent facts about the shop.';
+			. 'You are concrete, practical and exhaustive when asked to be. Never invent facts about the shop.';
 		$user = "Product category: {$path}\n\n";
 		$user .= $titles
-			? ( "A sample of products currently in this category:\n" . implode( "\n", $titles ) . "\n\n" )
+			? ( "Products currently in this category:\n" . implode( "\n", $titles ) . "\n\n" )
 			: "This category currently has no products.\n\n";
-		$user .= "In 3 short sentences maximum and no more than ~70 words total: "
-			. "(1) summarise the kind of products this category is about, "
-			. "(2) give concrete, specific suggestions (product types, styles, search keywords) the operator could source to fit this category well and fill gaps. "
-			. "Write in the same language as the product titles above. Plain prose, no preamble, no bullet points, no headings.";
+		if ( $gaps ) {
+			$glist = '';
+			foreach ( $gaps as $g ) {
+				$glist .= '- ' . $g['keyword'] . ' (vol ' . (int) $g['volume'] . ")\n";
+			}
+			$user .= "UNCOVERED search queries (gaps) from our keyword research:\n{$glist}\n";
+		}
+		$user .= "Produce a sourcing report in the language of the product titles, in two parts:\n"
+			. "SUMMARY — 3 sentences max: what this category is about, and the most striking product gaps you can see from the catalogue itself, INCLUDING obvious gaps that do not appear in the query list above (e.g. missing famous models/variants shoppers would expect).\n"
+			. "SOURCING LIST — exhaustive: group EVERY uncovered query above into concrete products to source. One line per product: product name — the queries it would cover — cumulated volume. Sort by cumulated volume, descending. No query may be dropped. Plain text only, no markdown syntax.";
 
 		try {
 			$text = $this->call_claude( $system, $user );
@@ -571,7 +626,8 @@ final class DZE_Explorer {
 		if ( $text === '' ) {
 			wp_send_json_error( [ 'message' => __( 'The AI returned nothing. Try again.', 'dazont-ecom' ) ] );
 		}
-		wp_send_json_success( [ 'text' => $text ] );
+		update_term_meta( $cat, '_dze_insights', [ 'text' => $text, 'ts' => time() ] );
+		wp_send_json_success( [ 'text' => $text, 'ts' => time(), 'saved' => true ] );
 	}
 
 	/** Minimal Anthropic Messages call, reusing the Marketing AI key + model. */

@@ -29,7 +29,7 @@ final class DZE_Keywords {
 	 * Keyword statuses. '' = unset. 'variation' = covered only by a variation
 	 * value of a grouped product (weak for long-tail SEO — no dedicated page).
 	 */
-	public const STATUSES = [ 'covered', 'variation', 'gap', 'uncertain', 'ignored' ];
+	public const STATUSES = [ 'covered', 'variation', 'gap', 'to_source', 'uncertain', 'ignored' ];
 
 	private const BATCH        = 80;  // keywords judged per AI call.
 	private const MAX_PRODUCTS = 400; // product titles sent per call.
@@ -58,6 +58,7 @@ final class DZE_Keywords {
 		add_action( 'wp_ajax_dze_kw_analyze',     [ $this, 'ajax_analyze' ] );
 		add_action( 'wp_ajax_dze_kw_autotitles',  [ $this, 'ajax_autotitles' ] );
 		add_action( 'wp_ajax_dze_kw_for_product', [ $this, 'ajax_for_product' ] );
+		add_action( 'wp_ajax_dze_kw_opps',        [ $this, 'ajax_opportunities' ] );
 	}
 
 	public static function table(): string {
@@ -109,13 +110,13 @@ final class DZE_Keywords {
 			return [];
 		}
 		$rows = $wpdb->get_results(
-			"SELECT term_id, COUNT(*) AS kw, SUM(status = 'gap') AS gaps
+			"SELECT term_id, COUNT(*) AS kw, SUM(status IN ('gap','to_source')) AS gaps, SUM(kw_type = '') AS pending
 			 FROM {$table} GROUP BY term_id", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 			ARRAY_A
 		);
 		$out = [];
 		foreach ( (array) $rows as $r ) {
-			$out[ (int) $r['term_id'] ] = [ 'kw' => (int) $r['kw'], 'gaps' => (int) $r['gaps'] ];
+			$out[ (int) $r['term_id'] ] = [ 'kw' => (int) $r['kw'], 'gaps' => (int) $r['gaps'], 'pending' => (int) $r['pending'] ];
 		}
 		return $out;
 	}
@@ -271,34 +272,44 @@ final class DZE_Keywords {
 		global $wpdb;
 		$table = self::table();
 		$now   = current_time( 'mysql' );
+
+		// MERGE import: keywords already in the set keep their status/matching
+		// and only refresh volume/KD/CPC/intent; new keywords are added
+		// unanalysed. The list stays alive across fresh SEMrush exports.
+		$existing = [];
+		foreach ( (array) $wpdb->get_results( $wpdb->prepare( "SELECT id, keyword FROM {$table} WHERE term_id = %d", $term_id ), ARRAY_A ) as $r ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			$existing[ mb_strtolower( (string) $r['keyword'] ) ] = (int) $r['id'];
+		}
 		$seen  = [];
-		$count = 0;
-
-		$wpdb->delete( $table, [ 'term_id' => $term_id ], [ '%d' ] ); // one CSV per category: import replaces.
-
+		$added = 0;
+		$upd   = 0;
 		foreach ( (array) $parsed['rows'] as $row ) {
-			$kw = trim( (string) ( $row[ $map['keyword'] ] ?? '' ) );
-			if ( $kw === '' || mb_strlen( $kw ) > 191 || isset( $seen[ mb_strtolower( $kw ) ] ) ) {
+			$kw  = trim( (string) ( $row[ $map['keyword'] ] ?? '' ) );
+			$low = mb_strtolower( $kw );
+			if ( $kw === '' || mb_strlen( $kw ) > 191 || isset( $seen[ $low ] ) ) {
 				continue;
 			}
-			$seen[ mb_strtolower( $kw ) ] = true;
-			$wpdb->insert( $table, [
-				'term_id' => $term_id,
-				'keyword' => $kw,
+			$seen[ $low ] = true;
+			$fields = [
 				'volume'  => (int) round( self::num( $row[ $map['volume'] ?? -1 ] ?? '' ) ),
 				'kd'      => self::num_or_null( $row[ $map['kd'] ?? -1 ] ?? '' ),
 				'cpc'     => self::num_or_null( $row[ $map['cpc'] ?? -1 ] ?? '' ),
 				'intent'  => sanitize_text_field( (string) ( $row[ $map['intent'] ?? -1 ] ?? '' ) ),
-				'status'  => '',
 				'updated' => $now,
-			] );
-			$count++;
-			if ( $count >= self::MAX_ROWS ) {
+			];
+			if ( isset( $existing[ $low ] ) ) {
+				$wpdb->update( $table, $fields, [ 'id' => $existing[ $low ] ] );
+				$upd++;
+			} else {
+				$wpdb->insert( $table, $fields + [ 'term_id' => $term_id, 'keyword' => $kw, 'status' => '' ] );
+				$added++;
+			}
+			if ( $added + $upd >= self::MAX_ROWS ) {
 				break;
 			}
 		}
 		delete_transient( 'dze_kw_up_' . $token );
-		wp_send_json_success( [ 'imported' => $count ] );
+		wp_send_json_success( [ 'imported' => $added, 'updated' => $upd ] );
 	}
 
 	/** Tolerant number parse: "1 300", "39,5", "0.56", "1.300,5". */
@@ -426,17 +437,21 @@ final class DZE_Keywords {
 		return $lines;
 	}
 
-	/** Cost preview shown before launching the analysis. */
+	/** Cost preview shown before launching the analysis. cat=0 → ALL categories. */
 	public function ajax_estimate(): void {
 		$this->guard();
 		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
 		global $wpdb;
-		$table   = self::table();
-		$pending = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
-		if ( ! $pending ) {
-			wp_send_json_error( [ 'message' => __( 'Every keyword of this set is already analysed. Re-import the CSV to start over.', 'dazont-ecom' ) ] );
+		$table = self::table();
+		if ( $term_id ) {
+			$pending = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		} else {
+			$pending = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE kw_type = ''" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 		}
-		$products = count( $this->product_lines( $term_id ) );
+		if ( ! $pending ) {
+			wp_send_json_error( [ 'message' => __( 'Nothing left to analyse — every imported keyword already has a verdict.', 'dazont-ecom' ) ] );
+		}
+		$products = $term_id ? count( $this->product_lines( $term_id ) ) : (int) wp_count_posts( 'product' )->publish;
 		$batches  = (int) ceil( $pending / self::BATCH );
 		// ~2.5k input + ~1.5k output tokens per batch on Haiku pricing.
 		$cost = $batches * ( 2500 * 1.0 + 1500 * 5.0 ) / 1000000;
@@ -461,7 +476,17 @@ final class DZE_Keywords {
 	public function ajax_analyze(): void {
 		$this->guard();
 		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
-		$term    = $term_id ? get_term( $term_id, 'product_cat' ) : null;
+		$bulk    = ( 0 === $term_id );
+		global $wpdb;
+		$table = self::table();
+		if ( $bulk ) {
+			// Bulk mode: pick the next category that still has unanalysed keywords.
+			$term_id = (int) $wpdb->get_var( "SELECT term_id FROM {$table} WHERE kw_type = '' ORDER BY term_id LIMIT 1" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			if ( ! $term_id ) {
+				wp_send_json_success( [ 'processed' => 0, 'remaining' => 0 ] );
+			}
+		}
+		$term = get_term( $term_id, 'product_cat' );
 		if ( ! $term instanceof WP_Term ) {
 			wp_send_json_error( [ 'message' => __( 'Unknown category.', 'dazont-ecom' ) ] );
 		}
@@ -472,8 +497,6 @@ final class DZE_Keywords {
 			wp_send_json_error( [ 'message' => DZE_Ai_Usage::budget_message() ] );
 		}
 
-		global $wpdb;
-		$table = self::table();
 		$batch = $wpdb->get_results(
 			$wpdb->prepare( "SELECT id, keyword, volume FROM {$table} WHERE term_id = %d AND kw_type = '' ORDER BY volume DESC LIMIT %d", $term_id, self::BATCH ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 			ARRAY_A
@@ -538,8 +561,10 @@ final class DZE_Keywords {
 				$wpdb->update( $table, [ 'kw_type' => 'product', 'status' => 'uncertain', 'updated' => $now ], [ 'id' => $id ] );
 			}
 		}
-		$remaining = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
-		wp_send_json_success( [ 'processed' => count( $valid_ids ), 'remaining' => $remaining ] );
+		$remaining = $bulk
+			? (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE kw_type = ''" ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			: (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d AND kw_type = ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		wp_send_json_success( [ 'processed' => count( $valid_ids ), 'remaining' => $remaining, 'termName' => $term->name ] );
 	}
 
 	/** Anthropic call for the matcher: budget-guarded, recorded, Haiku by default. */
@@ -640,6 +665,40 @@ final class DZE_Keywords {
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * All sourcing opportunities across every category: keywords with status
+	 * gap or to_source, sorted by volume — the shop-wide shopping list.
+	 */
+	public function ajax_opportunities(): void {
+		$this->guard();
+		global $wpdb;
+		$table = self::table();
+		$rows  = $wpdb->get_results(
+			"SELECT term_id, keyword, volume, kd, cpc, status FROM {$table}
+			 WHERE status IN ('gap','to_source') ORDER BY volume DESC LIMIT 1000", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			ARRAY_A
+		);
+		$names = [];
+		$out   = [];
+		foreach ( (array) $rows as $r ) {
+			$tid = (int) $r['term_id'];
+			if ( ! isset( $names[ $tid ] ) ) {
+				$t             = get_term( $tid, 'product_cat' );
+				$names[ $tid ] = $t instanceof WP_Term ? $t->name : ( '#' . $tid );
+			}
+			$out[] = [
+				'cat'    => $tid,
+				'catName'=> $names[ $tid ],
+				'kw'     => (string) $r['keyword'],
+				'vol'    => (int) $r['volume'],
+				'kd'     => null === $r['kd'] ? null : (float) $r['kd'],
+				'cpc'    => null === $r['cpc'] ? null : (float) $r['cpc'],
+				'status' => (string) $r['status'],
+			];
+		}
+		wp_send_json_success( [ 'rows' => $out ] );
 	}
 
 	/** The keywords a given product covers (for the product-card popup). */

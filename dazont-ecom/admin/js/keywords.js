@@ -31,6 +31,7 @@
 		{ v: 'covered',   l: i18n.stCovered },
 		{ v: 'variation', l: i18n.stVariation },
 		{ v: 'gap',       l: i18n.stGap },
+		{ v: 'to_source', l: i18n.stToSource },
 		{ v: 'uncertain', l: i18n.stUncertain },
 		{ v: 'ignored',   l: i18n.stIgnored }
 	];
@@ -338,7 +339,13 @@
 	// =====================================================================
 	// Import (upload → mapping confirmation → import)
 	// =====================================================================
-	$('#dze-x-kw-import').on('click', function () { $('#dze-x-kw-file').trigger('click'); });
+	var importCat = 0; // category targeted by the current import (row 📥 or overlay button).
+	$('#dze-x-kw-import').on('click', function () { importCat = cat(); $('#dze-x-kw-file').trigger('click'); });
+	$(document).on('click', '.dze-x-imp', function (e) {
+		e.stopPropagation();
+		importCat = parseInt($(this).data('cat'), 10) || 0;
+		$('#dze-x-kw-file').trigger('click');
+	});
 	$('#dze-x-kw-file').on('change', function () {
 		var file = this.files && this.files[0];
 		this.value = '';
@@ -398,19 +405,92 @@
 		var map = {};
 		$('.dze-x-kw-map select').each(function () { map[$(this).data('f')] = parseInt($(this).val(), 10); });
 		if (map.keyword < 0) { window.alert(i18n.pickKw); return; }
-		if (kw.rows.length && !window.confirm(i18n.confirmImp)) { return; }
+		var target = importCat || cat();
 		var $btn = $(this).prop('disabled', true);
-		$.post(cfg.ajaxUrl, { action: 'dze_kw_import', nonce: cfg.nonce, cat: cat(), token: u.token, map: map })
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_import', nonce: cfg.nonce, cat: target, token: u.token, map: map })
 			.done(function (res) {
 				$btn.prop('disabled', false);
 				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
 				$('#dze-x-modal').hide();
 				kw.upload = null;
-				window.alert(res.data.imported + ' ' + i18n.imported);
-				loadRows();
+				window.alert(res.data.imported + ' ' + i18n.imported + (res.data.updated ? ' (' + res.data.updated + ' ' + i18n.updated + ')' : ''));
+				// Row icons: list present, analysis pending.
+				var $row = $('.dze-x-row[data-cat="' + target + '"]');
+				$row.find('.dze-x-ico-kw').removeClass('is-off').text('⏳');
+				$row.find('.dze-x-an').show();
+				if (kw.open && kw.cat === target) { loadRows(); }
 				setTimeout(refreshBadge, 800);
 			})
 			.fail(function () { $btn.prop('disabled', false); window.alert(i18n.error); });
+	});
+
+	// =====================================================================
+	// Row / bulk analysis (background loop with global progress + estimate)
+	// =====================================================================
+	function bgLoop(catId) {
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_analyze', nonce: cfg.nonce, cat: catId })
+			.done(function (res) {
+				if (!res.success) { $('#dze-x-global-prog').text((res.data && res.data.message) || i18n.error); return; }
+				if (res.data.remaining > 0) {
+					$('#dze-x-global-prog').text((res.data.termName ? res.data.termName + ' — ' : '') + res.data.remaining + ' ' + i18n.remaining);
+					bgLoop(catId);
+					return;
+				}
+				var finish = function () {
+					$('#dze-x-global-prog').text(i18n.analyseDone);
+					$('.dze-x-row' + (catId ? '[data-cat="' + catId + '"]' : '')).find('.dze-x-ico-kw').text('🔑').end().find('.dze-x-an').hide();
+				};
+				if (catId) { $.post(cfg.ajaxUrl, { action: 'dze_kw_autotitles', nonce: cfg.nonce, cat: catId }).always(finish); }
+				else { finish(); }
+			})
+			.fail(function () { $('#dze-x-global-prog').text(i18n.error); });
+	}
+	function estimateThen(catId) {
+		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: catId })
+			.done(function (res) {
+				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
+				if (!window.confirm(res.data.message)) { return; }
+				$('#dze-x-global-prog').text(i18n.analysing);
+				bgLoop(catId);
+			})
+			.fail(function () { window.alert(i18n.error); });
+	}
+	$(document).on('click', '.dze-x-an', function (e) {
+		e.stopPropagation();
+		estimateThen(parseInt($(this).data('cat'), 10) || 0);
+	});
+	$('#dze-x-kw-bulk-ai').on('click', function () { estimateThen(0); });
+
+	// =====================================================================
+	// Shop-wide opportunities panel
+	// =====================================================================
+	var opps = { open: false, loaded: false };
+	$('#dze-x-opps-toggle').on('click', function () {
+		opps.open = !opps.open;
+		$('#dze-x-opps').toggle(opps.open);
+		$('#dze-x-list, .dze-x-list-head').toggle(!opps.open);
+		$(this).toggleClass('button-primary', opps.open);
+		if (opps.open && !opps.loaded) {
+			$('#dze-x-opps').html('<p style="padding:14px;">' + esc(i18n.loading) + '</p>');
+			$.post(cfg.ajaxUrl, { action: 'dze_kw_opps', nonce: cfg.nonce }).done(function (res) {
+				opps.loaded = true;
+				if (!res.success || !res.data.rows.length) { $('#dze-x-opps').html('<p style="padding:14px;" class="description">' + esc(i18n.noOpps) + '</p>'); return; }
+				var html = '<table class="dze-x-kw-tbl"><thead><tr><th>' + esc(i18n.fKeyword) + '</th><th class="dze-x-kw-r">' + esc(i18n.fVolume) + '</th><th class="dze-x-kw-r">' + esc(i18n.fKd) + '</th><th class="dze-x-kw-r">' + esc(i18n.fCpc) + '</th><th>' + esc(i18n.fStatus) + '</th><th></th></tr></thead><tbody>';
+				res.data.rows.forEach(function (r) {
+					html += '<tr class="dze-x-kw-row st-' + r.status + '"><td>' + esc(r.kw) + '</td>' +
+						'<td class="dze-x-kw-r">' + r.vol.toLocaleString() + '</td>' +
+						'<td class="dze-x-kw-r">' + (r.kd == null ? '—' : Math.round(r.kd)) + '</td>' +
+						'<td class="dze-x-kw-r">' + (r.cpc == null ? '—' : r.cpc.toFixed(2)) + '</td>' +
+						'<td>' + esc(r.status === 'to_source' ? i18n.stToSource : i18n.stGap) + '</td>' +
+						'<td><button type="button" class="button button-small dze-x-opp-go" data-cat="' + r.cat + '">' + esc(r.catName) + ' →</button></td></tr>';
+				});
+				$('#dze-x-opps').html(html + '</tbody></table>');
+			});
+		}
+	});
+	$(document).on('click', '.dze-x-opp-go', function () {
+		var $row = $('.dze-x-row[data-cat="' + $(this).data('cat') + '"]');
+		if ($row.length) { $row.trigger('click'); }
 	});
 
 	// =====================================================================

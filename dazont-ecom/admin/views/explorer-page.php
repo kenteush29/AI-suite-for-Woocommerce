@@ -55,6 +55,9 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 			</div>
 
 			<button type="button" id="dze-x-expand" class="button button-small"><?php esc_html_e( 'Expand all', 'dazont-ecom' ); ?></button>
+			<button type="button" id="dze-x-opps-toggle" class="button button-small"><?php esc_html_e( '🎯 All opportunities', 'dazont-ecom' ); ?></button>
+			<button type="button" id="dze-x-kw-bulk-ai" class="button button-small"><?php esc_html_e( '✨ Analyse all pending', 'dazont-ecom' ); ?></button>
+			<span id="dze-x-global-prog" class="dze-x-kw-prog"></span>
 		</div>
 
 		<div class="dze-x-list-head">
@@ -122,12 +125,20 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 					<span class="dze-x-num dze-x-row-qty"></span>
 					<span class="dze-x-row-res"><?php echo $res_h ? esc_html( $res_h ) : '<span class="dze-x-never">—</span>'; ?></span>
 					<span class="dze-x-row-act">
+						<span class="dze-x-ico" title="<?php echo (int) ( $n['count_direct'] ?? 0 ) > 0 ? esc_attr__( 'Category live (has products)', 'dazont-ecom' ) : esc_attr__( 'Category empty — not visible on the storefront yet', 'dazont-ecom' ); ?>"><?php echo (int) ( $n['count_direct'] ?? 0 ) > 0 ? '🟢' : '⚪'; ?></span>
+						<span class="dze-x-ico dze-x-ico-kw <?php echo empty( $n['kw'] ) ? 'is-off' : ''; ?>" title="<?php echo empty( $n['kw'] ) ? esc_attr__( 'No keyword set imported', 'dazont-ecom' ) : ( (int) ( $n['pending'] ?? 0 ) > 0 ? esc_attr__( 'Keyword set imported — analysis pending', 'dazont-ecom' ) : esc_attr__( 'Keyword set imported & analysed', 'dazont-ecom' ) ); ?>"><?php echo empty( $n['kw'] ) ? '🔍' : ( (int) ( $n['pending'] ?? 0 ) > 0 ? '⏳' : '🔑' ); ?></span>
+						<button type="button" class="button button-small dze-x-imp" data-cat="<?php echo (int) $n['id']; ?>" title="<?php esc_attr_e( 'Import a SEMrush CSV for this category', 'dazont-ecom' ); ?>">📥</button>
+						<button type="button" class="button button-small dze-x-an" data-cat="<?php echo (int) $n['id']; ?>" title="<?php esc_attr_e( 'Analyse this category\'s keywords with AI', 'dazont-ecom' ); ?>" <?php echo empty( $n['pending'] ) ? 'style="display:none;"' : ''; ?>>✨</button>
+						<a class="button button-small" href="<?php echo esc_url( get_edit_term_link( (int) $n['id'], 'product_cat' ) ?: '#' ); ?>" title="<?php esc_attr_e( 'Edit the WooCommerce category', 'dazont-ecom' ); ?>" onclick="event.stopPropagation();">✏️</a>
 						<button type="button" class="button button-small dze-x-mark" data-cat="<?php echo (int) $n['id']; ?>"><?php esc_html_e( 'Mark searched', 'dazont-ecom' ); ?></button>
 					</span>
 				</div>
 			<?php endforeach; ?>
 		</div>
 		<p id="dze-x-perf-empty" class="dze-x-perf-empty" style="display:none;"><?php esc_html_e( 'No categories match.', 'dazont-ecom' ); ?></p>
+
+		<!-- Shop-wide opportunities (gaps + to-source across every category) -->
+		<div id="dze-x-opps" class="dze-x-kw-table" style="display:none;"></div>
 	</section>
 
 	<!-- ===================== Products overlay (per category) ===================== -->
@@ -138,6 +149,7 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 			<span class="dze-x-ov-title" id="dze-x-ov-title"></span>
 			<span id="dze-x-count" class="dze-x-count"></span>
 			<span class="dze-x-ov-actions">
+				<a id="dze-x-ov-add" class="button" href="#" target="_blank"><?php esc_html_e( '+ Add product', 'dazont-ecom' ); ?></a>
 				<button type="button" id="dze-x-kw-toggle" class="button">🔑 <?php esc_html_e( 'Keywords', 'dazont-ecom' ); ?></button>
 				<button type="button" id="dze-x-ov-mark" class="button"><?php esc_html_e( 'Mark searched today', 'dazont-ecom' ); ?></button>
 				<button type="button" id="dze-x-ai" class="button button-primary"><?php esc_html_e( '✨ Get AI insights', 'dazont-ecom' ); ?></button>

@@ -192,6 +192,7 @@
 		$('#dze-x-ov-thumb').html(thumb ? ('<img src="' + thumb + '" alt="" />') : '');
 		$('#dze-x-ai-panel').hide().empty();
 		$('#dze-x-ai, #dze-x-ov-mark').prop('disabled', false);
+		$('#dze-x-ov-add').attr('href', cfg.ajaxUrl.replace('admin-ajax.php', 'post-new.php') + '?post_type=product&dze_cat=' + state.cat);
 		buildSubcats(state.cat);
 		$('#dze-x-overlay').css('display', 'flex');
 		$('body').addClass('dze-x-ov-open');
@@ -210,17 +211,45 @@
 		markResearched(state.cat, state.path, function () { $btn.prop('disabled', true).text(i18n.justNow + ' ✓'); });
 	});
 
+	// AI insights: saved report shown free of charge; regeneration behind a cost preview.
+	function showReport($panel, data) {
+		var head = '';
+		if (data.ts) {
+			head = '<div style="margin-bottom:8px;color:#646970;font-size:12px;">' + escHtml(i18n.generatedOn) + ' ' +
+				new Date(data.ts * 1000).toLocaleString() +
+				' <button type="button" class="button button-small" id="dze-x-ai-regen">' + escHtml(i18n.regen) + '</button></div>';
+		}
+		$panel.html(head + '<div style="white-space:pre-wrap;">' + escHtml(data.text) + '</div>');
+	}
+	function generateInsights($btn, $panel) {
+		$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: state.cat, mode: 'estimate' })
+			.done(function (res) {
+				if (!res.success) { $btn.prop('disabled', false); $panel.text((res.data && res.data.message) || i18n.error); return; }
+				if (!window.confirm(res.data.message)) { $btn.prop('disabled', false); $panel.hide(); return; }
+				$panel.html('<span class="dze-x-ai-spin"></span>' + escHtml(i18n.aiThinking));
+				$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: state.cat, mode: 'generate' })
+					.done(function (r2) {
+						$btn.prop('disabled', false);
+						if (!r2.success) { $panel.text((r2.data && r2.data.message) || i18n.error); return; }
+						showReport($panel, r2.data);
+					})
+					.fail(function () { $btn.prop('disabled', false); $panel.text(i18n.error); });
+			})
+			.fail(function () { $btn.prop('disabled', false); $panel.text(i18n.error); });
+	}
 	$('#dze-x-ai').on('click', function () {
 		if (!state.cat) { return; }
 		var $btn = $(this).prop('disabled', true);
 		var $panel = $('#dze-x-ai-panel').show().html('<span class="dze-x-ai-spin"></span>' + escHtml(i18n.aiThinking));
-		$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: state.cat })
+		$.post(cfg.ajaxUrl, { action: 'dze_explorer_ai_insights', nonce: cfg.nonce, cat: state.cat, mode: 'get' })
 			.done(function (res) {
-				$btn.prop('disabled', false);
-				if (!res.success) { $panel.text((res.data && res.data.message) || i18n.error); return; }
-				$panel.text(res.data.text);
+				if (res.success && res.data.saved) { $btn.prop('disabled', false); showReport($panel, res.data); return; }
+				generateInsights($btn, $panel);
 			})
 			.fail(function () { $btn.prop('disabled', false); $panel.text(i18n.error); });
+	});
+	$(document).on('click', '#dze-x-ai-regen', function () {
+		generateInsights($('#dze-x-ai').prop('disabled', true), $('#dze-x-ai-panel'));
 	});
 
 	// =====================================================================
