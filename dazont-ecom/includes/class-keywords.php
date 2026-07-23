@@ -59,6 +59,7 @@ final class DZE_Keywords {
 		add_action( 'wp_ajax_dze_kw_autotitles',  [ $this, 'ajax_autotitles' ] );
 		add_action( 'wp_ajax_dze_kw_for_product', [ $this, 'ajax_for_product' ] );
 		add_action( 'wp_ajax_dze_kw_opps',        [ $this, 'ajax_opportunities' ] );
+		add_action( 'wp_ajax_dze_kw_reset',       [ $this, 'ajax_reset' ] );
 	}
 
 	public static function table(): string {
@@ -508,7 +509,15 @@ final class DZE_Keywords {
 			$pending = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table} WHERE kw_type = ''" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
 		}
 		if ( ! $pending ) {
-			wp_send_json_error( [ 'message' => __( 'Nothing left to analyse — every imported keyword already has a verdict.', 'dazont-ecom' ) ] );
+			// Nothing pending, but the set may already be fully analysed: let the
+			// caller offer a reset + re-analyse (handy after tuning the matching).
+			$total = $term_id
+				? (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$table} WHERE term_id = %d", $term_id ) ) // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+				: (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			if ( $total > 0 ) {
+				wp_send_json_success( [ 'empty' => true, 'total' => $total ] );
+			}
+			wp_send_json_error( [ 'message' => __( 'No keywords to analyse. Import a SEMrush CSV first.', 'dazont-ecom' ) ] );
 		}
 		$products = $term_id ? count( $this->product_lines( $term_id ) ) : (int) wp_count_posts( 'product' )->publish;
 		$batches  = (int) ceil( $pending / self::BATCH );
@@ -574,16 +583,21 @@ final class DZE_Keywords {
 			$klist .= $k['id'] . '. ' . $k['keyword'] . ' (vol ' . $k['volume'] . ")\n";
 		}
 
-		$system = 'You are a meticulous e-commerce SEO analyst. You judge whether search queries are answered by a product catalogue. Reply with a JSON array ONLY — no prose, no code fences.';
-		$user = "Product category: {$term->name}\n\n"
-			. "PRODUCTS (id | title | attributes):\n{$plist}\n"
+		$system = 'You are a meticulous e-commerce SEO analyst working on ONE product category. '
+			. 'You decide, for each search query, which page of the site would rank for it: an individual PRODUCT page, or the CATEGORY page. '
+			. 'Reply with a JSON array ONLY — no prose, no code fences.';
+		$user = "Category: {$term->name}\n\n"
+			. "PRODUCTS in this category (id | title | attributes):\n{$plist}\n"
 			. "SEARCH QUERIES (id. query (monthly volume)):\n{$klist}\n"
-			. "For EACH query, decide:\n"
-			. "t (type): \"product\" = shopper looks for a specific product; \"category\" = generic query answered by the category page itself (e.g. \"military t shirts\"); \"info\" = informational/navigational/off-topic (how-to, brand marketplaces like amazon, unrelated).\n"
-			. "s (status): \"covered\" = a shopper typing this query would find EXACTLY what they asked for in one of the products. The product must satisfy EVERY qualifier of the query: material (cotton), colour (gray), style (parody, novelty, vintage), fit/size, theme, model. A specific themed/graphic product NEVER covers a broader or different query: a \"Size Matters Bullet Tshirt\" does NOT cover \"army cotton t shirt\", \"military parody t shirts\" or \"gray army t shirt\" — those are gaps unless a product matches all their qualifiers. Only near-identical wording or true synonyms of the SAME product count (\"kalashnikov tshirt\" = \"AK 47 T-shirt\"; hyphen/plural/spelling variants of one need share the verdict). \"variation\" = every qualifier is satisfied ONLY via an attribute value (e.g. the queried colour exists as a variation of a matching product), no dedicated product. \"gap\" = no product satisfies all qualifiers, even if products share words with the query. \"ignored\" = every query with t=info. For t=category use \"covered\" (the category page answers it). \"uncertain\" only when genuinely undecidable.\n"
-			. "p: array of the product ids that cover it ([] when none).\n"
-			. "When in doubt between covered and gap, choose gap: false positives poison our sourcing list.\n"
-			. 'Output: JSON array of {"id":<query id>,"t":"...","s":"...","p":[ids]} for every query id listed.';
+			. "STEP 1 — is the query GENERIC or SPECIFIC?\n"
+			. "GENERIC = it only combines the product type with broad, common attributes: gender (men/women), colour (black/green/tan), material (cotton), size/fit (xs, crew neck), price (cheap), quantity, or a generic style word (camo, tactical, vintage). It names NO distinct subject. Examples of GENERIC: \"military t shirt mens\", \"military black t shirt\", \"cheap army camo t shirts\", \"xs crew neck military t-shirts\", \"army green t shirt\", \"tactical t shirts\".\n"
+			. "SPECIFIC = it names a distinct subject: a weapon/vehicle/aircraft model (G36, AK-47, F-22 Raptor), a brand (Glock, Daniel Defense), a character/meme/slogan, a military unit, a country/faction, or a named camo pattern (Multicam, Kryptek Typhon).\n\n"
+			. "STEP 2 — assign t and s:\n"
+			. "- GENERIC query → t=\"category\", s=\"covered\", p=[]. The CATEGORY page ranks for these, NEVER an individual themed product. A themed product (e.g. \"G36 Tshirt\") must NEVER be attached to a generic query, even though it is itself a black/men's/cotton military t-shirt. This is the most important rule.\n"
+			. "- Informational / navigational / off-topic (how-to, sizing guides, \"amazon\", unrelated) → t=\"info\", s=\"ignored\", p=[].\n"
+			. "- SPECIFIC query → t=\"product\". Then: s=\"covered\" ONLY if a product's OWN subject is that SAME subject (true synonyms allowed: \"kalashnikov tshirt\"=\"AK 47 T-shirt\"; spelling/plural/hyphen variants of one subject share the verdict). p = that product's id(s). s=\"variation\" if the subject matches a product but a requested attribute (e.g. colour) exists only as one of its variations. s=\"gap\" if NO product is about that specific subject — sharing generic words is NOT coverage. \"G36 Tshirt\" covers \"g36 tshirt\"/\"hk g36 shirt\" only; it is a gap for \"mp5 tshirt\".\n\n"
+			. "When unsure between covered and gap, choose gap. Never invent product ids.\n"
+			. 'Output: JSON array of {"id":<query id>,"t":"category|product|info","s":"covered|variation|gap|ignored","p":[product ids]} for every query id listed.';
 
 		try {
 			$raw = $this->call_claude_kw( $system, $user );
@@ -784,6 +798,24 @@ final class DZE_Keywords {
 			'title' => get_the_title( $pid ),
 			'rows'  => array_map( static fn( $r ) => [ 'kw' => $r['keyword'], 'vol' => (int) $r['volume'], 's' => $r['status'] ], (array) $rows ),
 		] );
+	}
+
+	/** Clear every AI verdict of a category so the analysis can run again. cat=0 → all. */
+	public function ajax_reset(): void {
+		$this->guard();
+		$term_id = isset( $_POST['cat'] ) ? absint( $_POST['cat'] ) : 0;
+		global $wpdb;
+		$table = self::table();
+		// Also drop the auto-added product-title keywords (volume 0) so they are
+		// recreated cleanly by the next analysis.
+		if ( $term_id ) {
+			$wpdb->query( $wpdb->prepare( "DELETE FROM {$table} WHERE term_id = %d AND volume = 0 AND products <> ''", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			$wpdb->query( $wpdb->prepare( "UPDATE {$table} SET kw_type = '', status = '', products = '' WHERE term_id = %d", $term_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		} else {
+			$wpdb->query( "DELETE FROM {$table} WHERE volume = 0 AND products <> ''" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+			$wpdb->query( "UPDATE {$table} SET kw_type = '', status = '', products = ''" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- own table name.
+		}
+		wp_send_json_success();
 	}
 
 	/** Remove the whole keyword set of a category. */

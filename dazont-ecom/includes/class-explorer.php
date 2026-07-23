@@ -135,6 +135,7 @@ final class DZE_Explorer {
 				'noOpps'     => __( 'No open opportunities. Import keyword sets and run the analysis.', 'dazont-ecom' ),
 				'generatedOn'=> __( 'Report saved on', 'dazont-ecom' ),
 				'regen'      => __( '↻ Regenerate', 'dazont-ecom' ),
+				'reanalyse'  => __( 'Re-analyse all keywords from scratch (clears current verdicts)?', 'dazont-ecom' ),
 			],
 		] );
 		wp_localize_script( 'dze-explorer', 'dzeExplorer', [
@@ -555,7 +556,7 @@ final class DZE_Explorer {
 			global $wpdb;
 			$ktable = DZE_Keywords::table();
 			$gaps   = $wpdb->get_results(
-				$wpdb->prepare( "SELECT keyword, volume FROM {$ktable} WHERE term_id = %d AND status IN ('gap','to_source') ORDER BY volume DESC LIMIT 250", $cat ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table.
+				$wpdb->prepare( "SELECT keyword, volume FROM {$ktable} WHERE term_id = %d AND status IN ('gap','to_source') ORDER BY volume DESC LIMIT 150", $cat ), // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table.
 				ARRAY_A
 			);
 		}
@@ -623,16 +624,40 @@ final class DZE_Explorer {
 		} catch ( \Throwable $e ) {
 			wp_send_json_error( [ 'message' => $e->getMessage() ] );
 		}
-		$text = trim( (string) preg_replace( '/^```(?:json)?\s*|\s*```$/i', '', trim( $text ) ) );
-		$data = json_decode( $text, true );
-		if ( ! is_array( $data ) && preg_match( '/\{.*\}/s', $text, $mm ) ) {
-			$data = json_decode( $mm[0], true );
-		}
-		if ( ! is_array( $data ) || empty( $data['source_list'] ) && empty( $data['summary'] ) ) {
+		$data = $this->parse_report_json( $text );
+		if ( ! is_array( $data ) || ( empty( $data['source_list'] ) && empty( $data['summary'] ) && empty( $data['ideas'] ) ) ) {
 			wp_send_json_error( [ 'message' => __( 'The AI returned an unreadable report. Try again.', 'dazont-ecom' ) ] );
 		}
 		update_term_meta( $cat, '_dze_insights', [ 'data' => $data, 'ts' => time() ] );
 		wp_send_json_success( [ 'data' => $data, 'ts' => time(), 'saved' => true ] );
+	}
+
+	/**
+	 * Tolerant JSON parse for the report: strips fences, grabs the outermost
+	 * object, and if the model truncated mid-array, salvages what parsed by
+	 * closing open brackets so a long list still renders instead of erroring.
+	 */
+	private function parse_report_json( string $text ): ?array {
+		$text = trim( (string) preg_replace( '/^```(?:json)?\s*|\s*```\s*$/i', '', trim( $text ) ) );
+		$start = strpos( $text, '{' );
+		if ( false === $start ) {
+			return null;
+		}
+		$text = substr( $text, $start );
+		$decoded = json_decode( $text, true );
+		if ( is_array( $decoded ) ) {
+			return $decoded;
+		}
+		// Truncated output: cut back to the last complete "}," entry and close.
+		$cut = strrpos( $text, '},' );
+		if ( false !== $cut ) {
+			$repair = substr( $text, 0, $cut + 1 ) . ']}';
+			$decoded = json_decode( $repair, true );
+			if ( is_array( $decoded ) ) {
+				return $decoded;
+			}
+		}
+		return null;
 	}
 
 	/** Insights model: own setting, else the main Marketing AI model (never Haiku unless chosen). */
@@ -655,7 +680,7 @@ final class DZE_Explorer {
 			],
 			'body'    => wp_json_encode( [
 				'model'      => $this->insights_model(),
-				'max_tokens' => 4000,
+				'max_tokens' => 8000,
 				'system'     => $system,
 				'messages'   => [ [ 'role' => 'user', 'content' => $user ] ],
 			] ),

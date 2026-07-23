@@ -5,12 +5,15 @@
 
 /* ===================== Category performance (main screen) ================= */
 .dze-x-perf {
-	display: flex; flex-direction: column; height: calc(100vh - 140px);
-	border: 1px solid #dcdcde; border-radius: 10px; overflow: hidden; background: #fff;
+	display: flex; flex-direction: column; min-height: 300px;
+	border: 1px solid #dcdcde; border-radius: 10px; background: #fff;
 }
+/* Toolbar + column header stick to the viewport so the whole category list can
+   flow down the page (no cramped inner scrollbar). */
 .dze-x-perf-toolbar {
 	display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px;
 	padding: 12px 16px; border-bottom: 1px solid #eee; background: #f6f7f7;
+	position: sticky; top: 32px; z-index: 6; border-radius: 10px 10px 0 0;
 }
 .dze-x-perf-search { min-width: 220px; }
 .dze-x-views { display: inline-flex; background: #e9eaec; border-radius: 8px; padding: 3px; gap: 3px; }
@@ -28,6 +31,7 @@
 }
 .dze-x-list-head {
 	padding: 4px 16px; border-bottom: 1px solid #e2e2e2; background: #fbfbfc;
+	position: sticky; top: 89px; z-index: 5;
 }
 .dze-x-num { text-align: right; font-variant-numeric: tabular-nums; }
 
@@ -51,7 +55,7 @@
 .dze-x-tog-sp { cursor: default; }
 .dze-x-list.is-detailed .dze-x-tog { visibility: hidden; }
 
-.dze-x-list { flex: 1; overflow: auto; }
+.dze-x-list { overflow: visible; }
 .dze-x-row {
 	padding: 7px 16px; border-bottom: 1px solid #f0f0f1; cursor: pointer; font-size: 13px;
 }

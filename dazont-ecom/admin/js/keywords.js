@@ -407,6 +407,13 @@
 		$.post(cfg.ajaxUrl, { action: 'dze_kw_estimate', nonce: cfg.nonce, cat: catId })
 			.done(function (res) {
 				if (!res.success) { window.alert((res.data && res.data.message) || i18n.error); return; }
+				if (res.data.empty) {
+					// Already fully analysed — offer to reset every verdict and re-run.
+					if (!window.confirm((i18n.reanalyse || 'Re-analyse all keywords from scratch (clears current verdicts)?') + ' (' + res.data.total + ')')) { return; }
+					$('#dze-x-global-prog').text(i18n.analysing);
+					$.post(cfg.ajaxUrl, { action: 'dze_kw_reset', nonce: cfg.nonce, cat: catId }).done(function () { estimateThen(catId); });
+					return;
+				}
 				if (!window.confirm(res.data.message)) { return; }
 				$('#dze-x-global-prog').text(i18n.analysing);
 				bgLoop(catId);
