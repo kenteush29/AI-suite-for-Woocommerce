@@ -455,37 +455,37 @@ final class DZE_Explorer {
 		<div class="dze-x-card">
 			<div class="dze-x-thumb dze-thumb-wrap">
 				<img class="dze-thumb dze-x-img" src="<?php echo esc_url( $thumb ); ?>" data-full="<?php echo esc_url( $full ); ?>" alt="" loading="lazy" />
-				<div class="dze-x-card-hover">
-					<div class="dze-x-meta">
-						<span><?php echo wp_kses_post( $product->get_price_html() ); ?></span>
-						<span class="dze-x-id">#<?php echo (int) $product->get_id(); ?></span>
-					</div>
-					<div class="dze-x-sales"><?php
-						/* translators: %s: number of units sold */
-						echo esc_html( sprintf( _n( '%s sold', '%s sold', $sales, 'dazont-ecom' ), number_format_i18n( $sales ) ) );
-						if ( $kwcov > 0 ) : ?>
-							<button type="button" class="dze-x-kwprod" data-product="<?php echo (int) $product->get_id(); ?>" data-cat="<?php echo (int) $cat; ?>"><?php
-								/* translators: %s: number of covered keywords */
-								echo esc_html( sprintf( __( '🔑 %s kw covered', 'dazont-ecom' ), number_format_i18n( $kwcov ) ) );
-							?></button>
-						<?php endif; ?></div>
-					<div class="dze-x-date"><?php
-						/* translators: %s: product publication date */
-						printf( esc_html__( 'Published: %s', 'dazont-ecom' ), esc_html( get_the_date( '', $product->get_id() ) ) );
-					?></div>
-					<div class="dze-x-actions">
-						<?php if ( $edit ) : ?><a class="button button-small" href="<?php echo esc_url( $edit ); ?>" target="_blank" onclick="event.stopPropagation();"><?php esc_html_e( 'Edit', 'dazont-ecom' ); ?></a><?php endif; ?>
-						<?php if ( $view ) : ?><a class="button button-small" href="<?php echo esc_url( $view ); ?>" target="_blank" onclick="event.stopPropagation();"><?php esc_html_e( 'View', 'dazont-ecom' ); ?></a><?php endif; ?>
-						<?php if ( $is_var && $var_count > 0 ) : ?>
-							<button type="button" class="button button-small dze-x-vars" data-product="<?php echo (int) $product->get_id(); ?>"><?php
-								/* translators: %d: number of variations */
-								echo esc_html( sprintf( __( 'Variations (%d)', 'dazont-ecom' ), $var_count ) );
-							?></button>
-						<?php endif; ?>
-					</div>
-				</div>
 			</div>
 			<div class="dze-x-name" title="<?php echo esc_attr( $product->get_name() ); ?>"><?php echo esc_html( $product->get_name() ); ?></div>
+			<div class="dze-x-card-more">
+				<div class="dze-x-meta">
+					<span><?php echo wp_kses_post( $product->get_price_html() ); ?></span>
+					<span class="dze-x-id">#<?php echo (int) $product->get_id(); ?></span>
+				</div>
+				<div class="dze-x-sales"><?php
+					/* translators: %s: number of units sold */
+					echo esc_html( sprintf( _n( '%s sold', '%s sold', $sales, 'dazont-ecom' ), number_format_i18n( $sales ) ) );
+					if ( $kwcov > 0 ) : ?>
+						<button type="button" class="dze-x-kwprod" data-product="<?php echo (int) $product->get_id(); ?>" data-cat="<?php echo (int) $cat; ?>"><?php
+							/* translators: %s: number of covered keywords */
+							echo esc_html( sprintf( __( '🔑 %s kw covered', 'dazont-ecom' ), number_format_i18n( $kwcov ) ) );
+						?></button>
+					<?php endif; ?></div>
+				<div class="dze-x-date"><?php
+					/* translators: %s: product publication date */
+					printf( esc_html__( 'Published: %s', 'dazont-ecom' ), esc_html( get_the_date( '', $product->get_id() ) ) );
+				?></div>
+				<div class="dze-x-actions">
+					<?php if ( $edit ) : ?><a class="button button-small" href="<?php echo esc_url( $edit ); ?>" target="_blank" onclick="event.stopPropagation();"><?php esc_html_e( 'Edit', 'dazont-ecom' ); ?></a><?php endif; ?>
+					<?php if ( $view ) : ?><a class="button button-small" href="<?php echo esc_url( $view ); ?>" target="_blank" onclick="event.stopPropagation();"><?php esc_html_e( 'View', 'dazont-ecom' ); ?></a><?php endif; ?>
+					<?php if ( $is_var && $var_count > 0 ) : ?>
+						<button type="button" class="button button-small dze-x-vars" data-product="<?php echo (int) $product->get_id(); ?>"><?php
+							/* translators: %d: number of variations */
+							echo esc_html( sprintf( __( 'Variations (%d)', 'dazont-ecom' ), $var_count ) );
+						?></button>
+					<?php endif; ?>
+				</div>
+			</div>
 		</div>
 		<?php
 		return (string) ob_get_clean();

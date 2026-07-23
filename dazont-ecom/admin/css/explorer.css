@@ -113,23 +113,26 @@ body.dze-x-ov-open { overflow: hidden; }
 
 /* ===================== Product grid (inside the overlay) ================= */
 .dze-x-grid {
-	flex: 1; overflow: auto; padding: 16px; --dze-cols: 6;
-	display: grid; gap: 12px; grid-template-columns: repeat(var(--dze-cols), minmax(0, 1fr)); align-content: start;
+	flex: 1; overflow: auto; padding: 16px; --dze-cols: 5;
+	display: grid; gap: 14px; grid-template-columns: repeat(var(--dze-cols), minmax(0, 1fr)); align-content: start;
 }
 .dze-x-card {
-	background: #fff; border: 1px solid #e2e2e2; border-radius: 10px; padding: 8px;
+	position: relative; background: #fff; border: 1px solid #e2e2e2; border-radius: 10px; padding: 8px;
 	display: flex; flex-direction: column; gap: 6px;
 }
-.dze-x-thumb { position: relative; aspect-ratio: 1/1; overflow: hidden; border-radius: 8px; background: #f6f7f7; display: flex; align-items: center; justify-content: center; }
+.dze-x-card:hover { border-color: #2271b1; z-index: 5; }
+.dze-x-thumb { aspect-ratio: 1/1; overflow: hidden; border-radius: 8px; background: #f6f7f7; display: flex; align-items: center; justify-content: center; }
 .dze-x-img { width: 100%; height: 100%; object-fit: cover; cursor: zoom-in; }
-/* Details are hidden until hover, revealed OVER the image, to fit more products. */
-.dze-x-card-hover {
-	position: absolute; inset: 0; background: rgba(255,255,255,.96); padding: 8px;
-	display: flex; flex-direction: column; gap: 5px; opacity: 0; pointer-events: none; transition: opacity .12s ease;
-	overflow: auto;
-}
-.dze-x-card:hover .dze-x-card-hover { opacity: 1; pointer-events: auto; }
 .dze-x-name { font-weight: 600; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Details sit below the title, hidden by default, revealed on hover as a solid
+   panel dropping under the card (no overlap on the image, no reflow). */
+.dze-x-card-more {
+	display: none; position: absolute; top: 100%; left: -1px; right: -1px; z-index: 6;
+	flex-direction: column; gap: 5px; padding: 8px 10px 10px;
+	background: #fff; border: 1px solid #2271b1; border-top: 0; border-radius: 0 0 10px 10px;
+	box-shadow: 0 8px 18px rgba(0,0,0,.14);
+}
+.dze-x-card:hover .dze-x-card-more { display: flex; }
 .dze-x-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #555; }
 .dze-x-sales { font-size: 12px; font-weight: 600; color: #2271b1; }
 .dze-x-date { font-size: 11px; color: #787c82; }

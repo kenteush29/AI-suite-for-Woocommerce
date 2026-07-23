@@ -166,7 +166,7 @@ dze_explorer_flat_rows( $categories, [], 0, $dze_rows, $dze_seq );
 				<label for="dze-x-cols"><?php esc_html_e( 'Cols', 'dazont-ecom' ); ?></label>
 				<select id="dze-x-cols">
 					<?php for ( $c = 3; $c <= 10; $c++ ) : ?>
-						<option value="<?php echo (int) $c; ?>" <?php selected( 6, $c ); ?>><?php echo (int) $c; ?></option>
+						<option value="<?php echo (int) $c; ?>" <?php selected( 5, $c ); ?>><?php echo (int) $c; ?></option>
 					<?php endfor; ?>
 				</select>
 			</span>
